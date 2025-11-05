@@ -5,10 +5,6 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
-// ---------------------------------------------------------------------
-// PUBLIC API – Import and use these
-// ---------------------------------------------------------------------
-
 type Screen = tcell.Screen
 type EventKey = tcell.EventKey
 type EventMouse = tcell.EventMouse
@@ -18,7 +14,8 @@ type Color = tcell.Color
 type Element interface {
 	Render(s Screen, x, y, width, height int, parent Style)
 	MinSize() (w, h int)
-	Contains(px, py, x, y, w, h int) bool
+	// HitTest find the deepest element at the given point (px, py)
+	HitTest(px, py, x, y, w, h int) Element
 }
 
 type Focuser interface {
@@ -107,7 +104,13 @@ func (t *text) Render(s Screen, x, y, width, height int, parent Style) {
 		s.SetContent(x+i, y, r, nil, st.Apply())
 	}
 }
-func (t *text) Contains(px, py, x, y, w, h int) bool { return rectContains(px, py, x, y, w, h) }
+func (t *text) HitTest(px, py, x, y, w, h int) Element {
+	b := rectContains(px, py, x, y, w, h)
+	if !b {
+		return nil
+	}
+	return t
+}
 
 type button struct {
 	label   string
@@ -120,7 +123,6 @@ type button struct {
 func Button(label string) *button {
 	return &button{label: label, style: DefaultStyle}
 }
-func (b *button) Bold() *button { b.style.Bold = true; return b }
 func (b *button) Foreground(c string) *button {
 	b.style.FG = tcell.ColorNames[c]
 	return b
@@ -136,15 +138,20 @@ func (b *button) MinSize() (int, int) { return len(b.label) + 2, 1 }
 func (b *button) Render(s Screen, x, y, width, height int, parent Style) {
 	st := mergeStyle(parent, b.style)
 	label := " " + b.label + " "
-	cx := x + (width-len(label))/2
 	for i, r := range label {
-		if cx+i >= x+width {
+		if x+i >= x+width {
 			break
 		}
-		s.SetContent(cx+i, y+1, r, nil, st.Apply())
+		s.SetContent(x+i, y, r, nil, st.Apply())
 	}
 }
-func (b *button) Contains(px, py, x, y, w, h int) bool { return rectContains(px, py, x, y, w, h) }
+func (b *button) HitTest(px, py, x, y, w, h int) Element {
+	contains := rectContains(px, py, x, y, w, h)
+	if !contains {
+		return nil
+	}
+	return b
+}
 
 type divider struct {
 	vertical bool
@@ -171,16 +178,14 @@ func (d *divider) Render(s Screen, x, y, width, height int, parent Style) {
 	if !d.vertical {
 		for i := range width {
 			s.SetContent(x+i, y+height-1, '-', nil, st.Apply())
-			// s.SetContent(x+i, y+height-1, '─', nil, st.Apply())
 		}
 	} else {
 		for i := range height {
 			s.SetContent(x+width-1, y+i, '|', nil, st.Apply())
-			// s.SetContent(x+width-1, y+i, '│', nil, st.Apply())
 		}
 	}
 }
-func (d *divider) Contains(px, py, x, y, w, h int) bool { return false }
+func (d *divider) HitTest(px, py, x, y, w, h int) Element { return nil }
 
 // ---------------------------------------------------------------------
 // Layouts
@@ -189,6 +194,7 @@ func (d *divider) Contains(px, py, x, y, w, h int) bool { return false }
 type vstack struct {
 	children []Element
 	style    Style
+	spacing  int
 }
 
 func VStack(children ...Element) *vstack {
@@ -204,12 +210,15 @@ func (v *vstack) Background(color string) *vstack {
 }
 func (v *vstack) MinSize() (int, int) {
 	maxW, totalH := 0, 0
-	for _, child := range v.children {
+	for i, child := range v.children {
 		cw, ch := child.MinSize()
 		if cw > maxW {
 			maxW = cw
 		}
 		totalH += ch
+		if i < len(v.children)-1 {
+			totalH += v.spacing
+		}
 	}
 	return maxW, totalH
 }
@@ -232,7 +241,7 @@ func (v *vstack) Render(s Screen, x, y, width, height int, parent Style) {
 
 	// Second pass: render children with adjusted heights
 	used := 0
-	for _, child := range v.children {
+	for i, child := range v.children {
 		if div, ok := child.(*divider); ok {
 			div.vertical = false
 		}
@@ -247,28 +256,64 @@ func (v *vstack) Render(s Screen, x, y, width, height int, parent Style) {
 			child.Render(s, x, y+used, width, ch, st)
 		}
 		used += ch
+		if i < len(v.children)-1 {
+			used += v.spacing
+		}
 	}
 }
-func (v *vstack) Contains(px, py, x, y, w, h int) bool {
-	used := 0
+
+func (v *vstack) HitTest(px, py, x, y, w, h int) Element {
+	totalMinHeight := 0
+	growCount := 0
 	for _, child := range v.children {
 		_, ch := child.MinSize()
+		totalMinHeight += ch
+		if _, ok := child.(*grow); ok {
+			growCount++
+		}
+	}
+
+	// Compute remaining space
+	extra := max(h-totalMinHeight, 0)
+
+	// Second pass: render children with adjusted heights
+	used := 0
+	for i, child := range v.children {
+		if div, ok := child.(*divider); ok {
+			div.vertical = false
+		}
+		_, ch := child.MinSize()
+		if _, ok := child.(*grow); ok && growCount > 0 {
+			ch += extra / growCount
+		}
 		if used+ch > h {
 			ch = h - used
 		}
-		if ch > 0 && child.Contains(px, py, x, y+used, w, ch) {
-			return true
+		if ch > 0 {
+			if a := child.HitTest(px, py, x, y+used, w, ch); a != nil {
+				return a
+			}
 		}
 		used += ch
+		if i < len(v.children)-1 {
+			used += v.spacing
+		}
 	}
-	return false
+	return nil
 }
 
 func (v *vstack) Add(e Element) *vstack { v.children = append(v.children, e); return v }
 
+// Spacing sets the spacing (in rows) between child elements.
+func (v *vstack) Spacing(p int) *vstack {
+	v.spacing = p
+	return v
+}
+
 type hstack struct {
 	children []Element
 	style    Style
+	spacing  int
 }
 
 func HStack(children ...Element) *hstack {
@@ -276,11 +321,14 @@ func HStack(children ...Element) *hstack {
 }
 func (h *hstack) MinSize() (int, int) {
 	totalW, maxH := 0, 0
-	for _, child := range h.children {
+	for i, child := range h.children {
 		cw, ch := child.MinSize()
 		totalW += cw
 		if ch > maxH {
 			maxH = ch
+		}
+		if i < len(h.children)-1 {
+			totalW += h.spacing
 		}
 	}
 	return totalW, maxH
@@ -304,7 +352,7 @@ func (h *hstack) Render(s Screen, x, y, width, height int, parent Style) {
 
 	// Second pass: layout children
 	used := 0
-	for _, child := range h.children {
+	for i, child := range h.children {
 		if div, ok := child.(*divider); ok {
 			div.vertical = true
 		}
@@ -319,21 +367,49 @@ func (h *hstack) Render(s Screen, x, y, width, height int, parent Style) {
 			child.Render(s, x+used, y, cw, height, st)
 		}
 		used += cw
+		if i < len(h.children)-1 {
+			used += h.spacing
+		}
 	}
 }
-func (h *hstack) Contains(px, py, x, y, w, height int) bool {
-	used := 0
+func (h *hstack) HitTest(px, py, x, y, w, height int) Element {
+	totalMinWidth := 0
+	growCount := 0
 	for _, child := range h.children {
 		cw, _ := child.MinSize()
+		totalMinWidth += cw
+		if _, ok := child.(*grow); ok {
+			growCount++
+		}
+	}
+
+	// Compute remaining width
+	extra := max(w-totalMinWidth, 0)
+
+	// Second pass: layout children
+	used := 0
+	for i, child := range h.children {
+		if div, ok := child.(*divider); ok {
+			div.vertical = true
+		}
+		cw, _ := child.MinSize()
+		if _, ok := child.(*grow); ok && growCount > 0 {
+			cw += extra / growCount
+		}
 		if used+cw > w {
 			cw = w - used
 		}
-		if cw > 0 && child.Contains(px, py, x+used, y, cw, height) {
-			return true
+		if cw > 0 {
+			if a := child.HitTest(px, py, x+used, y, cw, height); a != nil {
+				return a
+			}
 		}
 		used += cw
+		if i < len(h.children)-1 {
+			used += h.spacing
+		}
 	}
-	return false
+	return nil
 }
 func (h *hstack) Foreground(color string) *hstack {
 	h.style.FG = tcell.ColorNames[color]
@@ -345,6 +421,9 @@ func (h *hstack) Background(color string) *hstack {
 }
 
 func (h *hstack) Add(e Element) *hstack { h.children = append(h.children, e); return h }
+
+// Spacing sets the spacing (in columns) between child elements.
+func (h *hstack) Spacing(p int) *hstack { h.spacing = p; return h }
 
 type grow struct {
 	child Element
@@ -364,8 +443,8 @@ func (g *grow) Render(s Screen, x, y, width, height int, parent Style) {
 	g.child.Render(s, x, y, width, height, parent)
 }
 
-func (g *grow) Contains(px, py, x, y, w, h int) bool {
-	return g.child.Contains(px, py, x, y, w, h)
+func (g *grow) HitTest(px, py, x, y, w, h int) Element {
+	return g.child.HitTest(px, py, x, y, w, h)
 }
 
 type padding struct {
@@ -424,7 +503,7 @@ func (p *padding) Render(s Screen, x, y, width, height int, parent Style) {
 	p.child.Render(s, innerX, innerY, innerW, innerH, parent)
 }
 
-func (p *padding) Contains(px, py, x, y, w, h int) bool {
+func (p *padding) Contains(px, py, x, y, w, h int) Element {
 	innerX := x + p.left
 	innerY := y + p.top
 	innerW := w - p.left - p.right
@@ -435,7 +514,17 @@ func (p *padding) Contains(px, py, x, y, w, h int) bool {
 	if innerH < 0 {
 		innerH = 0
 	}
-	return p.child.Contains(px, py, innerX, innerY, innerW, innerH)
+	return p.child.HitTest(px, py, innerX, innerY, innerW, innerH)
+}
+
+type Empty struct{}
+
+func (e Empty) MinSize() (int, int)                          { return 0, 0 }
+func (e Empty) Render(Screen, int, int, int, int, Style)     {}
+func (e Empty) HitTest(int, int, int, int, int, int) Element { return nil }
+
+func Spacer() *grow {
+	return Grow(Empty{})
 }
 
 // ---------------------------------------------------------------------
@@ -446,6 +535,8 @@ type App struct {
 	Root    Element
 	Screen  Screen
 	Focuser Focuser
+	hover   Element
+	done    chan struct{}
 }
 
 func NewApp(root Element) *App {
@@ -453,7 +544,7 @@ func NewApp(root Element) *App {
 	if err != nil {
 		panic(err)
 	}
-	return &App{Root: root, Screen: s}
+	return &App{Root: root, Screen: s, done: make(chan struct{})}
 }
 
 func (a *App) Run() error {
@@ -471,7 +562,16 @@ func (a *App) Run() error {
 	}
 	draw()
 
+	// Keep it simple, draws everything from scratch each frame.
+	// One day might evolve toward a retained mode,
+	// keeping track of layout tree, but doesn't need it yet.
 	for {
+		select {
+		case <-a.done:
+			return nil
+		default:
+		}
+
 		ev := a.Screen.PollEvent()
 		switch ev := ev.(type) {
 		case *EventResize:
@@ -484,9 +584,30 @@ func (a *App) Run() error {
 			}
 		case *EventMouse:
 			x, y := ev.Position()
-			if ev.Buttons()&tcell.Button1 != 0 {
-				a.handleClick(x, y)
+			w, h := a.Screen.Size()
+			i := a.Root.HitTest(x, y, 0, 0, w, h)
+			if i == nil {
+				continue
+			}
+
+			// hover
+			if i != a.hover {
+				if prevBtn, ok := a.hover.(*button); ok {
+					prevBtn.style.Reversed = !prevBtn.style.Reversed
+				}
+				if btn, ok := i.(*button); ok {
+					btn.style.Reversed = !btn.style.Reversed
+				}
+				a.hover = i
 				draw()
+			}
+
+			// click
+			if ev.Buttons()&tcell.Button1 != 0 {
+				if btn, ok := i.(*button); ok && btn.onClick != nil {
+					btn.onClick()
+					draw()
+				}
 			}
 		}
 	}
@@ -498,48 +619,8 @@ func (a *App) Focus(f Focuser) {
 	a.Focuser = f
 }
 
-func (a *App) handleClick(px, py int) {
-	w, h := a.Screen.Size()
-	rw, rh := a.Root.MinSize()
-	rx := (w - rw) / 2
-	ry := (h - rh) / 2
-	a.walk(a.Root, rx, ry, rw, rh, px, py)
-}
-
-func (a *App) walk(e Element, x, y, w, h, px, py int) {
-	if btn, ok := e.(*button); ok && e.Contains(px, py, x, y, w, h) {
-		if btn.onClick != nil {
-			btn.onClick()
-		}
-	}
-	if v, ok := e.(*vstack); ok {
-		used := 0
-		for _, child := range v.children {
-			_, ch := child.MinSize()
-			if used+ch > h {
-				ch = h - used
-			}
-			if ch == 0 {
-				break
-			}
-			a.walk(child, x, y+used, w, ch, px, py)
-			used += ch
-		}
-	}
-	if hs, ok := e.(*hstack); ok {
-		used := 0
-		for _, child := range hs.children {
-			cw, _ := child.MinSize()
-			if used+cw > w {
-				cw = w - used
-			}
-			if cw == 0 {
-				break
-			}
-			a.walk(child, x+used, y, cw, h, px, py)
-			used += cw
-		}
-	}
+func (a *App) Stop() {
+	close(a.done)
 }
 
 func rectContains(px, py, x, y, w, h int) bool {
