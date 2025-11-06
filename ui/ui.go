@@ -84,16 +84,18 @@ func (s Style) Apply() tcell.Style {
 	return st
 }
 
-func mergeStyle(parent, child Style) Style {
+// Merge returns a new Style by applying the child style's non-default attributes
+// over the receiver (parent) style.
+func (s Style) Merge(child Style) Style {
 	if child.FG == tcell.ColorDefault {
-		child.FG = parent.FG
+		child.FG = s.FG
 	}
 	if child.BG == tcell.ColorDefault {
-		child.BG = parent.BG
+		child.BG = s.BG
 	}
-	child.Bold = child.Bold || parent.Bold
-	child.Italic = child.Italic || parent.Italic
-	child.Reversed = child.Reversed || parent.Reversed
+	child.Bold = child.Bold || s.Bold
+	child.Italic = child.Italic || s.Italic
+	child.Reversed = child.Reversed || s.Reversed
 	return child
 }
 
@@ -127,7 +129,7 @@ func (t *text) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 func (t *text) Render(s Screen, rect Rect, style Style) {
-	st := mergeStyle(style, t.style)
+	st := style.Merge(t.style)
 	for i, r := range t.content {
 		if i >= rect.W {
 			break
@@ -164,8 +166,8 @@ func (b *button) Layout(x, y, w, h int) *LayoutNode {
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 }
-func (b *button) Render(s Screen, rect Rect, parent Style) {
-	st := mergeStyle(parent, b.style)
+func (b *button) Render(s Screen, rect Rect, style Style) {
+	st := style.Merge(b.style)
 	label := " " + b.label + " "
 	for i, r := range label {
 		if i >= rect.W {
@@ -201,8 +203,8 @@ func (d *divider) Layout(x, y, w, h int) *LayoutNode {
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 }
-func (d *divider) Render(s Screen, rect Rect, parent Style) {
-	st := mergeStyle(parent, d.style)
+func (d *divider) Render(s Screen, rect Rect, style Style) {
+	st := style.Merge(d.style)
 	if !d.vertical {
 		for i := range rect.W {
 			s.SetContent(rect.X+i, rect.Y+rect.H-1, '-', nil, st.Apply())
@@ -295,7 +297,7 @@ func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
 	return n
 }
 
-func (v *vstack) Render(s Screen, rect Rect, parent Style) {
+func (v *vstack) Render(s Screen, rect Rect, style Style) {
 	// do nothing, children are rendered in drawTree()
 }
 
@@ -375,7 +377,7 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 	return n
 }
 
-func (hs *hstack) Render(s Screen, rect Rect, parent Style) {
+func (hs *hstack) Render(s Screen, rect Rect, style Style) {
 	// do nothing, children are rendered in drawTree()
 }
 
@@ -417,7 +419,7 @@ func (f *fill) MinSize() (int, int) {
 	return f.child.MinSize()
 }
 
-func (f *fill) Render(s Screen, rect Rect, parent Style) {
+func (f *fill) Render(s Screen, rect Rect, style Style) {
 	// do nothing, child is rendered in drawTree()
 }
 
@@ -481,7 +483,7 @@ func (p *padding) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 
-func (p *padding) Render(s Screen, rect Rect, parent Style) {
+func (p *padding) Render(s Screen, rect Rect, style Style) {
 	// do nothing, child is rendered in drawTree()
 }
 
@@ -531,7 +533,7 @@ func drawTree(node *LayoutNode, s Screen, style Style) {
 func (a *App) Render() {
 	w, h := a.Screen.Size()
 	a.Tree = a.Root.Layout(0, 0, w, h)
-	drawTree(a.Tree, a.Screen, Style{})
+	drawTree(a.Tree, a.Screen, DefaultStyle)
 }
 
 // hitTest returns the topmost Element at the given screen coordinates.
@@ -672,7 +674,7 @@ func (a *App) Stop() {
 	close(a.done)
 }
 
-type TextInput struct {
+type textField struct {
 	text     []rune
 	cursor   int
 	focused  bool
@@ -680,46 +682,47 @@ type TextInput struct {
 	onChange func(string)
 }
 
-func Input() *TextInput {
-	return &TextInput{
+// TextField creates a single-line editable text input.
+func TextField() *textField {
+	return &textField{
 		style: DefaultStyle,
 	}
 }
 
-func (t *TextInput) Text() string {
+func (t *textField) Text() string {
 	return string(t.text)
 }
 
-func (t *TextInput) SetText(s string) {
+func (t *textField) SetText(s string) {
 	t.text = []rune(s)
 	t.cursor = len(t.text)
 }
 
-func (t *TextInput) OnChange(fn func(string)) *TextInput {
+func (t *textField) OnChange(fn func(string)) *textField {
 	t.onChange = fn
 	return t
 }
 
-func (t *TextInput) Foreground(c string) *TextInput {
+func (t *textField) Foreground(c string) *textField {
 	t.style.FG = tcell.ColorNames[c]
 	return t
 }
-func (t *TextInput) Background(c string) *TextInput {
+func (t *textField) Background(c string) *textField {
 	t.style.BG = tcell.ColorNames[c]
 	return t
 }
 
-func (t *TextInput) MinSize() (int, int) { return 10, 1 }
+func (t *textField) MinSize() (int, int) { return 10, 1 }
 
-func (t *TextInput) Layout(x, y, w, h int) *LayoutNode {
+func (t *textField) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: t,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 }
 
-func (t *TextInput) Render(s Screen, rect Rect, parent Style) {
-	st := mergeStyle(parent, t.style).Apply()
+func (t *textField) Render(s Screen, rect Rect, style Style) {
+	st := style.Merge(t.style).Apply()
 	var totalW int
 	for _, r := range t.text {
 		rw := runewidth.RuneWidth(r)
@@ -737,13 +740,13 @@ func (t *TextInput) Render(s Screen, rect Rect, parent Style) {
 }
 
 // Focus implement Focuser
-func (t *TextInput) Focus()   { t.focused = true }
-func (t *TextInput) Unfocus() { t.focused = false }
-func (t *TextInput) IsFocused() bool {
+func (t *textField) Focus()   { t.focused = true }
+func (t *textField) Unfocus() { t.focused = false }
+func (t *textField) IsFocused() bool {
 	return t.focused
 }
 
-func (t *TextInput) HandleKey(ev *tcell.EventKey) {
+func (t *textField) HandleKey(ev *tcell.EventKey) {
 	if !t.focused {
 		return
 	}
@@ -758,7 +761,7 @@ func (t *TextInput) HandleKey(ev *tcell.EventKey) {
 		}
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
 		if t.cursor > 0 {
-			t.text = append(t.text[:t.cursor-1], t.text[t.cursor:]...)
+			t.text = slices.Delete(t.text, t.cursor-1, t.cursor)
 			t.cursor--
 			if t.onChange != nil {
 				t.onChange(string(t.text))
@@ -766,7 +769,7 @@ func (t *TextInput) HandleKey(ev *tcell.EventKey) {
 		}
 	case tcell.KeyDelete:
 		if t.cursor < len(t.text) {
-			t.text = append(t.text[:t.cursor], t.text[t.cursor+1:]...)
+			t.text = slices.Delete(t.text, t.cursor, t.cursor+1)
 			if t.onChange != nil {
 				t.onChange(string(t.text))
 			}
@@ -781,7 +784,7 @@ func (t *TextInput) HandleKey(ev *tcell.EventKey) {
 	}
 }
 
-func (t *TextInput) HandleMouse(ev *tcell.EventMouse, rect Rect) {
+func (t *textField) HandleMouse(ev *tcell.EventMouse, rect Rect) {
 	x, _ := ev.Position()
 	// Clamp to available width
 	pos := x - rect.X
