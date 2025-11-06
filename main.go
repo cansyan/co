@@ -6,12 +6,13 @@ import (
 )
 
 func main() {
+	input := ui.Input()
 	buttonExit := ui.Button("Exit")
 	root := ui.VStack(
-		ui.Grow(ui.HStack(
+		ui.Fill(ui.HStack(
 			ui.Text("sidebar"),
 			ui.Divider(),
-			ui.Grow(ui.VStack(
+			ui.Fill(ui.VStack(
 				ui.HStack(
 					ui.Button("file1"), ui.Button("x|"),
 					ui.Button("file2"), ui.Button("x|"),
@@ -19,7 +20,7 @@ func main() {
 					buttonExit,
 				),
 				ui.Divider(),
-				ui.Grow(ui.Text("content area")),
+				input,
 			)),
 		).Spacing(1)),
 		ui.Divider(),
@@ -27,8 +28,8 @@ func main() {
 	)
 
 	app := ui.NewApp(root)
+	app.Focus(input)
 	buttonExit.OnClick(func() {
-		// panic("Exiting the application")
 		app.Stop()
 	})
 	if err := app.Run(); err != nil {

@@ -2,7 +2,10 @@
 package ui
 
 import (
+	"slices"
+
 	"github.com/gdamore/tcell/v2"
+	"github.com/mattn/go-runewidth"
 )
 
 type Screen = tcell.Screen
@@ -21,6 +24,7 @@ type Rect struct {
 	X, Y, W, H int
 }
 
+// Element is the interface implemented by all UI elements.
 type Element interface {
 	MinSize() (w, h int)
 	// Layout computes the layout node for this element given the position and size.
@@ -29,10 +33,21 @@ type Element interface {
 	Render(s Screen, rect Rect, style Style)
 }
 
+// Focuser is implemented by elements that can receive focus.
 type Focuser interface {
 	Focus()
 	Unfocus()
 	IsFocused() bool
+}
+
+// KeyHandler is implemented by elements that can handle key events.
+type KeyHandler interface {
+	HandleKey(ev *tcell.EventKey)
+}
+
+// MouseHandler is implemented by elements that can handle mouse events.
+type MouseHandler interface {
+	HandleMouse(ev *tcell.EventMouse, rect Rect)
 }
 
 // ---------------------------------------------------------------------
@@ -243,12 +258,12 @@ func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
 
 	// First pass: measure all children’s min sizes
 	totalMinHeight := 0
-	growCount := 0
+	fillCount := 0
 	for _, child := range v.children {
 		_, ch := child.MinSize()
 		totalMinHeight += ch
-		if _, ok := child.(*grow); ok {
-			growCount++
+		if _, ok := child.(*fill); ok {
+			fillCount++
 		}
 	}
 
@@ -262,8 +277,8 @@ func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
 			div.vertical = false
 		}
 		_, ch := child.MinSize()
-		if _, ok := child.(*grow); ok && growCount > 0 {
-			ch += extra / growCount
+		if _, ok := child.(*fill); ok && fillCount > 0 {
+			ch += extra / fillCount
 		}
 		if used+ch > h {
 			ch = h - used
@@ -323,12 +338,12 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 	}
 	// First pass: measure children
 	totalMinWidth := 0
-	growCount := 0
+	fillCount := 0
 	for _, child := range hs.children {
 		cw, _ := child.MinSize()
 		totalMinWidth += cw
-		if _, ok := child.(*grow); ok {
-			growCount++
+		if _, ok := child.(*fill); ok {
+			fillCount++
 		}
 	}
 
@@ -342,8 +357,8 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 			div.vertical = true
 		}
 		cw, _ := child.MinSize()
-		if _, ok := child.(*grow); ok && growCount > 0 {
-			cw += extra / growCount
+		if _, ok := child.(*fill); ok && fillCount > 0 {
+			cw += extra / fillCount
 		}
 		if used+cw > w {
 			cw = w - used
@@ -378,31 +393,31 @@ func (hs *hstack) Add(e Element) *hstack { hs.children = append(hs.children, e);
 // Spacing sets the spacing (in columns) between child elements.
 func (hs *hstack) Spacing(p int) *hstack { hs.spacing = p; return hs }
 
-type grow struct {
+type fill struct {
 	child Element
 }
 
-// Grow creates a layout element that expands to fill available space.
+// Fill expands its child to fill available space.
 // Should be used inside HStack or VStack.
-func Grow(child Element) *grow {
-	return &grow{child: child}
+func Fill(child Element) *fill {
+	return &fill{child: child}
 }
 
-func (g *grow) Layout(x, y, w, h int) *LayoutNode {
+func (f *fill) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
-		Element: g,
+		Element: f,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 		Children: []*LayoutNode{
-			g.child.Layout(x, y, w, h),
+			f.child.Layout(x, y, w, h),
 		},
 	}
 }
 
-func (g *grow) MinSize() (int, int) {
-	return g.child.MinSize()
+func (f *fill) MinSize() (int, int) {
+	return f.child.MinSize()
 }
 
-func (g *grow) Render(s Screen, rect Rect, parent Style) {
+func (f *fill) Render(s Screen, rect Rect, parent Style) {
 	// do nothing, child is rendered in drawTree()
 }
 
@@ -470,14 +485,14 @@ func (p *padding) Render(s Screen, rect Rect, parent Style) {
 	// do nothing, child is rendered in drawTree()
 }
 
-type Empty struct{}
+type empty struct{}
 
-func (e Empty) MinSize() (int, int)               { return 0, 0 }
-func (e Empty) Layout(x, y, w, h int) *LayoutNode { return nil }
-func (e Empty) Render(Screen, Rect, Style)        {}
+func (e empty) MinSize() (int, int)               { return 0, 0 }
+func (e empty) Layout(x, y, w, h int) *LayoutNode { return nil }
+func (e empty) Render(Screen, Rect, Style)        {}
 
-func Spacer() *grow {
-	return Grow(Empty{})
+func Spacer() *fill {
+	return Fill(empty{})
 }
 
 // ---------------------------------------------------------------------
@@ -519,27 +534,29 @@ func (a *App) Render() {
 	drawTree(a.Tree, a.Screen, Style{})
 }
 
-func (a *App) HitTest(px, py int) Element {
+// hitTest returns the topmost Element at the given screen coordinates.
+func (a *App) hitTest(px, py int) Element {
+	var walk func(node *LayoutNode, px, py int) Element
+	walk = func(node *LayoutNode, px, py int) Element {
+		if node == nil {
+			return nil
+		}
+		r := node.Rect
+		if px < r.X || py < r.Y || px >= r.X+r.W || py >= r.Y+r.H {
+			return nil
+		}
+
+		// Search children first (to get the most specific element)
+		for _, c := range node.Children {
+			if e := walk(c, px, py); e != nil {
+				return e
+			}
+		}
+		return node.Element
+	}
 	return walk(a.Tree, px, py)
 }
 
-func walk(node *LayoutNode, px, py int) Element {
-	if node == nil {
-		return nil
-	}
-	r := node.Rect
-	if px < r.X || py < r.Y || px >= r.X+r.W || py >= r.Y+r.H {
-		return nil
-	}
-
-	// Search children first (topmost)
-	for _, c := range node.Children {
-		if e := walk(c, px, py); e != nil {
-			return e
-		}
-	}
-	return node.Element
-}
 func (a *App) Run() error {
 	if err := a.Screen.Init(); err != nil {
 		return err
@@ -568,16 +585,24 @@ func (a *App) Run() error {
 			draw()
 		case *EventKey:
 			switch ev.Key() {
-			case tcell.KeyEscape:
+			case tcell.KeyEscape, tcell.KeyCtrlC:
 				return nil
+			default:
+				if a.Focuser != nil {
+					if handler, ok := a.Focuser.(KeyHandler); ok {
+						handler.HandleKey(ev)
+						draw()
+					}
+				}
 			}
 		case *EventMouse:
 			x, y := ev.Position()
-			e := a.HitTest(x, y)
+			e := a.hitTest(x, y)
 			if e == nil {
 				continue
 			}
-			// hover
+
+			// hover highlight
 			if e != a.hover {
 				if prevBtn, ok := a.hover.(*button); ok {
 					prevBtn.style.Reversed = !prevBtn.style.Reversed
@@ -588,25 +613,183 @@ func (a *App) Run() error {
 				a.hover = e
 				draw()
 			}
-			// click
+
+			// click to focus or activate
 			if ev.Buttons()&tcell.Button1 != 0 {
+				// Focus if element is focusable
+				if f, ok := e.(Focuser); ok {
+					a.Focus(f)
+					draw()
+				}
+
+				// locate cursor for TextInput
+				if h, ok := e.(MouseHandler); ok {
+					h.HandleMouse(ev, a.findRect(e))
+					draw()
+				}
+
+				// Handle button click
 				if btn, ok := e.(*button); ok && btn.onClick != nil {
 					btn.onClick()
 					draw()
 				}
-				continue
 			}
-
 		}
 	}
 }
 
 func (a *App) Focus(f Focuser) {
-	a.Focuser.Unfocus()
-	f.Focus()
+	if a.Focuser != nil {
+		a.Focuser.Unfocus()
+	}
 	a.Focuser = f
+	f.Focus()
+}
+
+func (a *App) findRect(e Element) Rect {
+	var search func(*LayoutNode) *LayoutNode
+	search = func(n *LayoutNode) *LayoutNode {
+		if n == nil {
+			return nil
+		}
+		if n.Element == e {
+			return n
+		}
+		for _, c := range n.Children {
+			if found := search(c); found != nil {
+				return found
+			}
+		}
+		return nil
+	}
+	if node := search(a.Tree); node != nil {
+		return node.Rect
+	}
+	return Rect{}
 }
 
 func (a *App) Stop() {
 	close(a.done)
+}
+
+type TextInput struct {
+	text     []rune
+	cursor   int
+	focused  bool
+	style    Style
+	onChange func(string)
+}
+
+func Input() *TextInput {
+	return &TextInput{
+		style: DefaultStyle,
+	}
+}
+
+func (t *TextInput) Text() string {
+	return string(t.text)
+}
+
+func (t *TextInput) SetText(s string) {
+	t.text = []rune(s)
+	t.cursor = len(t.text)
+}
+
+func (t *TextInput) OnChange(fn func(string)) *TextInput {
+	t.onChange = fn
+	return t
+}
+
+func (t *TextInput) Foreground(c string) *TextInput {
+	t.style.FG = tcell.ColorNames[c]
+	return t
+}
+func (t *TextInput) Background(c string) *TextInput {
+	t.style.BG = tcell.ColorNames[c]
+	return t
+}
+
+func (t *TextInput) MinSize() (int, int) { return 10, 1 }
+
+func (t *TextInput) Layout(x, y, w, h int) *LayoutNode {
+	return &LayoutNode{
+		Element: t,
+		Rect:    Rect{X: x, Y: y, W: w, H: h},
+	}
+}
+
+func (t *TextInput) Render(s Screen, rect Rect, parent Style) {
+	st := mergeStyle(parent, t.style).Apply()
+	var totalW int
+	for _, r := range t.text {
+		rw := runewidth.RuneWidth(r)
+		if totalW+rw > rect.W {
+			break
+		}
+		s.SetContent(rect.X+totalW, rect.Y, r, nil, st)
+		totalW += rw
+	}
+	if t.focused && t.cursor < rect.W {
+		s.ShowCursor(rect.X+t.cursor, rect.Y)
+	} else {
+		s.HideCursor()
+	}
+}
+
+// Focus implement Focuser
+func (t *TextInput) Focus()   { t.focused = true }
+func (t *TextInput) Unfocus() { t.focused = false }
+func (t *TextInput) IsFocused() bool {
+	return t.focused
+}
+
+func (t *TextInput) HandleKey(ev *tcell.EventKey) {
+	if !t.focused {
+		return
+	}
+	switch ev.Key() {
+	case tcell.KeyLeft:
+		if t.cursor > 0 {
+			t.cursor--
+		}
+	case tcell.KeyRight:
+		if t.cursor < len(t.text) {
+			t.cursor++
+		}
+	case tcell.KeyBackspace, tcell.KeyBackspace2:
+		if t.cursor > 0 {
+			t.text = append(t.text[:t.cursor-1], t.text[t.cursor:]...)
+			t.cursor--
+			if t.onChange != nil {
+				t.onChange(string(t.text))
+			}
+		}
+	case tcell.KeyDelete:
+		if t.cursor < len(t.text) {
+			t.text = append(t.text[:t.cursor], t.text[t.cursor+1:]...)
+			if t.onChange != nil {
+				t.onChange(string(t.text))
+			}
+		}
+	case tcell.KeyRune:
+		r := ev.Rune()
+		t.text = slices.Insert(t.text, t.cursor, r)
+		t.cursor++
+		if t.onChange != nil {
+			t.onChange(string(t.text))
+		}
+	}
+}
+
+func (t *TextInput) HandleMouse(ev *tcell.EventMouse, rect Rect) {
+	x, _ := ev.Position()
+	// Clamp to available width
+	pos := x - rect.X
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > len(t.text) {
+		pos = len(t.text)
+	}
+	t.cursor = pos
 }

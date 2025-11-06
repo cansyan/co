@@ -1,6 +1,5 @@
 TODO:
-[x] hover, click
-[ ] event handling
-[ ] cursor
-
-
+- [x] hover, click
+- [x] event handling
+- [x] cursor
+- [ ] partial redraw
