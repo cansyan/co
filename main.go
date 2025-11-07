@@ -13,13 +13,17 @@ import (
 
 func main() {
 	editor := TextEditor()
-	buttonExit := ui.Button("Exit")
+	buttonQuit := ui.Button("Quit")
 	root := ui.VStack(
 		ui.HStack(
-			ui.Button("file1"), ui.Button("x|"),
-			ui.Button("file2"), ui.Button("x|"),
+			ui.Button("file1"),
+			ui.Divider(),
+			ui.Button("file2"),
 			ui.Spacer(),
-			buttonExit,
+			ui.Button("New"),
+			ui.Button("Open"),
+			ui.Button("Close"),
+			buttonQuit,
 		),
 		ui.Divider(),
 		ui.Fill(editor),
@@ -27,9 +31,9 @@ func main() {
 		ui.Text("status"),
 	)
 
-	app := ui.NewApp(root)
+	app := ui.NewApp(ui.Border(root))
 	app.Focus(editor)
-	buttonExit.OnClick(func() {
+	buttonQuit.OnClick(func() {
 		app.Stop()
 	})
 	if err := app.Run(); err != nil {
@@ -292,7 +296,6 @@ func (t *textEditor) HandleMouse(ev *tcell.EventMouse, rect ui.Rect) {
 
 	currentLine := t.content[t.row]
 
-	// CRITICAL CHANGE: Subtract the line number width from the clicked X
 	clickedX := x - (rect.X + lineNumWidth)
 	if clickedX < 0 {
 		clickedX = 0
@@ -301,7 +304,6 @@ func (t *textEditor) HandleMouse(ev *tcell.EventMouse, rect ui.Rect) {
 	// 3. Calculate the target column (rune index)
 	targetCol := 0
 	displayWidth := 0
-
 	for i, r := range currentLine {
 		rw := runewidth.RuneWidth(r)
 

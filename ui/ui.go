@@ -1,4 +1,4 @@
-// Package ui provides a simple terminal UI toolkit built on top of tcell.
+// Package ui provides a simple text user interface toolkit built on top of tcell.
 package ui
 
 import (
@@ -145,7 +145,6 @@ type button struct {
 }
 
 // Button creates a new button element with the given label.
-// By default, the button has no border.
 func Button(label string) *button {
 	return &button{label: label, style: DefaultStyle}
 }
@@ -504,10 +503,11 @@ func Spacer() *fill {
 type App struct {
 	Root    Element
 	Screen  Screen
-	Focuser Focuser
+	Focuser Focuser // currently focused element
 	hover   Element
 	done    chan struct{}
-	Tree    *LayoutNode // layout tree
+	tree    *LayoutNode // layout tree
+	QuitKey tcell.Key   // key to quit the app, default is Escape
 }
 
 func NewApp(root Element) *App {
@@ -515,7 +515,12 @@ func NewApp(root Element) *App {
 	if err != nil {
 		panic(err)
 	}
-	return &App{Root: root, Screen: s, done: make(chan struct{})}
+	return &App{
+		Root:    root,
+		Screen:  s,
+		done:    make(chan struct{}),
+		QuitKey: tcell.KeyEscape,
+	}
 }
 
 func drawTree(node *LayoutNode, s Screen, style Style) {
@@ -532,8 +537,8 @@ func drawTree(node *LayoutNode, s Screen, style Style) {
 // Render build layout tree and render
 func (a *App) Render() {
 	w, h := a.Screen.Size()
-	a.Tree = a.Root.Layout(0, 0, w, h)
-	drawTree(a.Tree, a.Screen, DefaultStyle)
+	a.tree = a.Root.Layout(0, 0, w, h)
+	drawTree(a.tree, a.Screen, DefaultStyle)
 }
 
 // hitTest returns the topmost Element at the given screen coordinates.
@@ -556,7 +561,7 @@ func (a *App) hitTest(px, py int) Element {
 		}
 		return node.Element
 	}
-	return walk(a.Tree, px, py)
+	return walk(a.tree, px, py)
 }
 
 func (a *App) Run() error {
@@ -586,15 +591,16 @@ func (a *App) Run() error {
 			a.Screen.Sync()
 			draw()
 		case *EventKey:
-			switch ev.Key() {
-			case tcell.KeyEscape, tcell.KeyCtrlC:
+			if ev.Key() == a.QuitKey {
 				return nil
-			default:
-				if a.Focuser != nil {
-					if handler, ok := a.Focuser.(KeyHandler); ok {
-						handler.HandleKey(ev)
-						draw()
-					}
+			}
+
+			if a.Focuser != nil {
+				if handler, ok := a.Focuser.(KeyHandler); ok {
+					handler.HandleKey(ev)
+					// redrawing after every event is efficient enough
+					// and the mose concise for simple TUI
+					draw()
 				}
 			}
 		case *EventMouse:
@@ -624,7 +630,7 @@ func (a *App) Run() error {
 					draw()
 				}
 
-				// locate cursor for TextInput
+				// locate cursor
 				if h, ok := e.(MouseHandler); ok {
 					h.HandleMouse(ev, a.findRect(e))
 					draw()
@@ -664,7 +670,7 @@ func (a *App) findRect(e Element) Rect {
 		}
 		return nil
 	}
-	if node := search(a.Tree); node != nil {
+	if node := search(a.tree); node != nil {
 		return node.Rect
 	}
 	return Rect{}
@@ -795,4 +801,58 @@ func (t *textField) HandleMouse(ev *tcell.EventMouse, rect Rect) {
 		pos = len(t.text)
 	}
 	t.cursor = pos
+}
+
+type border struct {
+	child Element
+	style Style
+}
+
+// Border creates a layout element that draws a border around its child.
+func Border(child Element) *border {
+	return &border{child: child, style: DefaultStyle}
+}
+
+func (b *border) MinSize() (w, h int) {
+	cw, ch := b.child.MinSize()
+	return cw + 2, ch + 2
+}
+func (b *border) Layout(x, y, w, h int) *LayoutNode {
+	// Compute inner rectangle after border
+	innerX := x + 1
+	innerY := y + 1
+	innerW := w - 2
+	innerH := h - 2
+	if innerW < 0 {
+		innerW = 0
+	}
+	if innerH < 0 {
+		innerH = 0
+	}
+
+	return &LayoutNode{
+		Element: b,
+		Rect:    Rect{X: x, Y: y, W: w, H: h},
+		Children: []*LayoutNode{
+			b.child.Layout(innerX, innerY, innerW, innerH),
+		},
+	}
+}
+func (b *border) Render(s Screen, rect Rect, style Style) {
+	st := style.Merge(b.style).Apply()
+	// Top and bottom borders
+	for i := 0; i < rect.W; i++ {
+		s.SetContent(rect.X+i, rect.Y, '-', nil, st)
+		s.SetContent(rect.X+i, rect.Y+rect.H-1, '-', nil, st)
+	}
+	// Left and right borders
+	for i := 0; i < rect.H; i++ {
+		s.SetContent(rect.X, rect.Y+i, '|', nil, st)
+		s.SetContent(rect.X+rect.W-1, rect.Y+i, '|', nil, st)
+	}
+	// Corners
+	s.SetContent(rect.X, rect.Y, '+', nil, st)
+	s.SetContent(rect.X+rect.W-1, rect.Y, '+', nil, st)
+	s.SetContent(rect.X, rect.Y+rect.H-1, '+', nil, st)
+	s.SetContent(rect.X+rect.W-1, rect.Y+rect.H-1, '+', nil, st)
 }
