@@ -33,8 +33,8 @@ type Element interface {
 	Render(s Screen, rect Rect, style Style)
 }
 
-// Focuser is implemented by elements that can receive focus.
-type Focuser interface {
+// Focusable is implemented by elements that can receive focus.
+type Focusable interface {
 	Focus()
 	Unfocus()
 	IsFocused() bool
@@ -50,16 +50,13 @@ type MouseHandler interface {
 	HandleMouse(ev *tcell.EventMouse, rect Rect)
 }
 
-// ---------------------------------------------------------------------
-// 1. STYLE
-// ---------------------------------------------------------------------
-
 type Style struct {
-	FG       Color
-	BG       Color
-	Bold     bool
-	Italic   bool
-	Reversed bool
+	FG        Color
+	BG        Color
+	Reversed  bool
+	Bold      bool
+	Italic    bool
+	Underline bool
 }
 
 var DefaultStyle = Style{FG: tcell.ColorDefault, BG: tcell.ColorDefault}
@@ -77,6 +74,9 @@ func (s Style) Apply() tcell.Style {
 	}
 	if s.Italic {
 		st = st.Italic(true)
+	}
+	if s.Underline {
+		st = st.Underline(true)
 	}
 	if s.Reversed {
 		st = st.Reverse(true)
@@ -100,7 +100,7 @@ func (s Style) Merge(child Style) Style {
 }
 
 // ---------------------------------------------------------------------
-// 2. WIDGETS
+// components
 // ---------------------------------------------------------------------
 
 type text struct {
@@ -110,8 +110,9 @@ type text struct {
 
 func Text(c string) *text { return &text{content: c, style: DefaultStyle} }
 
-func (t *text) Bold() *text   { t.style.Bold = true; return t }
-func (t *text) Italic() *text { t.style.Italic = true; return t }
+func (t *text) Bold() *text      { t.style.Bold = true; return t }
+func (t *text) Italic() *text    { t.style.Italic = true; return t }
+func (t *text) Underline() *text { t.style.Underline = true; return t }
 func (t *text) Foreground(c string) *text {
 	t.style.FG = tcell.ColorNames[c]
 	return t
@@ -225,6 +226,7 @@ type vstack struct {
 	spacing  int
 }
 
+// VStack creates a vertical stack layout element.
 func VStack(children ...Element) *vstack {
 	return &vstack{children: children, style: DefaultStyle}
 }
@@ -314,6 +316,7 @@ type hstack struct {
 	spacing  int
 }
 
+// HStack creates a horizontal stack layout element.
 func HStack(children ...Element) *hstack {
 	return &hstack{children: children, style: DefaultStyle}
 }
@@ -503,7 +506,7 @@ func Spacer() *fill {
 type App struct {
 	Root    Element
 	Screen  Screen
-	Focuser Focuser // currently focused element
+	Focuser Focusable // currently focused element
 	hover   Element
 	done    chan struct{}
 	tree    *LayoutNode // layout tree
@@ -596,8 +599,8 @@ func (a *App) Run() error {
 			}
 
 			if a.Focuser != nil {
-				if handler, ok := a.Focuser.(KeyHandler); ok {
-					handler.HandleKey(ev)
+				if h, ok := a.Focuser.(KeyHandler); ok {
+					h.HandleKey(ev)
 					// redrawing after every event is efficient enough
 					// and the mose concise for simple TUI
 					draw()
@@ -622,31 +625,34 @@ func (a *App) Run() error {
 				draw()
 			}
 
-			// click to focus or activate
-			if ev.Buttons()&tcell.Button1 != 0 {
-				// Focus if element is focusable
-				if f, ok := e.(Focuser); ok {
-					a.Focus(f)
-					draw()
+			// click, drag, scroll
+			switch ev.Buttons() {
+			case tcell.Button1:
+				// left click
+				if btn, ok := e.(*button); ok && btn.onClick != nil {
+					btn.onClick()
 				}
-
+				if f, ok := e.(Focusable); ok {
+					a.Focus(f)
+				}
 				// locate cursor
 				if h, ok := e.(MouseHandler); ok {
 					h.HandleMouse(ev, a.findRect(e))
-					draw()
 				}
-
-				// Handle button click
-				if btn, ok := e.(*button); ok && btn.onClick != nil {
-					btn.onClick()
-					draw()
+				draw()
+			case tcell.WheelUp, tcell.WheelDown:
+				if h, ok := e.(MouseHandler); ok {
+					h.HandleMouse(ev, a.findRect(e))
 				}
+				draw()
+			default:
+				continue
 			}
 		}
 	}
 }
 
-func (a *App) Focus(f Focuser) {
+func (a *App) Focus(f Focusable) {
 	if a.Focuser != nil {
 		a.Focuser.Unfocus()
 	}
