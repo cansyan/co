@@ -1,13 +1,21 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"tui/ui"
 )
 
 func main() {
-	editor := ui.TextEditor()
 	buttonQuit := ui.Button("Quit")
+	statusBar := ui.Text("Status: Ready")
+	editor := ui.TextEditor()
+	editor.SetText("// Welcome to the Text Editor!\n\n")
+	editor.OnChange(func() {
+		row, col := editor.Cursor()
+		statusBar.SetText(fmt.Sprintf("Line %d, Column %d", row+1, col+1))
+	})
+
 	root := ui.VStack(
 		ui.HStack(
 			ui.Button("file1"),
@@ -22,7 +30,7 @@ func main() {
 		ui.Divider(),
 		ui.Fill(editor),
 		ui.Divider(),
-		ui.Text("status"),
+		ui.PaddingH(statusBar, 1),
 	)
 
 	app := ui.NewApp(ui.Border(root))
