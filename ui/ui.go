@@ -3,6 +3,7 @@ package ui
 
 import (
 	"fmt"
+	"log"
 	"slices"
 	"strings"
 
@@ -105,35 +106,35 @@ func (s Style) Merge(child Style) Style {
 // components
 // ---------------------------------------------------------------------
 
-type text struct {
+type Text struct {
 	content string
 	style   Style
 }
 
-func Text(c string) *text { return &text{content: c, style: DefaultStyle} }
+func NewText(c string) *Text { return &Text{content: c, style: DefaultStyle} }
 
-func (t *text) SetText(c string) { t.content = c }
+func (t *Text) SetText(c string) { t.content = c }
 
-func (t *text) Bold() *text      { t.style.Bold = true; return t }
-func (t *text) Italic() *text    { t.style.Italic = true; return t }
-func (t *text) Underline() *text { t.style.Underline = true; return t }
-func (t *text) Foreground(c string) *text {
+func (t *Text) Bold() *Text      { t.style.Bold = true; return t }
+func (t *Text) Italic() *Text    { t.style.Italic = true; return t }
+func (t *Text) Underline() *Text { t.style.Underline = true; return t }
+func (t *Text) Foreground(c string) *Text {
 	t.style.FG = tcell.ColorNames[c]
 	return t
 }
-func (t *text) Background(c string) *text {
+func (t *Text) Background(c string) *Text {
 	t.style.BG = tcell.ColorNames[c]
 	return t
 }
 
-func (t *text) MinSize() (int, int) { return len(t.content), 1 }
-func (t *text) Layout(x, y, w, h int) *LayoutNode {
+func (t *Text) MinSize() (int, int) { return len(t.content), 1 }
+func (t *Text) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: t,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 }
-func (t *text) Render(s Screen, rect Rect, style Style) {
+func (t *Text) Render(s Screen, rect Rect, style Style) {
 	st := style.Merge(t.style)
 	for i, r := range t.content {
 		if i >= rect.W {
@@ -143,36 +144,36 @@ func (t *text) Render(s Screen, rect Rect, style Style) {
 	}
 }
 
-type button struct {
-	label   string
+type Button struct {
+	Label   string
 	style   Style
 	onClick func()
 }
 
-// Button creates a new button element with the given label.
-func Button(label string) *button {
-	return &button{label: label, style: DefaultStyle}
+// NewButton creates a new button element with the given label.
+func NewButton(label string) *Button {
+	return &Button{Label: label, style: DefaultStyle}
 }
-func (b *button) Foreground(c string) *button {
+func (b *Button) Foreground(c string) *Button {
 	b.style.FG = tcell.ColorNames[c]
 	return b
 }
-func (b *button) Background(c string) *button {
+func (b *Button) Background(c string) *Button {
 	b.style.BG = tcell.ColorNames[c]
 	return b
 }
-func (b *button) OnClick(fn func()) *button { b.onClick = fn; return b }
+func (b *Button) OnClick(fn func()) *Button { b.onClick = fn; return b }
 
-func (b *button) MinSize() (int, int) { return len(b.label) + 2, 1 }
-func (b *button) Layout(x, y, w, h int) *LayoutNode {
+func (b *Button) MinSize() (int, int) { return runewidth.StringWidth(b.Label) + 2, 1 }
+func (b *Button) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: b,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 }
-func (b *button) Render(s Screen, rect Rect, style Style) {
+func (b *Button) Render(s Screen, rect Rect, style Style) {
 	st := style.Merge(b.style)
-	label := " " + b.label + " "
+	label := " " + b.Label + " "
 	for i, r := range label {
 		if i >= rect.W {
 			break
@@ -181,7 +182,7 @@ func (b *button) Render(s Screen, rect Rect, style Style) {
 	}
 }
 
-func (b *button) HandleMouse(ev *tcell.EventMouse, rect Rect) {
+func (b *Button) HandleMouse(ev *tcell.EventMouse, rect Rect) {
 	if ev.Buttons()&tcell.ButtonPrimary != 0 {
 		if b.onClick != nil {
 			b.onClick()
@@ -314,7 +315,7 @@ func (v *vstack) Render(s Screen, rect Rect, style Style) {
 	// do nothing, children are rendered in drawTree()
 }
 
-func (v *vstack) Add(e Element) *vstack { v.children = append(v.children, e); return v }
+func (v *vstack) Append(e Element) *vstack { v.children = append(v.children, e); return v }
 
 // Spacing sets the spacing (in rows) between child elements.
 func (v *vstack) Spacing(p int) *vstack {
@@ -404,7 +405,7 @@ func (hs *hstack) Background(color string) *hstack {
 	return hs
 }
 
-func (hs *hstack) Add(e Element) *hstack { hs.children = append(hs.children, e); return hs }
+func (hs *hstack) Append(e Element) *hstack { hs.children = append(hs.children, e); return hs }
 
 // Spacing sets the spacing (in columns) between child elements.
 func (hs *hstack) Spacing(p int) *hstack { hs.spacing = p; return hs }
@@ -570,13 +571,13 @@ func Spacer() *fill {
 // ---------------------------------------------------------------------
 
 type App struct {
-	Root    Element
-	Screen  Screen
-	Focuser Focusable // currently focused element
-	hover   Element
-	done    chan struct{}
-	tree    *LayoutNode // layout tree
-	QuitKey tcell.Key   // key to quit the app, default is Escape
+	Root     Element
+	Screen   Screen
+	Focusing Element
+	hover    Element
+	done     chan struct{}
+	tree     *LayoutNode // layout tree
+	QuitKey  tcell.Key   // key to quit the app, default is Escape
 }
 
 func NewApp(root Element) *App {
@@ -664,8 +665,8 @@ func (a *App) Run() error {
 				return nil
 			}
 
-			if a.Focuser != nil {
-				if h, ok := a.Focuser.(KeyHandler); ok {
+			if a.Focusing != nil {
+				if h, ok := a.Focusing.(KeyHandler); ok {
 					h.HandleKey(ev)
 					// redrawing after every event is efficient enough
 					// and the mose concise for simple TUI
@@ -681,10 +682,10 @@ func (a *App) Run() error {
 
 			// hover highlight
 			if e != a.hover {
-				if prevBtn, ok := a.hover.(*button); ok {
+				if prevBtn, ok := a.hover.(*Button); ok {
 					prevBtn.style.Reversed = !prevBtn.style.Reversed
 				}
-				if btn, ok := e.(*button); ok {
+				if btn, ok := e.(*Button); ok {
 					btn.style.Reversed = !btn.style.Reversed
 				}
 				a.hover = e
@@ -694,9 +695,11 @@ func (a *App) Run() error {
 			// click, drag, scroll
 			switch ev.Buttons() {
 			case tcell.ButtonPrimary:
-				if f, ok := e.(Focusable); ok {
-					a.Focus(f)
+				a.Focus(e)
+				if a.Focusing == nil {
+					a.Screen.HideCursor()
 				}
+
 				if h, ok := e.(MouseHandler); ok {
 					h.HandleMouse(ev, a.findRect(e))
 				}
@@ -713,12 +716,24 @@ func (a *App) Run() error {
 	}
 }
 
-func (a *App) Focus(f Focusable) {
-	if a.Focuser != nil {
-		a.Focuser.Unfocus()
+func (a *App) Focus(e Element) {
+	if a.Focusing == e {
+		return
 	}
-	a.Focuser = f
+
+	if a.Focusing != nil {
+		if f, ok := a.Focusing.(Focusable); ok {
+			f.Unfocus()
+		}
+		a.Focusing = nil
+	}
+
+	f, ok := e.(Focusable)
+	if !ok {
+		return
+	}
 	f.Focus()
+	a.Focusing = e
 }
 
 func (a *App) findRect(e Element) Rect {
@@ -747,7 +762,8 @@ func (a *App) Stop() {
 	close(a.done)
 }
 
-type textField struct {
+// TextField is a single-line editable text input field.
+type TextField struct {
 	text     []rune
 	cursor   int
 	focused  bool
@@ -755,46 +771,45 @@ type textField struct {
 	onChange func(string)
 }
 
-// TextField creates a single-line editable text input.
-func TextField() *textField {
-	return &textField{
+func NewTextField() *TextField {
+	return &TextField{
 		style: DefaultStyle,
 	}
 }
 
-func (t *textField) Text() string {
+func (t *TextField) Text() string {
 	return string(t.text)
 }
 
-func (t *textField) SetText(s string) {
+func (t *TextField) SetText(s string) {
 	t.text = []rune(s)
 	t.cursor = len(t.text)
 }
 
-func (t *textField) OnChange(fn func(string)) *textField {
+func (t *TextField) OnChange(fn func(string)) *TextField {
 	t.onChange = fn
 	return t
 }
 
-func (t *textField) Foreground(c string) *textField {
+func (t *TextField) Foreground(c string) *TextField {
 	t.style.FG = tcell.ColorNames[c]
 	return t
 }
-func (t *textField) Background(c string) *textField {
+func (t *TextField) Background(c string) *TextField {
 	t.style.BG = tcell.ColorNames[c]
 	return t
 }
 
-func (t *textField) MinSize() (int, int) { return 10, 1 }
+func (t *TextField) MinSize() (int, int) { return 10, 1 }
 
-func (t *textField) Layout(x, y, w, h int) *LayoutNode {
+func (t *TextField) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: t,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 }
 
-func (t *textField) Render(s Screen, rect Rect, style Style) {
+func (t *TextField) Render(s Screen, rect Rect, style Style) {
 	st := style.Merge(t.style).Apply()
 	var totalW int
 	for _, r := range t.text {
@@ -813,13 +828,13 @@ func (t *textField) Render(s Screen, rect Rect, style Style) {
 }
 
 // Focus implement Focuser
-func (t *textField) Focus()   { t.focused = true }
-func (t *textField) Unfocus() { t.focused = false }
-func (t *textField) IsFocused() bool {
+func (t *TextField) Focus()   { t.focused = true }
+func (t *TextField) Unfocus() { t.focused = false }
+func (t *TextField) IsFocused() bool {
 	return t.focused
 }
 
-func (t *textField) HandleKey(ev *tcell.EventKey) {
+func (t *TextField) HandleKey(ev *tcell.EventKey) {
 	if !t.focused {
 		return
 	}
@@ -857,7 +872,7 @@ func (t *textField) HandleKey(ev *tcell.EventKey) {
 	}
 }
 
-func (t *textField) HandleMouse(ev *tcell.EventMouse, rect Rect) {
+func (t *TextField) HandleMouse(ev *tcell.EventMouse, rect Rect) {
 	x, _ := ev.Position()
 	// Clamp to available width
 	pos := x - rect.X
@@ -870,8 +885,8 @@ func (t *textField) HandleMouse(ev *tcell.EventMouse, rect Rect) {
 	t.cursor = pos
 }
 
-// textEditor is a multi-line editable text area.
-type textEditor struct {
+// TextEditor is a multi-line editable text area.
+type TextEditor struct {
 	content  [][]rune // simple 2D slice of runes, avoid over-engineering
 	row      int      // Current line index
 	col      int      // Cursor column index (rune index)
@@ -882,24 +897,23 @@ type textEditor struct {
 	onChange func()
 }
 
-// TextEditor creates a multi-line editable text area.
-func TextEditor() *textEditor {
-	return &textEditor{
+func NewTextEditor() *TextEditor {
+	return &TextEditor{
 		content: [][]rune{{}}, // Start with one empty line of runes
 		style:   DefaultStyle,
 	}
 }
 
-func (t *textEditor) Foreground(c string) *textEditor {
+func (t *TextEditor) Foreground(c string) *TextEditor {
 	t.style.FG = tcell.ColorNames[c]
 	return t
 }
-func (t *textEditor) Background(c string) *textEditor {
+func (t *TextEditor) Background(c string) *TextEditor {
 	t.style.BG = tcell.ColorNames[c]
 	return t
 }
 
-func (t *textEditor) String() string {
+func (t *TextEditor) String() string {
 	var lines []string
 	for _, line := range t.content {
 		lines = append(lines, string(line))
@@ -907,7 +921,7 @@ func (t *textEditor) String() string {
 	return strings.Join(lines, "\n")
 }
 
-func (t *textEditor) SetText(s string) {
+func (t *TextEditor) SetText(s string) {
 	lines := strings.Split(s, "\n")
 	t.content = make([][]rune, len(lines))
 	for i, line := range lines {
@@ -918,7 +932,7 @@ func (t *textEditor) SetText(s string) {
 	t.adjustCol()
 }
 
-func (t *textEditor) adjustCol() {
+func (t *TextEditor) adjustCol() {
 	if t.row < len(t.content) {
 		lineLen := len(t.content[t.row])
 		if t.col > lineLen {
@@ -927,19 +941,19 @@ func (t *textEditor) adjustCol() {
 	}
 }
 
-func (t *textEditor) MinSize() (int, int) {
+func (t *TextEditor) MinSize() (int, int) {
 	// Fixed width: 5 columns for line numbers + 20 for content
 	return 25, 5
 }
 
-func (t *textEditor) Layout(x, y, w, h int) *LayoutNode {
+func (t *TextEditor) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: t,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 }
 
-func (t *textEditor) Render(s Screen, rect Rect, style Style) {
+func (t *TextEditor) Render(s Screen, rect Rect, style Style) {
 	st := style.Merge(t.style).Apply()
 	t.viewH = rect.H
 
@@ -1025,11 +1039,11 @@ func (t *textEditor) Render(s Screen, rect Rect, style Style) {
 }
 
 // implement Focusable interface
-func (t *textEditor) Focus()          { t.focused = true }
-func (t *textEditor) Unfocus()        { t.focused = false }
-func (t *textEditor) IsFocused() bool { return t.focused }
+func (t *TextEditor) Focus()          { t.focused = true }
+func (t *TextEditor) Unfocus()        { t.focused = false }
+func (t *TextEditor) IsFocused() bool { return t.focused }
 
-func (t *textEditor) HandleKey(ev *tcell.EventKey) {
+func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 	if !t.focused {
 		return
 	}
@@ -1108,7 +1122,7 @@ func (t *textEditor) HandleKey(ev *tcell.EventKey) {
 	t.onChange()
 }
 
-func (t *textEditor) HandleMouse(ev *tcell.EventMouse, rect Rect) {
+func (t *TextEditor) HandleMouse(ev *tcell.EventMouse, rect Rect) {
 	if ev.Buttons()&tcell.WheelUp != 0 {
 		t.topRow = max(0, t.topRow-3)
 		return
@@ -1189,7 +1203,7 @@ func (t *textEditor) HandleMouse(ev *tcell.EventMouse, rect Rect) {
 }
 
 // adjustScroll ensures the cursor (t.row) is visible on the screen.
-func (t *textEditor) adjustScroll() {
+func (t *TextEditor) adjustScroll() {
 	// Scroll down if cursor is below the visible area
 	if t.row >= t.topRow+t.viewH {
 		t.topRow = t.row - t.viewH + 1
@@ -1201,11 +1215,11 @@ func (t *textEditor) adjustScroll() {
 }
 
 // Cursor returns the current cursor position
-func (t *textEditor) Cursor() (row int, col int) {
+func (t *TextEditor) Cursor() (row int, col int) {
 	return t.row, t.col
 }
 
 // OnChange sets a callback function that is called whenever the text content changes.
-func (t *textEditor) OnChange(fn func()) {
+func (t *TextEditor) OnChange(fn func()) {
 	t.onChange = fn
 }
