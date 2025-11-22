@@ -1,9 +1,9 @@
-// Package ui provides a simple text user interface toolkit built on top of tcell.
+// Package ui provides a lightweight text user interface toolkit built on top of tcell.
+// It offers a clean event–state–render pipeline with basic UI components and layouts.
 package ui
 
 import (
 	"fmt"
-	"log"
 	"slices"
 	"strings"
 
@@ -148,6 +148,7 @@ type Button struct {
 	Label   string
 	style   Style
 	onClick func()
+	hovered bool
 }
 
 // NewButton creates a new button element with the given label.
@@ -172,13 +173,16 @@ func (b *Button) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 func (b *Button) Render(s Screen, rect Rect, style Style) {
-	st := style.Merge(b.style)
+	st := style.Merge(b.style).Apply()
+	if b.hovered {
+		st = st.Dim(false).Bold(true) // or underline
+	}
 	label := " " + b.Label + " "
 	for i, r := range label {
 		if i >= rect.W {
 			break
 		}
-		s.SetContent(rect.X+i, rect.Y, r, nil, st.Apply())
+		s.SetContent(rect.X+i, rect.Y, r, nil, st)
 	}
 }
 
@@ -571,13 +575,13 @@ func Spacer() *fill {
 // ---------------------------------------------------------------------
 
 type App struct {
-	Root     Element
-	Screen   Screen
-	Focusing Element
-	hover    Element
-	done     chan struct{}
-	tree     *LayoutNode // layout tree
-	QuitKey  tcell.Key   // key to quit the app, default is Escape
+	Root    Element
+	Screen  Screen
+	focused Focusable
+	hovered *Button
+	done    chan struct{}
+	tree    *LayoutNode // layout tree
+	QuitKey tcell.Key   // key to quit the app, default is Escape
 }
 
 func NewApp(root Element) *App {
@@ -665,8 +669,8 @@ func (a *App) Run() error {
 				return nil
 			}
 
-			if a.Focusing != nil {
-				if h, ok := a.Focusing.(KeyHandler); ok {
+			if a.focused != nil {
+				if h, ok := a.focused.(KeyHandler); ok {
 					h.HandleKey(ev)
 					// redrawing after every event is efficient enough
 					// and the mose concise for simple TUI
@@ -680,23 +684,31 @@ func (a *App) Run() error {
 				continue
 			}
 
-			// hover highlight
-			if e != a.hover {
-				if prevBtn, ok := a.hover.(*Button); ok {
-					prevBtn.style.Reversed = !prevBtn.style.Reversed
+			// hover over button
+			if b, ok := e.(*Button); !ok {
+				if a.hovered != nil {
+					a.hovered.hovered = false
+					a.hovered = nil
+					draw()
 				}
-				if btn, ok := e.(*Button); ok {
-					btn.style.Reversed = !btn.style.Reversed
+			} else if b != a.hovered {
+				if a.hovered != nil {
+					a.hovered.hovered = false
 				}
-				a.hover = e
+				b.hovered = true
+				a.hovered = b
 				draw()
 			}
 
 			// click, drag, scroll
 			switch ev.Buttons() {
 			case tcell.ButtonPrimary:
-				a.Focus(e)
-				if a.Focusing == nil {
+				a.Blur()
+				if f, ok := e.(Focusable); ok {
+					a.Focus(f)
+				}
+
+				if a.focused == nil {
 					a.Screen.HideCursor()
 				}
 
@@ -716,24 +728,20 @@ func (a *App) Run() error {
 	}
 }
 
-func (a *App) Focus(e Element) {
-	if a.Focusing == e {
-		return
-	}
-
-	if a.Focusing != nil {
-		if f, ok := a.Focusing.(Focusable); ok {
-			f.Unfocus()
-		}
-		a.Focusing = nil
-	}
-
-	f, ok := e.(Focusable)
-	if !ok {
+func (a *App) Focus(f Focusable) {
+	if a.focused == f {
 		return
 	}
 	f.Focus()
-	a.Focusing = e
+	a.focused = f
+}
+
+func (a *App) Blur() {
+	if a.focused == nil {
+		return
+	}
+	a.focused.Unfocus()
+	a.focused = nil
 }
 
 func (a *App) findRect(e Element) Rect {
@@ -1038,7 +1046,6 @@ func (t *TextEditor) Render(s Screen, rect Rect, style Style) {
 	}
 }
 
-// implement Focusable interface
 func (t *TextEditor) Focus()          { t.focused = true }
 func (t *TextEditor) Unfocus()        { t.focused = false }
 func (t *TextEditor) IsFocused() bool { return t.focused }
@@ -1223,3 +1230,111 @@ func (t *TextEditor) Cursor() (row int, col int) {
 func (t *TextEditor) OnChange(fn func()) {
 	t.onChange = fn
 }
+
+type ListItem struct {
+	Text    string
+	OnClick func()
+}
+
+type List struct {
+	items       []ListItem
+	hovered     int // -1 means no hover, changes on mouse move
+	selected    int // -1 means nothing selected, changes only on click
+	style       Style
+	hoverStyle  Style
+	selectStyle Style // e.g. reversed background
+}
+
+func NewList() *List {
+	hoverStyle := DefaultStyle
+	hoverStyle.Bold = true
+	selectStyle := DefaultStyle
+	selectStyle.Reversed = true
+
+	return &List{
+		hovered:     -1,
+		selected:    -1,
+		style:       DefaultStyle,
+		hoverStyle:  hoverStyle,
+		selectStyle: selectStyle,
+	}
+}
+
+func (l *List) Add(text string, onClick func()) {
+	l.items = append(l.items, ListItem{Text: text, OnClick: onClick})
+}
+
+func (l *List) MinSize() (int, int) {
+	maxW := 10
+	for _, it := range l.items {
+		if w := runewidth.StringWidth(it.Text); w > maxW {
+			maxW = w
+		}
+	}
+	return maxW + 4, len(l.items) // a bit of padding + one row per item
+}
+
+func (l *List) Layout(x, y, w, h int) *LayoutNode {
+	return &LayoutNode{
+		Element: l,
+		Rect:    Rect{X: x, Y: y, W: w, H: h},
+	}
+}
+
+func (l *List) Render(s Screen, rect Rect, style Style) {
+	base := style.Merge(l.style)
+
+	for i, item := range l.items {
+		if i >= rect.H {
+			break
+		}
+
+		st := base
+		switch i {
+		case l.selected:
+			st = st.Merge(l.selectStyle)
+		case l.hovered:
+			st = st.Merge(l.hoverStyle)
+		}
+
+		label := fmt.Sprintf("  %s  ", item.Text)
+		if w := runewidth.StringWidth(label); w > rect.W {
+			label = runewidth.Truncate(label, rect.W, "…")
+		}
+
+		for col, r := range label {
+			s.SetContent(rect.X+col, rect.Y+i, r, nil, st.Apply())
+		}
+	}
+}
+
+func (l *List) HandleMouse(ev *tcell.EventMouse, rect Rect) {
+	_, my := ev.Position()
+	row := my - rect.Y
+
+	if row < 0 || row >= len(l.items) {
+		if l.hovered != -1 {
+			l.hovered = -1
+			// redraw will happen automatically
+		}
+		return
+	}
+
+	if l.hovered != row {
+		l.hovered = row
+	}
+
+	if ev.Buttons()&tcell.ButtonPrimary != 0 {
+		l.selected = row
+		if l.items[row].OnClick != nil {
+			l.items[row].OnClick()
+		}
+	}
+}
+
+// Focus makes List focusable so clicking it blurs text fields (optional but nice)
+func (l *List) Focus() {}
+func (l *List) Unfocus() {
+	l.hovered = -1
+}
+func (l *List) IsFocused() bool { return false } // we don’t need real focus, just blur others
