@@ -21,6 +21,7 @@ type Color = tcell.Color
 type Element interface {
 	MinSize() (w, h int)
 	// Layout computes the layout node for this element given the position and size.
+	// Elements inside the node will be rendered by drawTree()
 	Layout(x, y, w, h int) *LayoutNode
 	// Render draws the element onto the screen within the given rectangle and style.
 	Render(s Screen, rect Rect, style Style)
@@ -30,7 +31,7 @@ type Element interface {
 	OnMouseDown(x, y int) // x, y is relative to element
 	OnMouseUp(x, y int)   // x, y is relative to element
 	OnMouseWheel(dy int)  // vertical scroll delta (dy > 0 means scroll up, dy < 0 means scroll down)
-	OnFocus()
+	OnFocus() Element     // returns the element that should receive focus, can be self or child
 	OnBlur()
 }
 
@@ -55,7 +56,7 @@ func (b *BasicElement) OnMouseLeave()                           {}
 func (b *BasicElement) OnMouseDown(x, y int)                    {}
 func (b *BasicElement) OnMouseUp(x, y int)                      {}
 func (b *BasicElement) OnMouseWheel(dy int)                     {}
-func (b *BasicElement) OnFocus()                                {}
+func (b *BasicElement) OnFocus() Element                        { return b }
 func (b *BasicElement) OnBlur()                                 {}
 
 // KeyHandler is implemented by elements that can handle key events.
@@ -720,16 +721,14 @@ func (a *App) Run() error {
 			e := node.Element
 			switch ev.Buttons() {
 			case tcell.ButtonPrimary:
+				e.OnMouseDown(x-node.Rect.X, y-node.Rect.Y)
 				// focus/blur
 				if e != a.focused {
 					if a.focused != nil {
 						a.focused.OnBlur()
 					}
-					e.OnFocus()
-					a.focused = e
+					a.focused = e.OnFocus()
 				}
-
-				e.OnMouseDown(x-node.Rect.X, y-node.Rect.Y)
 			case tcell.WheelUp:
 				e.OnMouseWheel(-1)
 			case tcell.WheelDown:
@@ -821,8 +820,8 @@ func (t *TextField) Render(s Screen, rect Rect, style Style) {
 	}
 }
 
-func (t *TextField) OnFocus() { t.focused = true }
-func (t *TextField) OnBlur()  { t.focused = false }
+func (t *TextField) OnFocus() Element { t.focused = true; return t }
+func (t *TextField) OnBlur()          { t.focused = false }
 
 func (t *TextField) HandleKey(ev *tcell.EventKey) {
 	if !t.focused {
@@ -1026,8 +1025,8 @@ func (t *TextEditor) Render(s Screen, rect Rect, style Style) {
 	}
 }
 
-func (t *TextEditor) OnFocus() { t.focused = true }
-func (t *TextEditor) OnBlur()  { t.focused = false }
+func (t *TextEditor) OnFocus() Element { t.focused = true; return t }
+func (t *TextEditor) OnBlur()          { t.focused = false }
 
 func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 	if !t.focused {
@@ -1294,4 +1293,111 @@ func (l *List) OnMouseUp(x, y int) {
 		}
 	}
 	l.pressed = false
+}
+
+type Tabs struct {
+	BasicElement
+	labels   []string
+	items    []Element
+	selected int
+	pressed  bool
+}
+
+func (t *Tabs) Append(label string, content Element) *Tabs {
+	t.labels = append(t.labels, label)
+	t.items = append(t.items, content)
+	return t
+}
+
+func (t *Tabs) MinSize() (int, int) {
+	maxW, maxH := 0, 0
+	for _, item := range t.items {
+		w, h := item.MinSize()
+		if w > maxW {
+			maxW = w
+		}
+		if h > maxH {
+			maxH = h
+		}
+	}
+	return maxW, maxH + 1 // +1 for tab labels
+}
+
+func (t *Tabs) Layout(x, y, w, h int) *LayoutNode {
+	n := &LayoutNode{
+		Element: t,
+		Rect:    Rect{X: x, Y: y, W: w, H: h},
+	}
+
+	// Layout the selected tab content
+	if t.selected >= 0 && t.selected < len(t.items) {
+		childNode := t.items[t.selected].Layout(x, y+1, w, h-1)
+		n.Children = append(n.Children, childNode)
+	}
+	return n
+}
+
+func (t *Tabs) Render(s Screen, rect Rect, style Style) {
+	st := style.Merge(DefaultStyle).Apply()
+
+	// Render tab labels
+	currentX := rect.X
+	for i, label := range t.labels {
+		tabLabel := " " + label + " "
+		tabW := runewidth.StringWidth(tabLabel)
+		if currentX+tabW > rect.X+rect.W {
+			break // no more space
+		}
+
+		tabStyle := st
+		if i == t.selected {
+			tabStyle = tabStyle.Reverse(true)
+		}
+
+		for col, r := range tabLabel {
+			s.SetContent(currentX+col, rect.Y, r, nil, tabStyle)
+		}
+		currentX += tabW
+	}
+
+	// tab content rendered by drawTree()
+
+	if t.selected >= 0 && t.selected < len(t.items) {
+		switch t.items[t.selected].(type) {
+		case *TextEditor, *TextField:
+		default:
+			s.HideCursor()
+		}
+	}
+}
+
+func (t *Tabs) OnMouseDown(x, y int) {
+	t.pressed = true
+	if y == 0 {
+		// Click on tab labels
+		currentX := 0
+		for i, label := range t.labels {
+			tabLabel := " " + label + " "
+			tabW := runewidth.StringWidth(tabLabel)
+			if x >= currentX && x < currentX+tabW {
+				t.selected = i
+				t.items[i].OnFocus()
+			} else {
+				t.items[i].OnBlur()
+			}
+			currentX += tabW
+		}
+	}
+}
+
+func (t *Tabs) OnMouseUp(x, y int) {
+	t.pressed = false
+}
+
+func (t *Tabs) OnFocus() Element {
+	return t.items[t.selected].OnFocus()
+}
+
+func (t *Tabs) OnBlur() {
+	t.items[t.selected].OnBlur()
 }
