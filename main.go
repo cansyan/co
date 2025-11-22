@@ -24,38 +24,35 @@ func main() {
 		statusBar.SetText(fmt.Sprintf("Line %d, Column %d", row+1, col+1))
 	})
 
+	sideBar := ui.NewList()
+	sideBar.Append("file1.txt", nil)
+	sideBar.Append("file2.txt", nil)
+
 	tabs := new(Tabs)
 	tabs.Append("tab1", editor)
 	tabs.Append("tab2", ui.NewText("demo..."))
 
 	root := ui.VStack(
-		// ui.HStack(
-		// 	ui.NewButton("file1"),
-		// 	ui.Divider(),
-		// 	ui.NewButton("file2"),
-		// 	ui.Spacer(),
-		// 	ui.NewButton("New"),
-		// 	ui.NewButton("Open"),
-		// 	ui.NewButton("Close"),
-		// 	buttonQuit,
-		// ),
-		// ui.Divider(),
-		// ui.Fill(editor),
-		ui.Fill(tabs),
+		ui.Fill(ui.HStack(
+			sideBar,
+			ui.Divider(),
+			ui.Fill(tabs),
+		)),
 		ui.Divider(),
 		ui.PaddingH(statusBar, 1),
 	)
 
 	app := ui.NewApp(ui.Border(root))
-	buttonQuit.OnClick(func() {
+	buttonQuit.OnClick = func() {
 		app.Stop()
-	})
+	}
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}
 }
 
 type Tabs struct {
+	ui.BasicElement
 	Selected int
 	Items    []*Tab
 }
@@ -67,13 +64,13 @@ type Tab struct {
 
 func (t *Tabs) Append(name string, e ui.Element) {
 	button := ui.NewButton(name)
-	button.OnClick(func() {
+	button.OnClick = func() {
 		for i, tab := range t.Items {
 			if tab.Button == button {
 				t.Selected = i
 			}
 		}
-	})
+	}
 	tab := &Tab{
 		Button:  button,
 		Content: e,
