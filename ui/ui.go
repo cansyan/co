@@ -612,13 +612,13 @@ func Spacer() *fill {
 // ---------------------------------------------------------------------
 
 type App struct {
-	Root    Element
 	Screen  Screen
-	focused Element
-	hovered Element
-	done    chan struct{}
+	Root    Element
+	focus   Element
+	hover   Element
 	tree    *LayoutNode // layout tree
-	QuitKey tcell.Key   // key to quit the app, default is Escape
+	done    chan struct{}
+	QuitKey tcell.Key // key to quit the app, default is Escape
 }
 
 func NewApp(root Element) *App {
@@ -671,6 +671,13 @@ func hitTest(node *LayoutNode, x, y int) *LayoutNode {
 	return node
 }
 
+func (a *App) SetFocus(e Element) {
+	if a.focus != nil {
+		a.focus.OnBlur()
+	}
+	a.focus = e.OnFocus()
+}
+
 func (a *App) Run() error {
 	if err := a.Screen.Init(); err != nil {
 		return err
@@ -702,8 +709,8 @@ func (a *App) Run() error {
 				return nil
 			}
 
-			if a.focused != nil {
-				if h, ok := a.focused.(KeyHandler); ok {
+			if a.focus != nil {
+				if h, ok := a.focus.(KeyHandler); ok {
 					h.HandleKey(ev)
 					// redrawing after every event is efficient enough
 					// and the mose concise for simple TUI
@@ -723,11 +730,11 @@ func (a *App) Run() error {
 			case tcell.ButtonPrimary:
 				e.OnMouseDown(x-node.Rect.X, y-node.Rect.Y)
 				// focus/blur
-				if e != a.focused {
-					if a.focused != nil {
-						a.focused.OnBlur()
+				if e != a.focus {
+					if a.focus != nil {
+						a.focus.OnBlur()
 					}
-					a.focused = e.OnFocus()
+					a.focus = e.OnFocus()
 				}
 			case tcell.WheelUp:
 				e.OnMouseWheel(-1)
@@ -735,12 +742,12 @@ func (a *App) Run() error {
 				e.OnMouseWheel(1)
 			default:
 				// hover enter/leave
-				if e != a.hovered {
-					if a.hovered != nil {
-						a.hovered.OnMouseLeave()
+				if e != a.hover {
+					if a.hover != nil {
+						a.hover.OnMouseLeave()
 					}
 					e.OnMouseEnter()
-					a.hovered = e
+					a.hover = e
 				}
 
 				e.OnMouseUp(x-node.Rect.X, y-node.Rect.Y)
@@ -1215,7 +1222,6 @@ type List struct {
 	style       Style
 	hoverStyle  Style
 	selectStyle Style // e.g. reversed background
-	pressed     bool
 }
 
 func NewList() *List {
@@ -1278,21 +1284,12 @@ func (l *List) Render(s Screen, rect Rect, style Style) {
 }
 
 func (l *List) OnMouseDown(x, y int) {
-	l.pressed = true
-}
-
-func (l *List) OnMouseUp(x, y int) {
-	if !l.pressed {
-		return
-	}
-
 	if y >= 0 && y < len(l.items) {
 		l.selected = y
 		if l.items[y].OnClick != nil {
 			l.items[y].OnClick()
 		}
 	}
-	l.pressed = false
 }
 
 type Tabs struct {
@@ -1300,7 +1297,6 @@ type Tabs struct {
 	labels   []string
 	items    []Element
 	selected int
-	pressed  bool
 }
 
 func (t *Tabs) Append(label string, content Element) *Tabs {
@@ -1360,7 +1356,7 @@ func (t *Tabs) Render(s Screen, rect Rect, style Style) {
 		currentX += tabW
 	}
 
-	// tab content rendered by drawTree()
+	// tab content rendered in drawTree()
 
 	if t.selected >= 0 && t.selected < len(t.items) {
 		switch t.items[t.selected].(type) {
@@ -1372,7 +1368,6 @@ func (t *Tabs) Render(s Screen, rect Rect, style Style) {
 }
 
 func (t *Tabs) OnMouseDown(x, y int) {
-	t.pressed = true
 	if y == 0 {
 		// Click on tab labels
 		currentX := 0
@@ -1390,10 +1385,7 @@ func (t *Tabs) OnMouseDown(x, y int) {
 	}
 }
 
-func (t *Tabs) OnMouseUp(x, y int) {
-	t.pressed = false
-}
-
+// OnFocus sets focus to the selected tab's content.
 func (t *Tabs) OnFocus() Element {
 	return t.items[t.selected].OnFocus()
 }

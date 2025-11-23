@@ -43,6 +43,7 @@ func main() {
 	)
 
 	app := ui.NewApp(ui.Border(root))
+	app.SetFocus(tabs)
 	buttonQuit.OnClick = func() {
 		app.Stop()
 	}
