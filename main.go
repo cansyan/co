@@ -15,7 +15,10 @@ func main() {
 	// defer f.Close()
 	// log.SetOutput(f)
 
-	buttonQuit := ui.NewButton("Quit")
+	sideBar := ui.NewList()
+	sideBar.Append("file1.txt", nil)
+	sideBar.Append("file2.txt", nil)
+
 	statusBar := ui.NewText("Status: Ready")
 	editor := ui.NewTextEditor()
 	editor.SetText("// Welcome to the Text Editor!\n\n")
@@ -24,11 +27,7 @@ func main() {
 		statusBar.SetText(fmt.Sprintf("Line %d, Column %d", row+1, col+1))
 	})
 
-	sideBar := ui.NewList()
-	sideBar.Append("file1.txt", nil)
-	sideBar.Append("file2.txt", nil)
-
-	tabs := new(ui.Tabs)
+	tabs := &ui.Tabs{Closable: true}
 	tabs.Append("tab1", editor)
 	tabs.Append("tab2", ui.NewText("demo..."))
 
@@ -44,9 +43,7 @@ func main() {
 
 	app := ui.NewApp(ui.Border(root))
 	app.SetFocus(tabs)
-	buttonQuit.OnClick = func() {
-		app.Stop()
-	}
+
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}
