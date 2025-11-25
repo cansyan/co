@@ -25,24 +25,45 @@ type Element interface {
 	Layout(x, y, w, h int) *LayoutNode
 	// Render draws the element onto the screen within the given rectangle and style.
 	Render(s Screen, rect Rect, style Style)
+}
 
-	// hover
+// Hoverable represents an element that can respond to mouse hover.
+// localX and localY indicate the mouse position relative to the element's top-left corner.
+type Hoverable interface {
 	OnMouseEnter()
 	OnMouseLeave()
-	OnMouseMove(rx, ry int) // rx, ry is coordinates relative to element
+	OnMouseMove(localX, localY int)
+}
 
-	// click
-	OnMouseDown(rx, ry int) // rx, ry is coordinates relative to element
-	OnMouseUp(rx, ry int)   // rx, ry is coordinates relative to element
+// Clickable represents an element that can respond to mouse click actions.
+// localX and localY indicate the mouse position relative to the element's top-left corner.
+type Clickable interface {
+	// OnMouseDown is called when the mouse button is pressed.
+	OnMouseDown(localX, localY int)
+	// OnMouseUp is called when the mouse button is released.
+	OnMouseUp(localX, localY int)
+}
 
-	// scroll
-	OnMouseWheel(dy int) // vertical scroll delta (dy > 0 means scroll up, dy < 0 means scroll down)
+// Scrollable represents an element that can respond to vertical scroll events.
+type Scrollable interface {
+	// OnScroll is called when a scroll action occurs.
+	// dy is the scroll delta: dy > 0 means scrolling up, dy < 0 means scrolling down.
+	OnScroll(dy int)
+}
 
-	OnFocus() Element // returns the element that should receive focus, can be self or child
+// Focusable represents an element that can receive focus.
+type Focusable interface {
+	// FocusTarget determines which element should actually receive focus.
+	//   - To retain focus on the element itself, return the element (self).
+	//   - To delegate focus to a child element, return that child.
+	FocusTarget() Element
+	// OnFocus is called when the element receives focus.
+	OnFocus()
+	// OnBlur is called when the element loses focus.
 	OnBlur()
 }
 
-// KeyHandler is the interface that editable elements can implement to handle key events.
+// KeyHandler is the interface that focusable elements can implement to handle key events.
 type KeyHandler interface {
 	HandleKey(ev *tcell.EventKey)
 }
@@ -56,23 +77,6 @@ type LayoutNode struct {
 type Rect struct {
 	X, Y, W, H int
 }
-
-// BasicElement provides default no-op implementations for Element methods.
-type BasicElement struct{}
-
-func (b *BasicElement) MinSize() (int, int)               { panic("not implemented") }
-func (b *BasicElement) Layout(x, y, w, h int) *LayoutNode { panic("not implemented") }
-func (b *BasicElement) Render(s Screen, rect Rect, style Style) {
-	// children may render themselves in drawTree()
-}
-func (b *BasicElement) OnMouseEnter()        {}
-func (b *BasicElement) OnMouseLeave()        {}
-func (b *BasicElement) OnMouseMove(x, y int) {}
-func (b *BasicElement) OnMouseDown(x, y int) {}
-func (b *BasicElement) OnMouseUp(x, y int)   {}
-func (b *BasicElement) OnMouseWheel(dy int)  {}
-func (b *BasicElement) OnFocus() Element     { return b }
-func (b *BasicElement) OnBlur()              {}
 
 type Style struct {
 	FG        Color
@@ -140,7 +144,6 @@ func renderString(s Screen, x, y, w int, str string, style tcell.Style) {
 // ---------------------------------------------------------------------
 
 type Text struct {
-	BasicElement
 	content string
 	style   Style
 }
@@ -174,7 +177,6 @@ func (t *Text) Render(s Screen, rect Rect, style Style) {
 }
 
 type Button struct {
-	BasicElement
 	Label   string
 	style   Style
 	OnClick func()
@@ -221,6 +223,8 @@ func (b *Button) OnMouseLeave() {
 	b.pressed = false // cancel
 }
 
+func (b *Button) OnMouseMove(rx, ry int) {}
+
 func (b *Button) OnMouseDown(x, y int) {
 	b.pressed = true
 }
@@ -236,7 +240,6 @@ func (b *Button) OnMouseUp(x, y int) {
 }
 
 type divider struct {
-	BasicElement
 	vertical bool
 	style    Style
 }
@@ -280,7 +283,6 @@ func (d *divider) Render(s Screen, rect Rect, style Style) {
 // ---------------------------------------------------------------------
 
 type vstack struct {
-	BasicElement
 	children []Element
 	style    Style
 	spacing  int
@@ -371,7 +373,6 @@ func (v *vstack) Spacing(p int) *vstack {
 }
 
 type hstack struct {
-	BasicElement
 	children []Element
 	style    Style
 	spacing  int
@@ -459,7 +460,6 @@ func (hs *hstack) Append(e Element) *hstack { hs.children = append(hs.children, 
 func (hs *hstack) Spacing(p int) *hstack { hs.spacing = p; return hs }
 
 type fill struct {
-	BasicElement
 	child Element
 }
 
@@ -488,7 +488,6 @@ func (f *fill) Render(s Screen, rect Rect, style Style) {
 }
 
 type padding struct {
-	BasicElement
 	child                    Element
 	top, right, bottom, left int
 }
@@ -553,7 +552,6 @@ func (p *padding) Render(s Screen, rect Rect, style Style) {
 }
 
 type border struct {
-	BasicElement
 	child Element
 	style Style
 }
@@ -607,9 +605,7 @@ func (b *border) Render(s Screen, rect Rect, style Style) {
 	s.SetContent(rect.X+rect.W-1, rect.Y+rect.H-1, '+', nil, st)
 }
 
-type empty struct {
-	BasicElement
-}
+type empty struct{}
 
 func (e empty) MinSize() (int, int)               { return 0, 0 }
 func (e empty) Layout(x, y, w, h int) *LayoutNode { return nil }
@@ -626,11 +622,13 @@ func Spacer() *fill {
 type App struct {
 	Screen  Screen
 	Root    Element
-	focus   Element
+	focused Element
 	hover   Element
 	tree    *LayoutNode // layout tree
 	done    chan struct{}
 	QuitKey tcell.Key // key to quit the app, default is Escape
+
+	clickX, clickY int
 }
 
 func NewApp(root Element) *App {
@@ -664,30 +662,56 @@ func (a *App) Render() {
 	drawTree(a.tree, a.Screen, DefaultStyle)
 }
 
-// find deepest node whose Rect contains (x, y)
-func hitTest(node *LayoutNode, x, y int) *LayoutNode {
+// find deepest matched element, return the coordinates relative to it
+func hitTest(node *LayoutNode, x, y int) (Element, int, int) {
 	if node == nil {
-		return nil
+		return nil, 0, 0
 	}
 	r := node.Rect
 	if x < r.X || y < r.Y || x >= r.X+r.W || y >= r.Y+r.H {
-		return nil
+		return nil, 0, 0
 	}
 
-	// Search children first (to get the most specific element)
-	for _, c := range node.Children {
-		if n := hitTest(c, x, y); n != nil {
-			return n
+	// search the deepest child
+	for _, child := range node.Children {
+		if e, ox, oy := hitTest(child, x, y); e != nil {
+			return e, ox, oy
 		}
 	}
-	return node
+
+	localX := x - node.Rect.X
+	localY := y - node.Rect.Y
+	return node.Element, localX, localY
 }
 
-func (a *App) SetFocus(e Element) {
-	if a.focus != nil {
-		a.focus.OnBlur()
+func (a *App) Focus(e Element) {
+	if e == nil {
+		return
 	}
-	a.focus = e.OnFocus()
+
+	if a.focused != nil {
+		if f, ok := a.focused.(Focusable); ok {
+			f.OnBlur()
+		}
+	}
+	a.focused = a.resolveFocus(e)
+	if f, ok := a.focused.(Focusable); ok {
+		f.OnFocus()
+	}
+}
+
+func (a *App) resolveFocus(e Element) Element {
+	for {
+		f, ok := e.(Focusable)
+		if !ok {
+			return e
+		}
+		t := f.FocusTarget()
+		if t == e {
+			return e
+		}
+		e = t
+	}
 }
 
 func (a *App) Run() error {
@@ -704,8 +728,6 @@ func (a *App) Run() error {
 	}
 	draw()
 
-	var lastClickX, lastClickY int
-
 	for {
 		select {
 		case <-a.done:
@@ -717,66 +739,84 @@ func (a *App) Run() error {
 		switch ev := ev.(type) {
 		case *EventResize:
 			a.Screen.Sync()
-			draw()
 		case *EventKey:
-			if ev.Key() == a.QuitKey {
-				return nil
-			}
-
-			if a.focus != nil {
-				if h, ok := a.focus.(KeyHandler); ok {
-					h.HandleKey(ev)
-					// redrawing after every event is efficient enough
-					// and the mose concise for simple TUI
-					draw()
-				}
-			}
+			a.handleKey(ev)
 		case *EventMouse:
-			x, y := ev.Position()
-			node := hitTest(a.tree, x, y)
-			if node == nil {
-				continue
-			}
-
-			e := node.Element
-			switch ev.Buttons() {
-			case tcell.ButtonPrimary:
-				lastClickX, lastClickY = x, y
-				e.OnMouseDown(x-node.Rect.X, y-node.Rect.Y)
-				// focus/blur
-				if e != a.focus {
-					if a.focus != nil {
-						a.focus.OnBlur()
-					}
-					a.focus = e.OnFocus()
-					// if the new focus is not editable, hide cursor
-					if _, ok := a.focus.(KeyHandler); !ok {
-						a.Screen.HideCursor()
-					}
-				}
-			case tcell.WheelUp:
-				e.OnMouseWheel(-1)
-			case tcell.WheelDown:
-				e.OnMouseWheel(1)
-			default:
-				// hover enter/leave
-				if e != a.hover {
-					if a.hover != nil {
-						a.hover.OnMouseLeave()
-					}
-					e.OnMouseEnter()
-					a.hover = e
-				} else {
-					e.OnMouseMove(x-node.Rect.X, y-node.Rect.Y)
-				}
-
-				// distinguish click and move
-				if x == lastClickX && y == lastClickY {
-					e.OnMouseUp(x-node.Rect.X, y-node.Rect.Y)
-				}
-			}
-			draw()
+			a.handleMouse(ev)
 		}
+		// redrawing after every event, keep simple and concise
+		draw()
+	}
+}
+
+func (a *App) handleKey(ev *tcell.EventKey) {
+	if ev.Key() == a.QuitKey {
+		close(a.done)
+		return
+	}
+
+	if a.focused == nil {
+		return
+	}
+	if h, ok := a.focused.(KeyHandler); ok {
+		h.HandleKey(ev)
+	}
+}
+
+// hover -> mouse down -> focus -> mouse up -> scroll
+func (a *App) handleMouse(ev *tcell.EventMouse) {
+	x, y := ev.Position()
+	e, lx, ly := hitTest(a.tree, x, y)
+	if e == nil {
+		return
+	}
+
+	a.updateHover(e, lx, ly)
+
+	switch ev.Buttons() {
+	case tcell.ButtonPrimary:
+		a.clickX, a.clickY = x, y
+		// mouse down
+		if i, ok := e.(Clickable); ok {
+			i.OnMouseDown(lx, ly)
+		}
+
+		// shift focus
+		a.Focus(e)
+		if _, ok := a.focused.(KeyHandler); !ok {
+			a.Screen.HideCursor()
+		}
+	case tcell.WheelUp:
+		if i, ok := e.(Scrollable); ok {
+			i.OnScroll(-1)
+		}
+	case tcell.WheelDown:
+		if i, ok := e.(Scrollable); ok {
+			i.OnScroll(1)
+		}
+	default:
+		// mouse up
+		if x == a.clickX && y == a.clickY {
+			if i, ok := e.(Clickable); ok {
+				i.OnMouseUp(lx, ly)
+			}
+		}
+	}
+}
+
+func (a *App) updateHover(e Element, ox, oy int) {
+	if a.hover != e {
+		if h, ok := a.hover.(Hoverable); ok {
+			h.OnMouseLeave()
+		}
+		if h, ok := e.(Hoverable); ok {
+			h.OnMouseEnter()
+		}
+		a.hover = e
+	}
+
+	if h, ok := e.(Hoverable); ok {
+		h.OnMouseMove(ox, oy)
 	}
 }
 
@@ -786,10 +826,9 @@ func (a *App) Stop() {
 
 // TextField is a single-line editable text input field.
 type TextField struct {
-	BasicElement
 	text     []rune
 	cursor   int
-	focused  bool
+	active   bool
 	style    Style
 	onChange func(string)
 }
@@ -843,18 +882,19 @@ func (t *TextField) Render(s Screen, rect Rect, style Style) {
 		s.SetContent(rect.X+totalW, rect.Y, r, nil, st)
 		totalW += rw
 	}
-	if t.focused && t.cursor < rect.W {
+	if t.active && t.cursor < rect.W {
 		s.ShowCursor(rect.X+t.cursor, rect.Y)
 	} else {
 		s.HideCursor()
 	}
 }
 
-func (t *TextField) OnFocus() Element { t.focused = true; return t }
-func (t *TextField) OnBlur()          { t.focused = false }
+func (t *TextField) FocusTarget() Element { return t }
+func (t *TextField) OnFocus()             { t.active = true }
+func (t *TextField) OnBlur()              { t.active = false }
 
 func (t *TextField) HandleKey(ev *tcell.EventKey) {
-	if !t.focused {
+	if !t.active {
 		return
 	}
 	switch ev.Key() {
@@ -903,7 +943,6 @@ func (t *TextField) OnMouseDown(x, y int) {
 
 // TextEditor is a multi-line editable text area.
 type TextEditor struct {
-	BasicElement
 	content  [][]rune // simple 2D slice of runes, avoid over-engineering
 	row      int      // Current line index
 	col      int      // Cursor column index (rune index)
@@ -1051,9 +1090,9 @@ func (t *TextEditor) Render(s Screen, rect Rect, style Style) {
 		s.HideCursor()
 	}
 }
-
-func (t *TextEditor) OnFocus() Element { t.focused = true; return t }
-func (t *TextEditor) OnBlur()          { t.focused = false }
+func (t *TextEditor) FocusTarget() Element { return t }
+func (t *TextEditor) OnFocus()             { t.focused = true }
+func (t *TextEditor) OnBlur()              { t.focused = false }
 
 func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 	if !t.focused {
@@ -1133,7 +1172,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 
 	t.onChange()
 }
-
+func (t *TextEditor) OnMouseUp(x, y int) {}
 func (t *TextEditor) OnMouseDown(x, y int) {
 	// --- 1. Recalculate Content Area Offset (Must match Render() logic) ---
 	lineNumWidth := 5
@@ -1198,7 +1237,7 @@ func (t *TextEditor) OnMouseDown(x, y int) {
 	t.onChange()
 }
 
-func (t *TextEditor) OnMouseWheel(dy int) {
+func (t *TextEditor) OnScroll(dy int) {
 	if dy < 0 {
 		// scroll down
 		t.offsetY = max(0, t.offsetY+dy)
@@ -1235,8 +1274,7 @@ type ListItem struct {
 	OnClick func()
 }
 
-type List struct {
-	BasicElement
+type ListView struct {
 	items       []ListItem
 	hovered     int // -1 means nothing hovered
 	selected    int // -1 means nothing selected, changes only on click
@@ -1245,13 +1283,13 @@ type List struct {
 	selectStyle Style // e.g. reversed background
 }
 
-func NewList() *List {
+func NewListView() *ListView {
 	hoverStyle := DefaultStyle
 	hoverStyle.Bold = true
 	selectStyle := DefaultStyle
 	selectStyle.Reversed = true
 
-	return &List{
+	return &ListView{
 		hovered:     -1,
 		selected:    -1,
 		style:       DefaultStyle,
@@ -1260,11 +1298,11 @@ func NewList() *List {
 	}
 }
 
-func (l *List) Append(text string, onClick func()) {
+func (l *ListView) Append(text string, onClick func()) {
 	l.items = append(l.items, ListItem{Text: text, OnClick: onClick})
 }
 
-func (l *List) MinSize() (int, int) {
+func (l *ListView) MinSize() (int, int) {
 	maxW := 10
 	for _, it := range l.items {
 		if w := runewidth.StringWidth(it.Text); w > maxW {
@@ -1274,14 +1312,14 @@ func (l *List) MinSize() (int, int) {
 	return maxW + 2, len(l.items) // a bit of padding + one row per item
 }
 
-func (l *List) Layout(x, y, w, h int) *LayoutNode {
+func (l *ListView) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: l,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 }
 
-func (l *List) Render(s Screen, rect Rect, style Style) {
+func (l *ListView) Render(s Screen, rect Rect, style Style) {
 	base := style.Merge(l.style)
 
 	for i, item := range l.items {
@@ -1308,7 +1346,7 @@ func (l *List) Render(s Screen, rect Rect, style Style) {
 	}
 }
 
-func (l *List) OnMouseDown(x, y int) {
+func (l *ListView) OnMouseDown(x, y int) {
 	if y >= 0 && y < len(l.items) {
 		l.selected = y
 		if l.items[y].OnClick != nil {
@@ -1317,7 +1355,11 @@ func (l *List) OnMouseDown(x, y int) {
 	}
 }
 
-func (l *List) OnMouseMove(rx, ry int) {
+func (l *ListView) OnMouseUp(x, y int) {}
+
+func (l *ListView) OnMouseEnter() {}
+
+func (l *ListView) OnMouseMove(rx, ry int) {
 	if ry < 0 || ry >= len(l.items) {
 		l.hovered = -1
 		return
@@ -1325,10 +1367,9 @@ func (l *List) OnMouseMove(rx, ry int) {
 	l.hovered = ry
 }
 
-func (l *List) OnMouseLeave() { l.hovered = -1 }
+func (l *ListView) OnMouseLeave() { l.hovered = -1 }
 
-type Tabs struct {
-	BasicElement
+type TabView struct {
 	labels   []*TabLabel
 	bodys    []Element
 	active   int
@@ -1336,8 +1377,7 @@ type Tabs struct {
 }
 
 type TabLabel struct {
-	BasicElement
-	t       *Tabs
+	t       *TabView
 	text    string
 	hovered bool
 }
@@ -1348,7 +1388,10 @@ func (l *TabLabel) OnMouseEnter() {
 func (l *TabLabel) OnMouseLeave() {
 	l.hovered = false
 }
+func (l *TabLabel) OnMouseMove(rx, ry int) {
+}
 
+func (l *TabLabel) OnMouseUp(rx, ry int) {}
 func (l *TabLabel) OnMouseDown(rx, ry int) {
 	// Check if clicked on close 'x'
 	labelWidth, _ := l.MinSize()
@@ -1403,21 +1446,24 @@ func (l *TabLabel) Render(s Screen, rect Rect, style Style) {
 	renderString(s, rect.X, rect.Y, rect.W, label, st)
 }
 
-func (l *TabLabel) OnFocus() Element {
+func (l *TabLabel) FocusTarget() Element {
 	if l.t.active < 0 || l.t.active >= len(l.t.bodys) {
 		return l.t
 	}
-	return l.t.bodys[l.t.active].OnFocus()
+	return l.t.bodys[l.t.active]
 }
 
-func (t *Tabs) Append(label string, content Element) *Tabs {
+func (l *TabLabel) OnFocus() {}
+func (l *TabLabel) OnBlur()  {}
+
+func (t *TabView) Append(label string, content Element) *TabView {
 	tabLabel := &TabLabel{t: t, text: label}
 	t.labels = append(t.labels, tabLabel)
 	t.bodys = append(t.bodys, content)
 	return t
 }
 
-func (t *Tabs) Close(i int) {
+func (t *TabView) Close(i int) {
 	if i < 0 || i >= len(t.labels) {
 		return
 	}
@@ -1431,7 +1477,7 @@ func (t *Tabs) Close(i int) {
 	}
 }
 
-func (t *Tabs) MinSize() (int, int) {
+func (t *TabView) MinSize() (int, int) {
 	maxW, maxH := 0, 0
 	for _, e := range t.bodys {
 		w, h := e.MinSize()
@@ -1445,7 +1491,7 @@ func (t *Tabs) MinSize() (int, int) {
 	return maxW, maxH + 1 // +1 for tab labels
 }
 
-func (t *Tabs) Layout(x, y, w, h int) *LayoutNode {
+func (t *TabView) Layout(x, y, w, h int) *LayoutNode {
 	n := &LayoutNode{
 		Element: t,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
@@ -1467,27 +1513,22 @@ func (t *Tabs) Layout(x, y, w, h int) *LayoutNode {
 	return n
 }
 
-func (t *Tabs) Render(s Screen, rect Rect, style Style) {
+func (t *TabView) Render(s Screen, rect Rect, style Style) {
 	// do nothing, children render themselves
 }
 
-func (t *Tabs) SetActive(i int) {
+func (t *TabView) SetActive(i int) {
 	if i >= 0 && i < len(t.bodys) {
 		t.active = i
 	}
 }
 
-// OnFocus sets focus to the selected tab's content.
-func (t *Tabs) OnFocus() Element {
+func (t *TabView) FocusTarget() Element {
 	if t.active < 0 || t.active >= len(t.bodys) {
 		return t
 	}
-	return t.bodys[t.active].OnFocus()
+	return t.bodys[t.active]
 }
 
-func (t *Tabs) OnBlur() {
-	if t.active < 0 || t.active >= len(t.bodys) {
-		return
-	}
-	t.bodys[t.active].OnBlur()
-}
+func (t *TabView) OnFocus() {}
+func (t *TabView) OnBlur()  {}

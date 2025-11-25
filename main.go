@@ -15,7 +15,7 @@ func main() {
 	// defer f.Close()
 	// log.SetOutput(f)
 
-	sideBar := ui.NewList()
+	sideBar := ui.NewListView()
 	sideBar.Append("file1.txt", nil)
 	sideBar.Append("file2.txt", nil)
 
@@ -27,7 +27,7 @@ func main() {
 		statusBar.SetText(fmt.Sprintf("Line %d, Column %d", row+1, col+1))
 	})
 
-	tabs := &ui.Tabs{Closable: true}
+	tabs := &ui.TabView{Closable: true}
 	tabs.Append("tab1", editor)
 	tabs.Append("tab2", ui.NewText("demo..."))
 
@@ -42,7 +42,7 @@ func main() {
 	)
 
 	app := ui.NewApp(ui.Border(root))
-	app.SetFocus(tabs)
+	app.Focus(tabs)
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
