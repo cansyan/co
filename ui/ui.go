@@ -5,6 +5,7 @@ package ui
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
@@ -21,7 +22,6 @@ type Color = tcell.Color
 type Element interface {
 	MinSize() (w, h int)
 	// Layout computes the layout node for this element given the position and size.
-	// Elements inside the node will be rendered by drawTree()
 	Layout(x, y, w, h int) *LayoutNode
 	// Render draws the element onto the screen within the given rectangle and style.
 	Render(s Screen, rect Rect, style Style)
@@ -628,7 +628,7 @@ type App struct {
 	done    chan struct{}
 	QuitKey tcell.Key // key to quit the app, default is Escape
 
-	clickX, clickY int
+	clickPoint Point
 }
 
 func NewApp(root Element) *App {
@@ -655,33 +655,44 @@ func drawTree(node *LayoutNode, s Screen, style Style) {
 	}
 }
 
-// Render build layout tree and render
+// Render builds and render the layout tree
 func (a *App) Render() {
 	w, h := a.Screen.Size()
 	a.tree = a.Root.Layout(0, 0, w, h)
 	drawTree(a.tree, a.Screen, DefaultStyle)
 }
 
-// find deepest matched element, return the coordinates relative to it
-func hitTest(node *LayoutNode, x, y int) (Element, int, int) {
-	if node == nil {
-		return nil, 0, 0
+// Point represent a position in the screen coordinate.
+// TODO: Point or bare (x, y) ?
+type Point struct {
+	X, Y int
+}
+
+func (p Point) In(r Rect) bool {
+	return r.X <= p.X && p.X < r.X+r.W && r.Y <= p.Y && p.Y < r.Y+r.H
+}
+
+// hitTest walks the layout tree to find the deepest matching element
+// located at the given point in absolute coordinates, returns the element
+// and a point converted into the node's local coordinate space.
+func hitTest(n *LayoutNode, p Point) (Element, Point) {
+	if n == nil {
+		return nil, Point{}
 	}
-	r := node.Rect
-	if x < r.X || y < r.Y || x >= r.X+r.W || y >= r.Y+r.H {
-		return nil, 0, 0
+	if !p.In(n.Rect) {
+		return nil, Point{}
 	}
 
-	// search the deepest child
-	for _, child := range node.Children {
-		if e, ox, oy := hitTest(child, x, y); e != nil {
-			return e, ox, oy
+	for _, child := range n.Children {
+		if e, local := hitTest(child, p); e != nil {
+			return e, local
 		}
 	}
 
-	localX := x - node.Rect.X
-	localY := y - node.Rect.Y
-	return node.Element, localX, localY
+	return n.Element, Point{
+		X: p.X - n.Rect.X,
+		Y: p.Y - n.Rect.Y,
+	}
 }
 
 func (a *App) Focus(e Element) {
@@ -766,45 +777,46 @@ func (a *App) handleKey(ev *tcell.EventKey) {
 // hover -> mouse down -> focus -> mouse up -> scroll
 func (a *App) handleMouse(ev *tcell.EventMouse) {
 	x, y := ev.Position()
-	e, lx, ly := hitTest(a.tree, x, y)
-	if e == nil {
+	hit, local := hitTest(a.tree, Point{X: x, Y: y})
+	if hit == nil {
 		return
 	}
+	lx, ly := local.X, local.Y
 
-	a.updateHover(e, lx, ly)
+	a.updateHover(hit, lx, ly)
 
 	switch ev.Buttons() {
 	case tcell.ButtonPrimary:
-		a.clickX, a.clickY = x, y
+		a.clickPoint = Point{X: x, Y: y}
 		// mouse down
-		if i, ok := e.(Clickable); ok {
+		if i, ok := hit.(Clickable); ok {
 			i.OnMouseDown(lx, ly)
 		}
 
 		// shift focus
-		a.Focus(e)
+		a.Focus(hit)
 		if _, ok := a.focused.(KeyHandler); !ok {
 			a.Screen.HideCursor()
 		}
 	case tcell.WheelUp:
-		if i, ok := e.(Scrollable); ok {
+		if i, ok := hit.(Scrollable); ok {
 			i.OnScroll(-1)
 		}
 	case tcell.WheelDown:
-		if i, ok := e.(Scrollable); ok {
+		if i, ok := hit.(Scrollable); ok {
 			i.OnScroll(1)
 		}
 	default:
 		// mouse up
-		if x == a.clickX && y == a.clickY {
-			if i, ok := e.(Clickable); ok {
+		if x == a.clickPoint.X && y == a.clickPoint.Y {
+			if i, ok := hit.(Clickable); ok {
 				i.OnMouseUp(lx, ly)
 			}
 		}
 	}
 }
 
-func (a *App) updateHover(e Element, ox, oy int) {
+func (a *App) updateHover(e Element, lx, ly int) {
 	if a.hover != e {
 		if h, ok := a.hover.(Hoverable); ok {
 			h.OnMouseLeave()
@@ -816,7 +828,7 @@ func (a *App) updateHover(e Element, ox, oy int) {
 	}
 
 	if h, ok := e.(Hoverable); ok {
-		h.OnMouseMove(ox, oy)
+		h.OnMouseMove(lx, ly)
 	}
 }
 
@@ -1021,7 +1033,7 @@ func (t *TextEditor) Render(s Screen, rect Rect, style Style) {
 	if numLines == 0 {
 		numLines = 1
 	}
-	actualNumDigits := len(fmt.Sprintf("%d", numLines))
+	actualNumDigits := len(strconv.Itoa(numLines))
 	if actualNumDigits > 4 {
 		lineNumWidth = actualNumDigits + 1
 	} else {
@@ -1270,7 +1282,7 @@ func (t *TextEditor) OnChange(fn func()) {
 }
 
 type ListItem struct {
-	Text    string
+	label   string
 	OnClick func()
 }
 
@@ -1299,13 +1311,13 @@ func NewListView() *ListView {
 }
 
 func (l *ListView) Append(text string, onClick func()) {
-	l.items = append(l.items, ListItem{Text: text, OnClick: onClick})
+	l.items = append(l.items, ListItem{label: text, OnClick: onClick})
 }
 
 func (l *ListView) MinSize() (int, int) {
 	maxW := 10
 	for _, it := range l.items {
-		if w := runewidth.StringWidth(it.Text); w > maxW {
+		if w := runewidth.StringWidth(it.label); w > maxW {
 			maxW = w
 		}
 	}
@@ -1335,7 +1347,7 @@ func (l *ListView) Render(s Screen, rect Rect, style Style) {
 			st = st.Merge(l.hoverStyle)
 		}
 
-		label := fmt.Sprintf(" %s ", item.Text)
+		label := fmt.Sprintf(" %s ", item.label)
 		if w := runewidth.StringWidth(label); w > rect.W {
 			label = runewidth.Truncate(label, rect.W, "…")
 		}
@@ -1369,16 +1381,9 @@ func (l *ListView) OnMouseMove(rx, ry int) {
 
 func (l *ListView) OnMouseLeave() { l.hovered = -1 }
 
-type TabView struct {
-	labels   []*TabLabel
-	bodys    []Element
-	active   int
-	Closable bool
-}
-
 type TabLabel struct {
-	t       *TabView
-	text    string
+	t       *TabsView
+	label   string
 	hovered bool
 }
 
@@ -1393,13 +1398,12 @@ func (l *TabLabel) OnMouseMove(rx, ry int) {
 
 func (l *TabLabel) OnMouseUp(rx, ry int) {}
 func (l *TabLabel) OnMouseDown(rx, ry int) {
-	// Check if clicked on close 'x'
-	labelWidth, _ := l.MinSize()
-	if l.t.Closable && rx >= labelWidth-2 {
-		// Close tab
+	// Check if clicked on the 'x' label
+	w, _ := l.MinSize()
+	if l.t.Closable && rx >= w-2 {
 		for i, label := range l.t.labels {
 			if label == l {
-				l.t.Close(i)
+				l.t.Remove(i)
 			}
 		}
 		return
@@ -1414,7 +1418,7 @@ func (l *TabLabel) OnMouseDown(rx, ry int) {
 }
 
 func (l *TabLabel) MinSize() (int, int) {
-	return len(l.text) + 4, 1
+	return 17, 1
 }
 
 func (l *TabLabel) Layout(x, y, w, h int) *LayoutNode {
@@ -1425,25 +1429,28 @@ func (l *TabLabel) Layout(x, y, w, h int) *LayoutNode {
 }
 
 func (l *TabLabel) Render(s Screen, rect Rect, style Style) {
-	label := fmt.Sprintf(" %s ", l.text)
-	var needClose bool
 	st := style.Apply()
 	if l == l.t.labels[l.t.active] {
 		st = st.Underline(true).Bold(true)
-		if l.t.Closable {
-			needClose = true
-		}
 	} else if l.hovered {
 		st = st.Reverse(true)
-		if l.t.Closable {
-			needClose = true
-		}
-	}
-	if needClose {
-		label += "x "
 	}
 
-	renderString(s, rect.X, rect.Y, rect.W, label, st)
+	format := " %s "
+	labelWidth := rect.W - 2
+	if l.t.Closable {
+		format = " %s x "
+		labelWidth -= 2
+	}
+	var label string
+	if runewidth.StringWidth(l.label) <= labelWidth {
+		label = runewidth.FillRight(l.label, labelWidth)
+	} else {
+		label = runewidth.Truncate(l.label, labelWidth, "…")
+	}
+	out := fmt.Sprintf(format, label)
+
+	renderString(s, rect.X, rect.Y, rect.W, out, st)
 }
 
 func (l *TabLabel) FocusTarget() Element {
@@ -1456,14 +1463,21 @@ func (l *TabLabel) FocusTarget() Element {
 func (l *TabLabel) OnFocus() {}
 func (l *TabLabel) OnBlur()  {}
 
-func (t *TabView) Append(label string, content Element) *TabView {
-	tabLabel := &TabLabel{t: t, text: label}
+type TabsView struct {
+	labels   []*TabLabel
+	bodys    []Element
+	active   int
+	Closable bool
+}
+
+func (t *TabsView) Append(label string, content Element) *TabsView {
+	tabLabel := &TabLabel{t: t, label: label}
 	t.labels = append(t.labels, tabLabel)
 	t.bodys = append(t.bodys, content)
 	return t
 }
 
-func (t *TabView) Close(i int) {
+func (t *TabsView) Remove(i int) {
 	if i < 0 || i >= len(t.labels) {
 		return
 	}
@@ -1477,7 +1491,13 @@ func (t *TabView) Close(i int) {
 	}
 }
 
-func (t *TabView) MinSize() (int, int) {
+func (t *TabsView) SetActive(i int) {
+	if i >= 0 && i < len(t.bodys) {
+		t.active = i
+	}
+}
+
+func (t *TabsView) MinSize() (int, int) {
 	maxW, maxH := 0, 0
 	for _, e := range t.bodys {
 		w, h := e.MinSize()
@@ -1491,20 +1511,18 @@ func (t *TabView) MinSize() (int, int) {
 	return maxW, maxH + 1 // +1 for tab labels
 }
 
-func (t *TabView) Layout(x, y, w, h int) *LayoutNode {
+func (t *TabsView) Layout(x, y, w, h int) *LayoutNode {
 	n := &LayoutNode{
 		Element: t,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 
-	// Layout tab labels on top
-	offsetX := 0
+	hs := HStack()
 	for _, l := range t.labels {
-		labelW, labelH := l.MinSize()
-		node := l.Layout(x+offsetX, y, labelW, labelH)
-		n.Children = append(n.Children, node)
-		offsetX += labelW
+		hs.Append(l)
+		hs.Append(Divider())
 	}
+	n.Children = append(n.Children, hs.Layout(x, y, w, 1))
 
 	if t.active >= 0 && t.active < len(t.bodys) {
 		node := t.bodys[t.active].Layout(x, y+1, w, h-1)
@@ -1513,22 +1531,16 @@ func (t *TabView) Layout(x, y, w, h int) *LayoutNode {
 	return n
 }
 
-func (t *TabView) Render(s Screen, rect Rect, style Style) {
+func (t *TabsView) Render(s Screen, rect Rect, style Style) {
 	// do nothing, children render themselves
 }
 
-func (t *TabView) SetActive(i int) {
-	if i >= 0 && i < len(t.bodys) {
-		t.active = i
-	}
-}
-
-func (t *TabView) FocusTarget() Element {
+func (t *TabsView) FocusTarget() Element {
 	if t.active < 0 || t.active >= len(t.bodys) {
 		return t
 	}
 	return t.bodys[t.active]
 }
 
-func (t *TabView) OnFocus() {}
-func (t *TabView) OnBlur()  {}
+func (t *TabsView) OnFocus() {}
+func (t *TabsView) OnBlur()  {}

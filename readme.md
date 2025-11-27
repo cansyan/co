@@ -1,8 +1,10 @@
-Text user interface library for Go, built on top of tcell.
+A text-based user interface (TUI) package written in Go, with mouse support.
 
 Features:
-- elements: Text, Button, TextField, Spacer, Divider
-- wrapper: Fill, Padding, Border
+- component: Text, Button, TextField, TextEditor
+- helper: Fill, Padding, Border, Spacer, Divider
 - layout: VStack, HStack
-- focus, hover, click
-- cursor
+- keyboard: focus management, event handling
+  - [ ] keybindings
+- mouse: hover, click, scroll
+  - [ ] drag
