@@ -1548,14 +1548,14 @@ func NewTextViewer(s string) *TextViewer {
 }
 
 func (tv *TextViewer) MinSize() (int, int) {
-	var maxW int
-	for _, line := range tv.Lines {
-		w := runewidth.StringWidth(line)
-		if w > maxW {
-			maxW = w
-		}
-	}
-	return maxW, 1 // let layout decide the height
+	// var maxW int
+	// for _, line := range tv.Lines {
+	// 	w := runewidth.StringWidth(line)
+	// 	if w > maxW {
+	// 		maxW = w
+	// 	}
+	// }
+	return 25, 1 // let layout decide the height
 }
 
 func (tv *TextViewer) Layout(x, y, w, h int) *LayoutNode {

@@ -9,12 +9,12 @@ import (
 func main() {
 	statusBar := ui.NewText("Status: Ready")
 
-	tv := ui.NewTextViewer("")
-	tv.OnChange(func() {
+	logViewer := ui.NewTextViewer("")
+	logViewer.OnChange(func() {
 		statusBar.SetText(fmt.Sprintf("OffsetY: %d, AutoTail: %t, lines: %d",
-			tv.OffsetY, tv.AutoTail, len(tv.Lines)))
+			logViewer.OffsetY, logViewer.AutoTail, len(logViewer.Lines)))
 	})
-	log.SetOutput(tv)
+	log.SetOutput(logViewer)
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	editor := ui.NewTextEditor()
@@ -24,18 +24,17 @@ func main() {
 		statusBar.SetText(fmt.Sprintf("Line %d, Column %d", row+1, col+1))
 	})
 
-	tabs := &ui.Tabs{Closable: true}
-	tabs.Append("log", tv)
-	tabs.Append("file1.txt", editor)
-
 	root := ui.VStack(
-		ui.Fill(tabs),
+		ui.Fill(ui.HStack(
+			ui.Fill(editor),
+			ui.Divider(),
+			ui.Fill(logViewer),
+		)),
 		ui.Divider(),
 		ui.PaddingH(statusBar, 1),
 	)
 
-	app := ui.NewApp(root)
-	app.Focus(tabs)
+	app := ui.NewApp(ui.Border(root))
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
