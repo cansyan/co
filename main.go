@@ -7,15 +7,16 @@ import (
 )
 
 func main() {
-	// log.SetFlags(log.LstdFlags | log.Lshortfile)
-	// f, err := os.OpenFile("app.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// defer f.Close()
-	// log.SetOutput(f)
-
 	statusBar := ui.NewText("Status: Ready")
+
+	tv := ui.NewTextViewer("")
+	tv.OnChange(func() {
+		statusBar.SetText(fmt.Sprintf("OffsetY: %d, AutoTail: %t, lines: %d",
+			tv.OffsetY, tv.AutoTail, len(tv.Lines)))
+	})
+	log.SetOutput(tv)
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	editor := ui.NewTextEditor()
 	editor.SetText("// Welcome to the Text Editor!\n\n")
 	editor.OnChange(func() {
@@ -23,24 +24,11 @@ func main() {
 		statusBar.SetText(fmt.Sprintf("Line %d, Column %d", row+1, col+1))
 	})
 
-	tabs := &ui.TabsView{Closable: true}
+	tabs := &ui.Tabs{Closable: true}
+	tabs.Append("log", tv)
 	tabs.Append("file1.txt", editor)
-	tabs.Append("file2.txt", ui.NewText("demo..."))
-
-	// sideBar := ui.NewListView()
-	// sideBar.Append("file1.txt", func() {
-	// 	tabs.SetActive(0)
-	// })
-	// sideBar.Append("file2.txt", func() {
-	// 	tabs.SetActive(1)
-	// })
 
 	root := ui.VStack(
-		// ui.Fill(ui.HStack(
-		// 	sideBar,
-		// 	ui.Divider(),
-		// 	ui.Fill(tabs),
-		// )),
 		ui.Fill(tabs),
 		ui.Divider(),
 		ui.PaddingH(statusBar, 1),

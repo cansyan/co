@@ -4,6 +4,7 @@ package ui
 
 import (
 	"fmt"
+	"log"
 	"slices"
 	"strconv"
 	"strings"
@@ -47,7 +48,7 @@ type Clickable interface {
 // Scrollable represents an element that can respond to vertical scroll events.
 type Scrollable interface {
 	// OnScroll is called when a scroll action occurs.
-	// dy is the scroll delta: dy > 0 means scrolling up, dy < 0 means scrolling down.
+	// delta dy > 0 means scrolling up, dy < 0 means scrolling down.
 	OnScroll(dy int)
 }
 
@@ -128,7 +129,7 @@ func (s Style) Merge(child Style) Style {
 }
 
 // helper function, render unicode properly.
-func renderString(s Screen, x, y, w int, str string, style tcell.Style) {
+func drawString(s Screen, x, y, w int, str string, style tcell.Style) {
 	offset := 0
 	for _, r := range str {
 		if offset >= w {
@@ -173,7 +174,7 @@ func (t *Text) Layout(x, y, w, h int) *LayoutNode {
 }
 func (t *Text) Render(s Screen, rect Rect, style Style) {
 	st := style.Merge(t.style).Apply()
-	renderString(s, rect.X, rect.Y, rect.W, t.content, st)
+	drawString(s, rect.X, rect.Y, rect.W, t.content, st)
 }
 
 type Button struct {
@@ -213,7 +214,7 @@ func (b *Button) Render(s Screen, rect Rect, style Style) {
 		st = st.Reverse(true)
 	}
 	label := " " + b.Label + " "
-	renderString(s, rect.X, rect.Y, rect.W, label, st)
+	drawString(s, rect.X, rect.Y, rect.W, label, st)
 }
 
 func (b *Button) OnMouseEnter() { b.hovered = true }
@@ -761,11 +762,11 @@ func (a *App) Run() error {
 }
 
 func (a *App) handleKey(ev *tcell.EventKey) {
+	log.Printf("key: %s", ev.Name())
 	if ev.Key() == a.QuitKey {
 		close(a.done)
 		return
 	}
-
 	if a.focused == nil {
 		return
 	}
@@ -787,6 +788,7 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 
 	switch ev.Buttons() {
 	case tcell.ButtonPrimary:
+		log.Printf("click x: %d, y: %d", x, y)
 		a.clickPoint = Point{X: x, Y: y}
 		// mouse down
 		if i, ok := hit.(Clickable); ok {
@@ -836,8 +838,8 @@ func (a *App) Stop() {
 	close(a.done)
 }
 
-// TextField is a single-line editable text input field.
-type TextField struct {
+// TextInput is a single-line editable text input field.
+type TextInput struct {
 	text     []rune
 	cursor   int
 	active   bool
@@ -845,45 +847,45 @@ type TextField struct {
 	onChange func(string)
 }
 
-func NewTextField() *TextField {
-	return &TextField{
+func NewTextInput() *TextInput {
+	return &TextInput{
 		style: DefaultStyle,
 	}
 }
 
-func (t *TextField) Text() string {
+func (t *TextInput) Text() string {
 	return string(t.text)
 }
 
-func (t *TextField) SetText(s string) {
+func (t *TextInput) SetText(s string) {
 	t.text = []rune(s)
 	t.cursor = len(t.text)
 }
 
-func (t *TextField) OnChange(fn func(string)) *TextField {
+func (t *TextInput) OnChange(fn func(string)) *TextInput {
 	t.onChange = fn
 	return t
 }
 
-func (t *TextField) Foreground(c string) *TextField {
+func (t *TextInput) Foreground(c string) *TextInput {
 	t.style.FG = tcell.ColorNames[c]
 	return t
 }
-func (t *TextField) Background(c string) *TextField {
+func (t *TextInput) Background(c string) *TextInput {
 	t.style.BG = tcell.ColorNames[c]
 	return t
 }
 
-func (t *TextField) MinSize() (int, int) { return 10, 1 }
+func (t *TextInput) MinSize() (int, int) { return 10, 1 }
 
-func (t *TextField) Layout(x, y, w, h int) *LayoutNode {
+func (t *TextInput) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: t,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 }
 
-func (t *TextField) Render(s Screen, rect Rect, style Style) {
+func (t *TextInput) Render(s Screen, rect Rect, style Style) {
 	st := style.Merge(t.style).Apply()
 	var totalW int
 	for _, r := range t.text {
@@ -901,11 +903,11 @@ func (t *TextField) Render(s Screen, rect Rect, style Style) {
 	}
 }
 
-func (t *TextField) FocusTarget() Element { return t }
-func (t *TextField) OnFocus()             { t.active = true }
-func (t *TextField) OnBlur()              { t.active = false }
+func (t *TextInput) FocusTarget() Element { return t }
+func (t *TextInput) OnFocus()             { t.active = true }
+func (t *TextInput) OnBlur()              { t.active = false }
 
-func (t *TextField) HandleKey(ev *tcell.EventKey) {
+func (t *TextInput) HandleKey(ev *tcell.EventKey) {
 	if !t.active {
 		return
 	}
@@ -943,7 +945,7 @@ func (t *TextField) HandleKey(ev *tcell.EventKey) {
 	}
 }
 
-func (t *TextField) OnMouseDown(x, y int) {
+func (t *TextInput) OnMouseDown(x, y int) {
 	if x < 0 {
 		x = 0
 	}
@@ -1025,9 +1027,8 @@ func (t *TextEditor) Render(s Screen, rect Rect, style Style) {
 	st := style.Merge(t.style).Apply()
 	t.viewH = rect.H
 
-	// --- 1. Fixed offsets for Line Numbers ---
+	// Fixed offsets for Line Numbers
 	lineNumWidth := 5
-
 	// Dynamic width calculation (for proper right-justification)
 	numLines := len(t.content)
 	if numLines == 0 {
@@ -1039,65 +1040,42 @@ func (t *TextEditor) Render(s Screen, rect Rect, style Style) {
 	} else {
 		lineNumWidth = 5
 	}
+	lineNumStyle := st.Reverse(false).Foreground(tcell.ColorSilver)
 
 	contentX := rect.X + lineNumWidth
 	contentW := rect.W - lineNumWidth
-
 	if contentW <= 0 {
 		return
 	}
 
-	lineNumStyle := st.Reverse(false).Foreground(tcell.ColorSilver)
-
-	var finalCursorX, finalCursorY int
+	var cursorX, cursorY int
 	cursorFound := false
-	// --- 2. Loop over visible rows ---
-	for i := 0; i < rect.H; i++ {
-		contentRow := i + t.offsetY
-		if contentRow >= len(t.content) {
+	// Loop over visible rows
+	for i := range rect.H {
+		row := i + t.offsetY
+		if row >= len(t.content) {
 			break
 		}
 
-		line := t.content[contentRow]
-		isCursorLine := contentRow == t.row
-
-		// A. Render Line Number (UNCONDITIONAL)
-		lineNum := contentRow + 1
-		numStr := fmt.Sprintf("%*d ", lineNumWidth-1, lineNum)
-		renderString(s, rect.X, rect.Y+i, lineNumWidth, numStr, lineNumStyle)
-
-		// B. Render Line Content
-		var screenCol int
-
-		for j, r := range line {
-			rw := runewidth.RuneWidth(r)
-
-			// Check if we reached the cursor position
-			if isCursorLine && j == t.col {
-				finalCursorX = contentX + screenCol
-				finalCursorY = rect.Y + i
-				cursorFound = true
-			}
-
-			if screenCol+rw > contentW {
-				break
-			}
-
-			s.SetContent(contentX+screenCol, rect.Y+i, r, nil, st)
-			screenCol += rw
-		}
-
-		// C. Handle cursor placed at the very end of the line
-		if isCursorLine && t.col == len(line) {
-			finalCursorX = contentX + screenCol
-			finalCursorY = rect.Y + i
+		line := t.content[row]
+		if row == t.row {
 			cursorFound = true
+			cursorX = contentX + runewidth.StringWidth(string(line[:t.col]))
+			cursorY = rect.Y + i
 		}
+
+		// Render Line Number (UNCONDITIONAL)
+		lineNum := row + 1
+		numStr := fmt.Sprintf("%*d ", lineNumWidth-1, lineNum)
+		drawString(s, rect.X, rect.Y+i, lineNumWidth, numStr, lineNumStyle)
+
+		// Render Line Content
+		drawString(s, contentX, rect.Y+i, contentW, string(line), st)
 	}
 
-	// --- 3. Place the cursor ---
+	// Place the cursor
 	if t.focused && cursorFound {
-		s.ShowCursor(finalCursorX, finalCursorY)
+		s.ShowCursor(cursorX, cursorY)
 	} else {
 		s.HideCursor()
 	}
@@ -1250,12 +1228,14 @@ func (t *TextEditor) OnMouseDown(x, y int) {
 }
 
 func (t *TextEditor) OnScroll(dy int) {
-	if dy < 0 {
+	if len(t.content) <= t.viewH {
+		t.offsetY = 0
+	} else if dy < 0 {
 		// scroll down
-		t.offsetY = max(0, t.offsetY+dy)
-	} else if dy > 0 {
+		t.offsetY = max(t.offsetY+dy, 0)
+	} else {
 		// scroll up
-		t.offsetY = min(len(t.content)-1, t.offsetY+dy)
+		t.offsetY = min(t.offsetY+dy, len(t.content)-t.viewH)
 	}
 }
 
@@ -1382,7 +1362,7 @@ func (l *ListView) OnMouseMove(rx, ry int) {
 func (l *ListView) OnMouseLeave() { l.hovered = -1 }
 
 type TabLabel struct {
-	t       *TabsView
+	t       *Tabs
 	label   string
 	hovered bool
 }
@@ -1450,7 +1430,7 @@ func (l *TabLabel) Render(s Screen, rect Rect, style Style) {
 	}
 	out := fmt.Sprintf(format, label)
 
-	renderString(s, rect.X, rect.Y, rect.W, out, st)
+	drawString(s, rect.X, rect.Y, rect.W, out, st)
 }
 
 func (l *TabLabel) FocusTarget() Element {
@@ -1463,21 +1443,21 @@ func (l *TabLabel) FocusTarget() Element {
 func (l *TabLabel) OnFocus() {}
 func (l *TabLabel) OnBlur()  {}
 
-type TabsView struct {
+type Tabs struct {
 	labels   []*TabLabel
 	bodys    []Element
 	active   int
 	Closable bool
 }
 
-func (t *TabsView) Append(label string, content Element) *TabsView {
+func (t *Tabs) Append(label string, content Element) *Tabs {
 	tabLabel := &TabLabel{t: t, label: label}
 	t.labels = append(t.labels, tabLabel)
 	t.bodys = append(t.bodys, content)
 	return t
 }
 
-func (t *TabsView) Remove(i int) {
+func (t *Tabs) Remove(i int) {
 	if i < 0 || i >= len(t.labels) {
 		return
 	}
@@ -1491,13 +1471,13 @@ func (t *TabsView) Remove(i int) {
 	}
 }
 
-func (t *TabsView) SetActive(i int) {
+func (t *Tabs) SetActive(i int) {
 	if i >= 0 && i < len(t.bodys) {
 		t.active = i
 	}
 }
 
-func (t *TabsView) MinSize() (int, int) {
+func (t *Tabs) MinSize() (int, int) {
 	maxW, maxH := 0, 0
 	for _, e := range t.bodys {
 		w, h := e.MinSize()
@@ -1511,7 +1491,7 @@ func (t *TabsView) MinSize() (int, int) {
 	return maxW, maxH + 1 // +1 for tab labels
 }
 
-func (t *TabsView) Layout(x, y, w, h int) *LayoutNode {
+func (t *Tabs) Layout(x, y, w, h int) *LayoutNode {
 	n := &LayoutNode{
 		Element: t,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
@@ -1531,16 +1511,117 @@ func (t *TabsView) Layout(x, y, w, h int) *LayoutNode {
 	return n
 }
 
-func (t *TabsView) Render(s Screen, rect Rect, style Style) {
+func (t *Tabs) Render(s Screen, rect Rect, style Style) {
 	// do nothing, children render themselves
 }
 
-func (t *TabsView) FocusTarget() Element {
+func (t *Tabs) FocusTarget() Element {
 	if t.active < 0 || t.active >= len(t.bodys) {
 		return t
 	}
 	return t.bodys[t.active]
 }
 
-func (t *TabsView) OnFocus() {}
-func (t *TabsView) OnBlur()  {}
+func (t *Tabs) OnFocus() {}
+func (t *Tabs) OnBlur()  {}
+
+// TextViewer is a non-editable text viewer,
+// supports multiple lines, scrolling and following tail.
+// It can be used for log viewer, output panel or debug pane
+type TextViewer struct {
+	Lines    []string
+	OffsetY  int
+	AutoTail bool
+	height   int
+	onChange func()
+}
+
+func NewTextViewer(s string) *TextViewer {
+	tv := &TextViewer{AutoTail: true}
+	if s != "" {
+		if s[len(s)-1] == '\n' {
+			s = s[:len(s)-1]
+		}
+		tv.Lines = strings.Split(s, "\n")
+	}
+	return tv
+}
+
+func (tv *TextViewer) MinSize() (int, int) {
+	var maxW int
+	for _, line := range tv.Lines {
+		w := runewidth.StringWidth(line)
+		if w > maxW {
+			maxW = w
+		}
+	}
+	return maxW, 1 // let layout decide the height
+}
+
+func (tv *TextViewer) Layout(x, y, w, h int) *LayoutNode {
+	return &LayoutNode{
+		Element: tv,
+		Rect:    Rect{X: x, Y: y, W: w, H: h},
+	}
+}
+
+func (tv *TextViewer) Render(s Screen, rect Rect, style Style) {
+	tv.height = rect.H
+	start := tv.OffsetY
+	end := tv.OffsetY + rect.H
+	if end > len(tv.Lines) {
+		end = len(tv.Lines)
+	}
+	y := rect.Y
+	for i := start; i < end; i++ {
+		drawString(s, rect.X, y, rect.W, tv.Lines[i], style.Apply())
+		y++
+	}
+}
+
+func (tv *TextViewer) OnScroll(dy int) {
+	old := tv.OffsetY
+	if len(tv.Lines) <= tv.height {
+		tv.OffsetY = 0
+	} else if dy < 0 {
+		// scroll down
+		tv.OffsetY = max(tv.OffsetY+dy, 0)
+	} else {
+		// scroll up
+		tv.OffsetY = min(tv.OffsetY+dy, len(tv.Lines)-tv.height)
+	}
+
+	// ones scroll and not at the end of file, stop following tail
+	if tv.OffsetY >= len(tv.Lines)-tv.height {
+		tv.AutoTail = true
+	} else if tv.OffsetY != old {
+		tv.AutoTail = false
+	}
+
+	if tv.onChange != nil {
+		tv.onChange()
+	}
+}
+
+func (tv *TextViewer) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	if p[len(p)-1] == '\n' {
+		// do not append newline
+		p = p[:len(p)-1]
+	}
+	lines := strings.Split(string(p), "\n")
+	tv.Lines = append(tv.Lines, lines...)
+	if tv.AutoTail {
+		tv.OffsetY = max(0, len(tv.Lines)-tv.height)
+	}
+	if tv.onChange != nil {
+		tv.onChange()
+	}
+	return len(p), nil
+}
+
+// OnChange register a callback function that will be called on content changed
+func (tv *TextViewer) OnChange(f func()) { tv.onChange = f }
