@@ -145,40 +145,40 @@ func drawString(s Screen, x, y, w int, str string, style tcell.Style) {
 // components
 // ---------------------------------------------------------------------
 
-type Text struct {
+type TextE struct {
 	content string
 	style   Style
 }
 
-func NewText(c string) *Text { return &Text{content: c, style: DefaultStyle} }
+func Text(c string) *TextE { return &TextE{content: c, style: DefaultStyle} }
 
-func (t *Text) SetText(c string) { t.content = c }
+func (t *TextE) SetText(c string) { t.content = c }
 
-func (t *Text) Bold() *Text      { t.style.Bold = true; return t }
-func (t *Text) Italic() *Text    { t.style.Italic = true; return t }
-func (t *Text) Underline() *Text { t.style.Underline = true; return t }
-func (t *Text) Foreground(c string) *Text {
+func (t *TextE) Bold() *TextE      { t.style.Bold = true; return t }
+func (t *TextE) Italic() *TextE    { t.style.Italic = true; return t }
+func (t *TextE) Underline() *TextE { t.style.Underline = true; return t }
+func (t *TextE) Foreground(c string) *TextE {
 	t.style.FG = tcell.ColorNames[c]
 	return t
 }
-func (t *Text) Background(c string) *Text {
+func (t *TextE) Background(c string) *TextE {
 	t.style.BG = tcell.ColorNames[c]
 	return t
 }
 
-func (t *Text) MinSize() (int, int) { return len(t.content), 1 }
-func (t *Text) Layout(x, y, w, h int) *LayoutNode {
+func (t *TextE) MinSize() (int, int) { return len(t.content), 1 }
+func (t *TextE) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: t,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 }
-func (t *Text) Render(s Screen, rect Rect, style Style) {
+func (t *TextE) Render(s Screen, rect Rect, style Style) {
 	st := style.Merge(t.style).Apply()
 	drawString(s, rect.X, rect.Y, rect.W, t.content, st)
 }
 
-type Button struct {
+type ButtonE struct {
 	Label   string
 	style   Style
 	OnClick func()
@@ -186,30 +186,30 @@ type Button struct {
 	pressed bool
 }
 
-// NewButton creates a new button element with the given label.
-func NewButton(label string) *Button {
-	return &Button{Label: label, style: DefaultStyle}
+// Button creates a new button element with the given label.
+func Button(label string) *ButtonE {
+	return &ButtonE{Label: label, style: DefaultStyle}
 }
-func (b *Button) Foreground(c string) *Button {
+func (b *ButtonE) Foreground(c string) *ButtonE {
 	b.style.FG = tcell.ColorNames[c]
 	return b
 }
-func (b *Button) Background(c string) *Button {
+func (b *ButtonE) Background(c string) *ButtonE {
 	b.style.BG = tcell.ColorNames[c]
 	return b
 }
 
-func (b *Button) MinSize() (int, int) { return runewidth.StringWidth(b.Label) + 2, 1 }
-func (b *Button) Layout(x, y, w, h int) *LayoutNode {
+func (b *ButtonE) MinSize() (int, int) { return runewidth.StringWidth(b.Label) + 2, 1 }
+func (b *ButtonE) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: b,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 }
-func (b *Button) Render(s Screen, rect Rect, style Style) {
+func (b *ButtonE) Render(s Screen, rect Rect, style Style) {
 	st := style.Merge(b.style).Apply()
 	if b.hovered {
-		st = st.Dim(false).Bold(true) // or underline
+		st = st.Underline(true).Bold(true)
 	}
 	if b.pressed {
 		st = st.Reverse(true)
@@ -218,20 +218,20 @@ func (b *Button) Render(s Screen, rect Rect, style Style) {
 	drawString(s, rect.X, rect.Y, rect.W, label, st)
 }
 
-func (b *Button) OnMouseEnter() { b.hovered = true }
+func (b *ButtonE) OnMouseEnter() { b.hovered = true }
 
-func (b *Button) OnMouseLeave() {
+func (b *ButtonE) OnMouseLeave() {
 	b.hovered = false
 	b.pressed = false // cancel
 }
 
-func (b *Button) OnMouseMove(rx, ry int) {}
+func (b *ButtonE) OnMouseMove(rx, ry int) {}
 
-func (b *Button) OnMouseDown(x, y int) {
+func (b *ButtonE) OnMouseDown(x, y int) {
 	b.pressed = true
 }
 
-func (b *Button) OnMouseUp(x, y int) {
+func (b *ButtonE) OnMouseUp(x, y int) {
 	if b.pressed && b.hovered {
 		// real click
 		if b.OnClick != nil {
@@ -243,21 +243,12 @@ func (b *Button) OnMouseUp(x, y int) {
 
 type divider struct {
 	vertical bool
-	style    Style
 }
 
 // Divider creates a horizontal or vertical divider line.
 // Should be used inside HStack or VStack.
 func Divider() *divider {
-	return &divider{style: DefaultStyle}
-}
-func (d *divider) Foreground(c string) *divider {
-	d.style.FG = tcell.ColorNames[c]
-	return d
-}
-func (d *divider) Background(c string) *divider {
-	d.style.BG = tcell.ColorNames[c]
-	return d
+	return &divider{}
 }
 
 func (d *divider) MinSize() (w, h int) { return 1, 1 }
@@ -268,14 +259,14 @@ func (d *divider) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 func (d *divider) Render(s Screen, rect Rect, style Style) {
-	st := style.Merge(d.style)
+	st := style.Apply()
 	if !d.vertical {
 		for i := range rect.W {
-			s.SetContent(rect.X+i, rect.Y+rect.H-1, '-', nil, st.Apply())
+			s.SetContent(rect.X+i, rect.Y+rect.H-1, '-', nil, st)
 		}
 	} else {
 		for i := range rect.H {
-			s.SetContent(rect.X+rect.W-1, rect.Y+i, '|', nil, st.Apply())
+			s.SetContent(rect.X+rect.W-1, rect.Y+i, '|', nil, st)
 		}
 	}
 }
@@ -327,7 +318,7 @@ func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
 	totalH := 0
 	totalWeight := 0
 	for _, child := range v.children {
-		if i, ok := child.(*grow); ok {
+		if i, ok := child.(*grower); ok {
 			totalWeight += i.weight
 		} else {
 			_, ch := child.MinSize()
@@ -336,7 +327,7 @@ func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
 	}
 
 	// Compute remaining space
-	remain := max(h-totalH, 0)
+	remain := max(h-totalH-v.spacing*(len(v.children)-1), 0)
 	share := float64(remain) / float64(totalWeight)
 
 	// Second pass: layout children
@@ -346,7 +337,7 @@ func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
 			d.vertical = false
 		}
 		_, ch := child.MinSize()
-		if g, ok := child.(*grow); ok && totalWeight > 0 {
+		if g, ok := child.(*grower); ok && totalWeight > 0 {
 			ch = int(math.Ceil(float64(g.weight) * share))
 			if ch > remain {
 				ch = remain
@@ -379,6 +370,8 @@ func (v *vstack) Spacing(p int) *vstack {
 	v.spacing = p
 	return v
 }
+
+func (v *vstack) Grow(weight ...int) *grower { return Grow(v, weight...) }
 
 type hstack struct {
 	children []Element
@@ -414,7 +407,7 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 	totalWidth := 0
 	totalWeight := 0
 	for _, child := range hs.children {
-		if g, ok := child.(*grow); ok {
+		if g, ok := child.(*grower); ok {
 			totalWeight += g.weight
 		} else {
 			cw, _ := child.MinSize()
@@ -423,7 +416,7 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 	}
 
 	// Compute remaining space
-	remain := max(w-totalWidth, 0)
+	remain := max(w-totalWidth-hs.spacing*(len(hs.children)-1), 0)
 	share := float64(remain) / float64(totalWeight)
 
 	// Second pass: layout children
@@ -433,7 +426,7 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 			div.vertical = true
 		}
 		cw, _ := child.MinSize()
-		if g, ok := child.(*grow); ok && totalWeight > 0 {
+		if g, ok := child.(*grower); ok && totalWeight > 0 {
 			cw = int(math.Ceil(float64(g.weight) * share))
 			if cw > remain {
 				cw = remain
@@ -473,23 +466,27 @@ func (hs *hstack) Append(e Element) *hstack { hs.children = append(hs.children, 
 // Spacing sets the spacing (in columns) between child elements.
 func (hs *hstack) Spacing(p int) *hstack { hs.spacing = p; return hs }
 
-type grow struct {
+func (hs *hstack) Grow(weight ...int) *grower {
+	return Grow(hs, weight...)
+}
+
+type grower struct {
 	child  Element
 	weight int
 }
 
-// Grow expands the child element to occupy the remaining available space.
+// Grow expands the given element to occupy the remaining available space.
 // The optional weight (default 1) controls how extra space is distributed
 // among siblings inside an HStack or VStack.
-func Grow(e Element, weight ...int) *grow {
+func Grow(e Element, weight ...int) *grower {
 	w := 1
 	if len(weight) > 0 {
 		w = weight[0]
 	}
-	return &grow{child: e, weight: w}
+	return &grower{child: e, weight: w}
 }
 
-func (g *grow) Layout(x, y, w, h int) *LayoutNode {
+func (g *grower) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: g,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
@@ -499,11 +496,11 @@ func (g *grow) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 
-func (g *grow) MinSize() (int, int) {
+func (g *grower) MinSize() (int, int) {
 	return g.child.MinSize()
 }
 
-func (g *grow) Render(s Screen, rect Rect, style Style) {
+func (g *grower) Render(s Screen, rect Rect, style Style) {
 	// do nothing
 }
 
@@ -631,9 +628,8 @@ func (e Empty) MinSize() (int, int)               { return 0, 0 }
 func (e Empty) Layout(x, y, w, h int) *LayoutNode { return nil }
 func (e Empty) Render(Screen, Rect, Style)        {}
 
-func Spacer() *grow {
-	return Grow(new(Empty))
-}
+// Spacer fills the remaining space between siblings inside an HStack or VStack.
+var Spacer = Grow(Empty{})
 
 // ---------------------------------------------------------------------
 // APP RUNNER (optional helper)
@@ -1263,6 +1259,8 @@ func (t *TextEditor) OnChange(fn func()) {
 	t.onChange = fn
 }
 
+func (t *TextEditor) Grow(weight ...int) *grower { return Grow(t, weight...) }
+
 type ListItem struct {
 	label   string
 	OnClick func()
@@ -1280,6 +1278,7 @@ type ListView struct {
 func NewListView() *ListView {
 	hoverStyle := DefaultStyle
 	hoverStyle.Bold = true
+	hoverStyle.Underline = true
 	selectStyle := DefaultStyle
 	selectStyle.Reversed = true
 
@@ -1380,17 +1379,6 @@ func (l *TabLabel) OnMouseMove(rx, ry int) {
 
 func (l *TabLabel) OnMouseUp(rx, ry int) {}
 func (l *TabLabel) OnMouseDown(rx, ry int) {
-	// Check if clicked on the 'x' label
-	w, _ := l.MinSize()
-	if l.t.Closable && rx >= w-2 {
-		for i, label := range l.t.labels {
-			if label == l {
-				l.t.Remove(i)
-			}
-		}
-		return
-	}
-
 	for i, label := range l.t.labels {
 		if label == l {
 			l.t.SetActive(i)
@@ -1400,7 +1388,7 @@ func (l *TabLabel) OnMouseDown(rx, ry int) {
 }
 
 func (l *TabLabel) MinSize() (int, int) {
-	return 17, 1
+	return len(l.label), 1
 }
 
 func (l *TabLabel) Layout(x, y, w, h int) *LayoutNode {
@@ -1410,27 +1398,26 @@ func (l *TabLabel) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 
+/*
+// how to make label for tabBar
+	format := " %s x "
+	rectWidth := 17
+	labelWidth := rectWidth - 4
+	label := "untitled"
+	if runewidth.StringWidth(label) <= labelWidth {
+		label = runewidth.FillRight(label, labelWidth)
+	} else {
+		label = runewidth.Truncate(label, labelWidth, "…")
+	}
+	out := fmt.Sprintf(format, label)
+*/
+
 func (l *TabLabel) Render(s Screen, rect Rect, style Style) {
 	st := style.Apply()
 	if l.hovered || l == l.t.labels[l.t.active] {
 		st = st.Underline(true).Bold(true).Italic(true)
 	}
-
-	format := " %s "
-	labelWidth := rect.W - 2
-	if l.t.Closable {
-		format = " %s x "
-		labelWidth -= 2
-	}
-	var label string
-	if runewidth.StringWidth(l.label) <= labelWidth {
-		label = runewidth.FillRight(l.label, labelWidth)
-	} else {
-		label = runewidth.Truncate(l.label, labelWidth, "…")
-	}
-	out := fmt.Sprintf(format, label)
-
-	drawString(s, rect.X, rect.Y, rect.W, out, st)
+	drawString(s, rect.X, rect.Y, rect.W, l.label, st)
 }
 
 func (l *TabLabel) FocusTarget() Element {
@@ -1444,10 +1431,9 @@ func (l *TabLabel) OnFocus() {}
 func (l *TabLabel) OnBlur()  {}
 
 type Tabs struct {
-	labels   []*TabLabel
-	bodys    []Element
-	active   int
-	Closable bool
+	labels []*TabLabel
+	bodys  []Element
+	active int
 }
 
 func (t *Tabs) Append(label string, content Element) *Tabs {
@@ -1497,10 +1483,12 @@ func (t *Tabs) Layout(x, y, w, h int) *LayoutNode {
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 
-	hs := HStack()
-	for _, l := range t.labels {
+	hs := HStack().Spacing(1)
+	for i, l := range t.labels {
 		hs.Append(l)
-		hs.Append(Divider())
+		if i != len(t.labels)-1 {
+			hs.Append(Divider())
+		}
 	}
 	n.Children = append(n.Children, hs.Layout(x, y, w, 1))
 
@@ -1524,6 +1512,9 @@ func (t *Tabs) FocusTarget() Element {
 
 func (t *Tabs) OnFocus() {}
 func (t *Tabs) OnBlur()  {}
+func (t *Tabs) Grow(weight ...int) *grower {
+	return Grow(t, weight...)
+}
 
 // TextViewer is a non-editable text viewer,
 // supports multiple lines, scrolling and following tail.
