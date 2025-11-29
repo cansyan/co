@@ -35,7 +35,7 @@ func main() {
 	symbolList.Append("Text", nil)
 	symbolList.Append("TextInput", nil)
 
-	sidebar := &ui.Tabs{}
+	sidebar := &ui.TabView{}
 	sidebar.Append("Folder", folder)
 	sidebar.Append("Symbol", symbolList)
 
@@ -46,12 +46,12 @@ func main() {
 
 	root := ui.VStack(
 		ui.HStack(
-			sidebar.Grow(1),
+			sidebar.Frame(20, 0),
 			ui.Divider(),
 			ui.VStack(
 				tabbar,
 				editor.Grow(),
-			).Grow(5),
+			).Grow(),
 		).Grow(),
 		ui.Divider(),
 		statusBar,
