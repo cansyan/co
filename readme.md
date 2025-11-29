@@ -1,8 +1,8 @@
 A text-based user interface (TUI) package written in Go, with mouse support.
 
 Features:
-- component: Text, Button, TextField, TextEditor
-- helper: Fill, Padding, Border, Spacer, Divider
+- component: Button, Text, TextInput, TextViewer, TextEditor
+- helper: Grow, Padding, Border, Spacer, Divider
 - layout: VStack, HStack
 - keyboard: focus management, event handling
   - [ ] keybindings

@@ -5,6 +5,7 @@ package ui
 import (
 	"fmt"
 	"log"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -322,29 +323,35 @@ func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 
-	// First pass: measure all children’s min sizes
-	totalMinHeight := 0
-	fillCount := 0
+	// First pass: measure children
+	totalH := 0
+	totalWeight := 0
 	for _, child := range v.children {
-		_, ch := child.MinSize()
-		totalMinHeight += ch
-		if _, ok := child.(*fill); ok {
-			fillCount++
+		if i, ok := child.(*grow); ok {
+			totalWeight += i.weight
+		} else {
+			_, ch := child.MinSize()
+			totalH += ch
 		}
 	}
 
 	// Compute remaining space
-	extra := max(h-totalMinHeight, 0)
+	remain := max(h-totalH, 0)
+	share := float64(remain) / float64(totalWeight)
 
-	// Second pass: render children with adjusted heights
+	// Second pass: layout children
 	used := 0
 	for i, child := range v.children {
-		if div, ok := child.(*divider); ok {
-			div.vertical = false
+		if d, ok := child.(*divider); ok {
+			d.vertical = false
 		}
 		_, ch := child.MinSize()
-		if _, ok := child.(*fill); ok && fillCount > 0 {
-			ch += extra / fillCount
+		if g, ok := child.(*grow); ok && totalWeight > 0 {
+			ch = int(math.Ceil(float64(g.weight) * share))
+			if ch > remain {
+				ch = remain
+			}
+			remain -= ch
 		}
 		if used+ch > h {
 			ch = h - used
@@ -404,18 +411,20 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 	// First pass: measure children
-	totalMinWidth := 0
-	fillCount := 0
+	totalWidth := 0
+	totalWeight := 0
 	for _, child := range hs.children {
-		cw, _ := child.MinSize()
-		totalMinWidth += cw
-		if _, ok := child.(*fill); ok {
-			fillCount++
+		if g, ok := child.(*grow); ok {
+			totalWeight += g.weight
+		} else {
+			cw, _ := child.MinSize()
+			totalWidth += cw
 		}
 	}
 
-	// Compute remaining width
-	extra := max(w-totalMinWidth, 0)
+	// Compute remaining space
+	remain := max(w-totalWidth, 0)
+	share := float64(remain) / float64(totalWeight)
 
 	// Second pass: layout children
 	used := 0
@@ -424,8 +433,12 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 			div.vertical = true
 		}
 		cw, _ := child.MinSize()
-		if _, ok := child.(*fill); ok && fillCount > 0 {
-			cw += extra / fillCount
+		if g, ok := child.(*grow); ok && totalWeight > 0 {
+			cw = int(math.Ceil(float64(g.weight) * share))
+			if cw > remain {
+				cw = remain
+			}
+			remain -= cw
 		}
 		if used+cw > w {
 			cw = w - used
@@ -460,32 +473,38 @@ func (hs *hstack) Append(e Element) *hstack { hs.children = append(hs.children, 
 // Spacing sets the spacing (in columns) between child elements.
 func (hs *hstack) Spacing(p int) *hstack { hs.spacing = p; return hs }
 
-type fill struct {
-	child Element
+type grow struct {
+	child  Element
+	weight int
 }
 
-// Fill expands its child to fill available space.
-// Should be used inside HStack or VStack.
-func Fill(child Element) *fill {
-	return &fill{child: child}
+// Grow expands the child element to occupy the remaining available space.
+// The optional weight (default 1) controls how extra space is distributed
+// among siblings inside an HStack or VStack.
+func Grow(e Element, weight ...int) *grow {
+	w := 1
+	if len(weight) > 0 {
+		w = weight[0]
+	}
+	return &grow{child: e, weight: w}
 }
 
-func (f *fill) Layout(x, y, w, h int) *LayoutNode {
+func (g *grow) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
-		Element: f,
+		Element: g,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 		Children: []*LayoutNode{
-			f.child.Layout(x, y, w, h),
+			g.child.Layout(x, y, w, h),
 		},
 	}
 }
 
-func (f *fill) MinSize() (int, int) {
-	return f.child.MinSize()
+func (g *grow) MinSize() (int, int) {
+	return g.child.MinSize()
 }
 
-func (f *fill) Render(s Screen, rect Rect, style Style) {
-	// do nothing, child is rendered in drawTree()
+func (g *grow) Render(s Screen, rect Rect, style Style) {
+	// do nothing
 }
 
 type padding struct {
@@ -606,14 +625,14 @@ func (b *border) Render(s Screen, rect Rect, style Style) {
 	s.SetContent(rect.X+rect.W-1, rect.Y+rect.H-1, '+', nil, st)
 }
 
-type empty struct{}
+type Empty struct{}
 
-func (e empty) MinSize() (int, int)               { return 0, 0 }
-func (e empty) Layout(x, y, w, h int) *LayoutNode { return nil }
-func (e empty) Render(Screen, Rect, Style)        {}
+func (e Empty) MinSize() (int, int)               { return 0, 0 }
+func (e Empty) Layout(x, y, w, h int) *LayoutNode { return nil }
+func (e Empty) Render(Screen, Rect, Style)        {}
 
-func Spacer() *fill {
-	return Fill(new(empty))
+func Spacer() *grow {
+	return Grow(new(Empty))
 }
 
 // ---------------------------------------------------------------------
@@ -633,13 +652,8 @@ type App struct {
 }
 
 func NewApp(root Element) *App {
-	s, err := tcell.NewScreen()
-	if err != nil {
-		panic(err)
-	}
 	return &App{
 		Root:    root,
-		Screen:  s,
 		done:    make(chan struct{}),
 		QuitKey: tcell.KeyEscape,
 	}
@@ -727,18 +741,23 @@ func (a *App) resolveFocus(e Element) Element {
 }
 
 func (a *App) Run() error {
-	if err := a.Screen.Init(); err != nil {
+	screen, err := tcell.NewScreen()
+	if err != nil {
 		return err
 	}
-	defer a.Screen.Fini()
-	a.Screen.EnableMouse()
+	a.Screen = screen
+
+	if err := screen.Init(); err != nil {
+		return err
+	}
+	defer screen.Fini()
+	screen.EnableMouse()
 
 	draw := func() {
-		a.Screen.Clear()
+		screen.Clear()
 		a.Render()
-		a.Screen.Show()
+		screen.Show()
 	}
-	draw()
 
 	for {
 		select {
@@ -747,17 +766,19 @@ func (a *App) Run() error {
 		default:
 		}
 
-		ev := a.Screen.PollEvent()
+		// Redraw on every event to keep things simple and clear
+		draw()
+
+		ev := screen.PollEvent()
 		switch ev := ev.(type) {
 		case *EventResize:
-			a.Screen.Sync()
+			draw()
+			screen.Sync()
 		case *EventKey:
 			a.handleKey(ev)
 		case *EventMouse:
 			a.handleMouse(ev)
 		}
-		// redrawing after every event, keep simple and concise
-		draw()
 	}
 }
 
@@ -788,7 +809,6 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 
 	switch ev.Buttons() {
 	case tcell.ButtonPrimary:
-		log.Printf("click x: %d, y: %d", x, y)
 		a.clickPoint = Point{X: x, Y: y}
 		// mouse down
 		if i, ok := hit.(Clickable); ok {
@@ -1027,19 +1047,13 @@ func (t *TextEditor) Render(s Screen, rect Rect, style Style) {
 	st := style.Merge(t.style).Apply()
 	t.viewH = rect.H
 
-	// Fixed offsets for Line Numbers
-	lineNumWidth := 5
 	// Dynamic width calculation (for proper right-justification)
 	numLines := len(t.content)
 	if numLines == 0 {
 		numLines = 1
 	}
 	actualNumDigits := len(strconv.Itoa(numLines))
-	if actualNumDigits > 4 {
-		lineNumWidth = actualNumDigits + 1
-	} else {
-		lineNumWidth = 5
-	}
+	lineNumWidth := actualNumDigits + 2
 	lineNumStyle := st.Reverse(false).Foreground(tcell.ColorSilver)
 
 	contentX := rect.X + lineNumWidth
@@ -1126,8 +1140,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		tail := currentLine[t.col:]
 
 		t.content[t.row] = head
-		newLine := tail
-
+		newLine := slices.Clone(tail)
 		t.content = slices.Insert(t.content, t.row+1, newLine)
 
 		t.row++
@@ -1411,7 +1424,7 @@ func (l *TabLabel) Layout(x, y, w, h int) *LayoutNode {
 func (l *TabLabel) Render(s Screen, rect Rect, style Style) {
 	st := style.Apply()
 	if l == l.t.labels[l.t.active] {
-		st = st.Underline(true).Bold(true)
+		st = st.Underline(true).Bold(true).Italic(true)
 	} else if l.hovered {
 		st = st.Reverse(true)
 	}
@@ -1527,7 +1540,7 @@ func (t *Tabs) OnBlur()  {}
 
 // TextViewer is a non-editable text viewer,
 // supports multiple lines, scrolling and following tail.
-// It can be used for log viewer, output panel or debug pane
+// It can be used for log panel or debug.
 type TextViewer struct {
 	Lines    []string
 	OffsetY  int
@@ -1548,13 +1561,6 @@ func NewTextViewer(s string) *TextViewer {
 }
 
 func (tv *TextViewer) MinSize() (int, int) {
-	// var maxW int
-	// for _, line := range tv.Lines {
-	// 	w := runewidth.StringWidth(line)
-	// 	if w > maxW {
-	// 		maxW = w
-	// 	}
-	// }
 	return 25, 1 // let layout decide the height
 }
 
