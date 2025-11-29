@@ -977,14 +977,15 @@ func (t *TextInput) OnMouseDown(x, y int) {
 
 // TextEditor is a multi-line editable text area.
 type TextEditor struct {
-	content  [][]rune // simple 2D slice of runes, avoid over-engineering
-	row      int      // Current line index
-	col      int      // Cursor column index (rune index)
-	offsetY  int      // Vertical scroll offset
-	focused  bool
-	style    Style
-	viewH    int // last rendered height
-	onChange func()
+	content      [][]rune // simple 2D slice of runes, avoid over-engineering
+	row          int      // Current line index
+	col          int      // Cursor column index (rune index)
+	offsetY      int      // Vertical scroll offset
+	focused      bool
+	style        Style
+	viewH        int // last rendered height
+	lineNumWidth int
+	onChange     func()
 }
 
 func NewTextEditor() *TextEditor {
@@ -1054,6 +1055,7 @@ func (t *TextEditor) Render(s Screen, rect Rect, style Style) {
 	}
 	actualNumDigits := len(strconv.Itoa(numLines))
 	lineNumWidth := actualNumDigits + 2
+	t.lineNumWidth = lineNumWidth
 	lineNumStyle := st.Reverse(false).Foreground(tcell.ColorSilver)
 
 	contentX := rect.X + lineNumWidth
@@ -1177,19 +1179,6 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 }
 func (t *TextEditor) OnMouseUp(x, y int) {}
 func (t *TextEditor) OnMouseDown(x, y int) {
-	// --- 1. Recalculate Content Area Offset (Must match Render() logic) ---
-	lineNumWidth := 5
-	numLines := len(t.content)
-	if numLines == 0 {
-		numLines = 1
-	}
-	actualNumDigits := len(fmt.Sprintf("%d", numLines))
-	if actualNumDigits > 4 {
-		lineNumWidth = actualNumDigits + 1
-	} else {
-		lineNumWidth = 5
-	}
-
 	// 2. Calculate the target row (relative to content)
 	targetRow := y + t.offsetY
 
@@ -1208,7 +1197,7 @@ func (t *TextEditor) OnMouseDown(x, y int) {
 
 	currentLine := t.content[t.row]
 
-	clickedX := max(x-lineNumWidth, 0)
+	clickedX := max(x-t.lineNumWidth, 0)
 
 	// 3. Calculate the target column (rune index)
 	targetCol := 0
@@ -1423,10 +1412,8 @@ func (l *TabLabel) Layout(x, y, w, h int) *LayoutNode {
 
 func (l *TabLabel) Render(s Screen, rect Rect, style Style) {
 	st := style.Apply()
-	if l == l.t.labels[l.t.active] {
+	if l.hovered || l == l.t.labels[l.t.active] {
 		st = st.Underline(true).Bold(true).Italic(true)
-	} else if l.hovered {
-		st = st.Reverse(true)
 	}
 
 	format := " %s "
