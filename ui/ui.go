@@ -129,8 +129,7 @@ func (s Style) Merge(child Style) Style {
 	return child
 }
 
-// helper function, render unicode properly.
-func drawString(s Screen, x, y, w int, str string, style tcell.Style) {
+func DrawString(s Screen, x, y, w int, str string, style tcell.Style) {
 	offset := 0
 	for _, r := range str {
 		if offset >= w {
@@ -181,7 +180,7 @@ func (t *TextElem) Layout(x, y, w, h int) *LayoutNode {
 }
 func (t *TextElem) Render(s Screen, rect Rect, style Style) {
 	st := style.Merge(t.style).Apply()
-	drawString(s, rect.X, rect.Y, rect.W, t.content, st)
+	DrawString(s, rect.X, rect.Y, rect.W, t.content, st)
 }
 
 type ButtonElem struct {
@@ -221,7 +220,7 @@ func (b *ButtonElem) Render(s Screen, rect Rect, style Style) {
 		st = st.Reverse(true)
 	}
 	label := " " + b.Label + " "
-	drawString(s, rect.X, rect.Y, rect.W, label, st)
+	DrawString(s, rect.X, rect.Y, rect.W, label, st)
 }
 
 func (b *ButtonElem) OnMouseEnter() { b.hovered = true }
@@ -406,7 +405,7 @@ func (tv *TextViewer) Render(s Screen, rect Rect, style Style) {
 	}
 	y := rect.Y
 	for i := start; i < end; i++ {
-		drawString(s, rect.X, y, rect.W, tv.Lines[i], style.Apply())
+		DrawString(s, rect.X, y, rect.W, tv.Lines[i], style.Apply())
 		y++
 	}
 }
@@ -566,10 +565,10 @@ func (t *TextEditor) Render(s Screen, rect Rect, style Style) {
 		// Render Line Number (UNCONDITIONAL)
 		lineNum := row + 1
 		numStr := fmt.Sprintf("%*d ", lineNumWidth-1, lineNum)
-		drawString(s, rect.X, rect.Y+i, lineNumWidth, numStr, lineNumStyle)
+		DrawString(s, rect.X, rect.Y+i, lineNumWidth, numStr, lineNumStyle)
 
 		// Render Line Content
-		drawString(s, contentX, rect.Y+i, contentW, string(line), st)
+		DrawString(s, contentX, rect.Y+i, contentW, string(line), st)
 	}
 
 	// Place the cursor
@@ -658,7 +657,9 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		t.col++
 	}
 
-	t.onChange()
+	if t.onChange != nil {
+		t.onChange()
+	}
 }
 func (t *TextEditor) OnMouseUp(x, y int) {}
 func (t *TextEditor) OnMouseDown(x, y int) {
@@ -709,7 +710,9 @@ func (t *TextEditor) OnMouseDown(x, y int) {
 
 	t.col = targetCol
 	t.adjustCol()
-	t.onChange()
+	if t.onChange != nil {
+		t.onChange()
+	}
 }
 
 func (t *TextEditor) OnScroll(dy int) {
@@ -925,8 +928,8 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 	return n
 }
 
+// no-op
 func (hs *hstack) Render(s Screen, rect Rect, style Style) {
-	// do nothing, children are rendered in drawTree()
 }
 
 func (hs *hstack) Foreground(color string) *hstack {
@@ -1232,7 +1235,7 @@ func (l *ListView) Render(s Screen, rect Rect, style Style) {
 		if w := runewidth.StringWidth(label); w > rect.W {
 			label = runewidth.Truncate(label, rect.W, "…")
 		}
-		drawString(s, rect.X, rect.Y+i, rect.W, label, st.Apply())
+		DrawString(s, rect.X, rect.Y+i, rect.W, label, st.Apply())
 	}
 }
 
@@ -1286,7 +1289,7 @@ func (ti *TabItem) OnMouseDown(rx, ry int) {
 }
 
 func (ti *TabItem) MinSize() (int, int) {
-	return len(ti.label), 1
+	return runewidth.StringWidth(ti.label), 1
 }
 
 func (ti *TabItem) Layout(x, y, w, h int) *LayoutNode {
@@ -1296,26 +1299,12 @@ func (ti *TabItem) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 
-/*
-// how to make label for tabBar
-	format := " %s x "
-	rectWidth := 17
-	labelWidth := rectWidth - 4
-	label := "untitled"
-	if runewidth.StringWidth(label) <= labelWidth {
-		label = runewidth.FillRight(label, labelWidth)
-	} else {
-		label = runewidth.Truncate(label, labelWidth, "…")
-	}
-	out := fmt.Sprintf(format, label)
-*/
-
 func (ti *TabItem) Render(s Screen, rect Rect, style Style) {
 	st := style.Apply()
 	if ti.hovered || ti == ti.t.items[ti.t.active] {
 		st = st.Underline(true).Bold(true).Italic(true)
 	}
-	drawString(s, rect.X, rect.Y, rect.W, ti.label, st)
+	DrawString(s, rect.X, rect.Y, rect.W, ti.label, st)
 }
 
 func (ti *TabItem) FocusTarget() Element {
