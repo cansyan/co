@@ -52,6 +52,7 @@ func newApp() *app {
 	v.btnQuit.OnClick = ui.Stop
 
 	folder := ui.NewListView()
+	folder.Append("file1.txt", nil)
 	folder.Append("go.mod", func(name string) {
 		bs, err := os.ReadFile(name)
 		if err != nil {
@@ -124,20 +125,19 @@ func (a *app) Layout(x, y, w, h int) *ui.LayoutNode {
 		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
 	}
 
-	tabHS := ui.HStack()
-	for i, tab := range a.tabs {
-		tabHS.Append(tab)
-		if i != len(a.tabs)-1 {
-			tabHS.Append(ui.Divider())
-		}
+	labelView := ui.HStack()
+	for _, tab := range a.tabs {
+		labelView.Append(tab)
 	}
-
-	editorView := ui.VStack(
-		ui.HStack(tabHS.Grow(), a.btnNew, a.btnQuit),
-	)
+	tabBar := ui.HStack(labelView.Grow(), a.btnNew, a.btnQuit)
+	tabBar.Style.Reversed = true
+	editorView := ui.VStack(tabBar)
 	if len(a.tabs) > 0 {
 		editorView.Append(ui.Grow(a.tabs[a.active].body))
 	}
+
+	statusBar := &ui.Frame{Child: a.status, W: w}
+	statusBar.Style.Reversed = true
 
 	view := ui.VStack(
 		ui.HStack(
@@ -145,7 +145,7 @@ func (a *app) Layout(x, y, w, h int) *ui.LayoutNode {
 			ui.Divider(),
 			editorView.Grow(),
 		).Grow(),
-		&ui.Frame{Child: a.status.Reverse(), W: w},
+		statusBar,
 	)
 	n.Children = append(n.Children, view.Layout(x, y, w, h))
 	return n
@@ -170,6 +170,7 @@ type tab struct {
 	label   string
 	body    ui.Element
 	hovered bool
+	style   ui.Style
 }
 
 const tabItemWidth = 15
@@ -182,9 +183,9 @@ func (t *tab) Layout(x, y, w, h int) *ui.LayoutNode {
 	}
 }
 func (t *tab) Render(screen ui.Screen, r ui.Rect, style ui.Style) {
-	st := style.Apply()
+	st := t.style.Inherit(style)
 	if t.hovered || t == t.av.tabs[t.av.active] {
-		st = st.Underline(true).Bold(true)
+		st.Reversed = !st.Reversed
 	}
 
 	format := " %s x "
@@ -195,7 +196,7 @@ func (t *tab) Render(screen ui.Screen, r ui.Rect, style ui.Style) {
 		t.label = runewidth.Truncate(t.label, labelWidth, "…")
 	}
 	out := fmt.Sprintf(format, t.label)
-	ui.DrawString(screen, r.X, r.Y, r.W, out, st)
+	ui.DrawString(screen, r.X, r.Y, r.W, out, st.Apply())
 }
 
 func (t *tab) OnMouseDown(lx, ly int) {

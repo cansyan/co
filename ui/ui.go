@@ -128,7 +128,9 @@ func (s Style) Inherit(parent Style) Style {
 
 	ns.Bold = ns.Bold || parent.Bold
 	ns.Italic = ns.Italic || parent.Italic
-	ns.Reversed = ns.Reversed || parent.Reversed
+	if parent.Reversed {
+		ns.Reversed = !ns.Reversed
+	}
 	ns.Underline = ns.Underline || parent.Underline
 	return ns
 }
@@ -143,9 +145,9 @@ func DrawString(s Screen, x, y, w int, str string, style tcell.Style) {
 		offset += runewidth.RuneWidth(r)
 	}
 	// fill the remain space with the same background color
-	for i := offset; i < w; i++ {
-		s.SetContent(x+i, y, ' ', nil, style)
-	}
+	// for i := offset; i < w; i++ {
+	// 	s.SetContent(x+i, y, ' ', nil, style)
+	// }
 }
 
 // ---------------------------------------------------------------------
@@ -221,15 +223,17 @@ func (b *Button) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 func (b *Button) Render(s Screen, rect Rect, style Style) {
-	st := b.style.Inherit(style).Apply()
+	st := b.style
 	if b.hovered {
-		st = st.Underline(true).Bold(true)
+		st.Underline = true
+		st.Bold = true
 	}
 	if b.pressed {
-		st = st.Reverse(true)
+		st.Reversed = true
 	}
+	st = st.Inherit(style)
 	label := " " + b.Label + " "
-	DrawString(s, rect.X, rect.Y, rect.W, label, st)
+	DrawString(s, rect.X, rect.Y, rect.W, label, st.Apply())
 }
 
 func (b *Button) OnMouseEnter() { b.hovered = true }
@@ -904,13 +908,13 @@ func (v *vstack) Grow(weight ...int) *grower { return Grow(v, weight...) }
 
 type hstack struct {
 	children []Element
-	style    Style
+	Style    Style
 	spacing  int
 }
 
 // HStack creates a horizontal stack layout element.
 func HStack(children ...Element) *hstack {
-	return &hstack{children: children, style: DefaultStyle}
+	return &hstack{children: children, Style: DefaultStyle}
 }
 func (hs *hstack) MinSize() (int, int) {
 	totalW, maxH := 0, 0
@@ -931,7 +935,7 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 	n := &LayoutNode{
 		Element: hs,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
-		Style:   hs.style,
+		Style:   hs.Style,
 	}
 	// First pass: measure children
 	totalWidth := 0
@@ -976,15 +980,15 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 }
 
 func (hs *hstack) Render(s Screen, rect Rect, style Style) {
-	// no-op
+	ResetRect(s, rect, style)
 }
 
 func (hs *hstack) Foreground(color string) *hstack {
-	hs.style.FG = tcell.ColorNames[color]
+	hs.Style.FG = tcell.ColorNames[color]
 	return hs
 }
 func (hs *hstack) Background(color string) *hstack {
-	hs.style.BG = tcell.ColorNames[color]
+	hs.Style.BG = tcell.ColorNames[color]
 	return hs
 }
 
@@ -1204,6 +1208,7 @@ var Spacer = Grow(Empty{})
 type Frame struct {
 	W, H  int // 0 means using child's min size
 	Child Element
+	Style Style
 }
 
 func (f *Frame) MinSize() (int, int) {
@@ -1224,16 +1229,55 @@ func (f *Frame) Layout(x, y, w, h int) *LayoutNode {
 		Element:  f,
 		Rect:     Rect{X: x, Y: y, W: w, H: h},
 		Children: []*LayoutNode{f.Child.Layout(x, y, w, h)},
+		Style:    f.Style,
+	}
+}
+
+// ResetRect resets the content of the given rectangle to the specified style.
+func ResetRect(s Screen, rect Rect, style Style) {
+	st := style.Apply()
+	for x := rect.X; x < rect.X+rect.W; x++ {
+		for y := rect.Y; y < rect.Y+rect.H; y++ {
+			s.SetContent(x, y, ' ', nil, st)
+		}
 	}
 }
 
 func (f *Frame) Render(s Screen, rect Rect, style Style) {
-	// no-op
+	st := f.Style.Inherit(style)
+	ResetRect(s, rect, st)
 }
 
 // ---------------------------------------------------------------------
 // Containers (View)
 // ---------------------------------------------------------------------
+
+type Box struct {
+	Style Style
+	Child Element
+}
+
+func (b *Box) MinSize() (int, int) {
+	return b.Child.MinSize()
+}
+
+func (b *Box) Layout(x, y, w, h int) *LayoutNode {
+	return &LayoutNode{
+		Element:  b,
+		Style:    b.Style,
+		Rect:     Rect{X: x, Y: y, W: w, H: h},
+		Children: []*LayoutNode{b.Child.Layout(x, y, w, h)},
+	}
+}
+
+// Render sets the background color of the box area.
+func (b *Box) Render(screen Screen, rect Rect, style Style) {
+	for x := rect.X; x < rect.X+rect.W; x++ {
+		for y := rect.Y; y < rect.Y+rect.H; y++ {
+			screen.SetContent(x, y, ' ', nil, style.Apply())
+		}
+	}
+}
 
 type ListView struct {
 	items    []ListItem
@@ -1276,7 +1320,7 @@ func (l *ListView) Layout(x, y, w, h int) *LayoutNode {
 
 func (l *ListView) Render(s Screen, rect Rect, style Style) {
 	hoverStyle := DefaultStyle
-	hoverStyle.Bold = true
+	hoverStyle.FG = tcell.ColorRed
 	hoverStyle.Underline = true
 	selectStyle := DefaultStyle
 	selectStyle.Reversed = true
@@ -1286,19 +1330,19 @@ func (l *ListView) Render(s Screen, rect Rect, style Style) {
 			break
 		}
 
-		st := style
+		var st tcell.Style
 		switch i {
 		case l.selected:
-			st = st.Inherit(selectStyle)
+			st = style.Inherit(selectStyle).Apply()
 		case l.hovered:
-			st = st.Inherit(hoverStyle)
+			st = style.Inherit(hoverStyle).Apply().Underline(tcell.UnderlineStyleCurly, tcell.ColorYellow)
 		}
 
 		label := fmt.Sprintf(" %s ", item.label)
 		if w := runewidth.StringWidth(label); w > rect.W {
 			label = runewidth.Truncate(label, rect.W, "…")
 		}
-		DrawString(s, rect.X, rect.Y+i, rect.W, label, st.Apply())
+		DrawString(s, rect.X, rect.Y+i, rect.W, label, st)
 	}
 }
 
