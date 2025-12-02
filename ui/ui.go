@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -74,6 +75,7 @@ type LayoutNode struct {
 	Element  Element
 	Rect     Rect
 	Children []*LayoutNode
+	Style    Style
 }
 
 type Rect struct {
@@ -114,19 +116,21 @@ func (s Style) Apply() tcell.Style {
 	return st
 }
 
-// Merge returns a new Style by applying the child style's non-default attributes
-// over the receiver (parent) style.
-func (s Style) Merge(child Style) Style {
-	if child.FG == tcell.ColorDefault {
-		child.FG = s.FG
+// Inherit returns a new Style by inheriting parent style
+func (s Style) Inherit(parent Style) Style {
+	ns := s
+	if ns.BG == 0 {
+		ns.BG = parent.BG
 	}
-	if child.BG == tcell.ColorDefault {
-		child.BG = s.BG
+	if ns.FG == 0 {
+		ns.FG = parent.FG
 	}
-	child.Bold = child.Bold || s.Bold
-	child.Italic = child.Italic || s.Italic
-	child.Reversed = child.Reversed || s.Reversed
-	return child
+
+	ns.Bold = ns.Bold || parent.Bold
+	ns.Italic = ns.Italic || parent.Italic
+	ns.Reversed = ns.Reversed || parent.Reversed
+	ns.Underline = ns.Underline || parent.Underline
+	return ns
 }
 
 func DrawString(s Screen, x, y, w int, str string, style tcell.Style) {
@@ -137,6 +141,10 @@ func DrawString(s Screen, x, y, w int, str string, style tcell.Style) {
 		}
 		s.SetContent(x+offset, y, r, nil, style)
 		offset += runewidth.RuneWidth(r)
+	}
+	// fill the remain space with the same background color
+	for i := offset; i < w; i++ {
+		s.SetContent(x+i, y, ' ', nil, style)
 	}
 }
 
@@ -150,40 +158,40 @@ func (e Empty) MinSize() (int, int)               { return 0, 0 }
 func (e Empty) Layout(x, y, w, h int) *LayoutNode { return nil }
 func (e Empty) Render(Screen, Rect, Style)        {}
 
-type TextElem struct {
-	content string
-	style   Style
+type Text struct {
+	Label string
+	Style Style
 }
 
-func Text(c string) *TextElem { return &TextElem{content: c, style: DefaultStyle} }
+func NewText(c string) *Text { return &Text{Label: c, Style: DefaultStyle} }
 
-func (t *TextElem) SetText(c string) { t.content = c }
-
-func (t *TextElem) Bold() *TextElem      { t.style.Bold = true; return t }
-func (t *TextElem) Italic() *TextElem    { t.style.Italic = true; return t }
-func (t *TextElem) Underline() *TextElem { t.style.Underline = true; return t }
-func (t *TextElem) Foreground(c string) *TextElem {
-	t.style.FG = tcell.ColorNames[c]
+func (t *Text) Bold() *Text      { t.Style.Bold = true; return t }
+func (t *Text) Italic() *Text    { t.Style.Italic = true; return t }
+func (t *Text) Underline() *Text { t.Style.Underline = true; return t }
+func (t *Text) Reverse() *Text   { t.Style.Reversed = true; return t }
+func (t *Text) Foreground(c string) *Text {
+	t.Style.FG = tcell.ColorNames[c]
 	return t
 }
-func (t *TextElem) Background(c string) *TextElem {
-	t.style.BG = tcell.ColorNames[c]
+func (t *Text) Background(c string) *Text {
+	t.Style.BG = tcell.ColorNames[c]
 	return t
 }
 
-func (t *TextElem) MinSize() (int, int) { return len(t.content), 1 }
-func (t *TextElem) Layout(x, y, w, h int) *LayoutNode {
+func (t *Text) MinSize() (int, int) { return len(t.Label), 1 }
+func (t *Text) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: t,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
+		Style:   t.Style,
 	}
 }
-func (t *TextElem) Render(s Screen, rect Rect, style Style) {
-	st := style.Merge(t.style).Apply()
-	DrawString(s, rect.X, rect.Y, rect.W, t.content, st)
+func (t *Text) Render(s Screen, rect Rect, style Style) {
+	st := t.Style.Inherit(style).Apply()
+	DrawString(s, rect.X, rect.Y, rect.W, t.Label, st)
 }
 
-type ButtonElem struct {
+type Button struct {
 	Label   string
 	style   Style
 	OnClick func()
@@ -191,28 +199,29 @@ type ButtonElem struct {
 	pressed bool
 }
 
-// Button creates a new button element with the given label.
-func Button(label string) *ButtonElem {
-	return &ButtonElem{Label: label, style: DefaultStyle}
+// NewButton creates a new button element with the given label.
+func NewButton(label string) *Button {
+	return &Button{Label: label, style: DefaultStyle}
 }
-func (b *ButtonElem) Foreground(c string) *ButtonElem {
+func (b *Button) Foreground(c string) *Button {
 	b.style.FG = tcell.ColorNames[c]
 	return b
 }
-func (b *ButtonElem) Background(c string) *ButtonElem {
+func (b *Button) Background(c string) *Button {
 	b.style.BG = tcell.ColorNames[c]
 	return b
 }
 
-func (b *ButtonElem) MinSize() (int, int) { return runewidth.StringWidth(b.Label) + 2, 1 }
-func (b *ButtonElem) Layout(x, y, w, h int) *LayoutNode {
+func (b *Button) MinSize() (int, int) { return runewidth.StringWidth(b.Label) + 2, 1 }
+func (b *Button) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: b,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
+		Style:   b.style,
 	}
 }
-func (b *ButtonElem) Render(s Screen, rect Rect, style Style) {
-	st := style.Merge(b.style).Apply()
+func (b *Button) Render(s Screen, rect Rect, style Style) {
+	st := b.style.Inherit(style).Apply()
 	if b.hovered {
 		st = st.Underline(true).Bold(true)
 	}
@@ -223,20 +232,20 @@ func (b *ButtonElem) Render(s Screen, rect Rect, style Style) {
 	DrawString(s, rect.X, rect.Y, rect.W, label, st)
 }
 
-func (b *ButtonElem) OnMouseEnter() { b.hovered = true }
+func (b *Button) OnMouseEnter() { b.hovered = true }
 
-func (b *ButtonElem) OnMouseLeave() {
+func (b *Button) OnMouseLeave() {
 	b.hovered = false
 	b.pressed = false // cancel
 }
 
-func (b *ButtonElem) OnMouseMove(rx, ry int) {}
+func (b *Button) OnMouseMove(rx, ry int) {}
 
-func (b *ButtonElem) OnMouseDown(x, y int) {
+func (b *Button) OnMouseDown(x, y int) {
 	b.pressed = true
 }
 
-func (b *ButtonElem) OnMouseUp(x, y int) {
+func (b *Button) OnMouseUp(x, y int) {
 	if b.pressed && b.hovered {
 		// real click
 		if b.OnClick != nil {
@@ -290,11 +299,12 @@ func (t *TextInput) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: t,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
+		Style:   t.style,
 	}
 }
 
 func (t *TextInput) Render(s Screen, rect Rect, style Style) {
-	st := style.Merge(t.style).Apply()
+	st := t.style.Inherit(style).Apply()
 	var totalW int
 	for _, r := range t.text {
 		rw := runewidth.RuneWidth(r)
@@ -306,8 +316,6 @@ func (t *TextInput) Render(s Screen, rect Rect, style Style) {
 	}
 	if t.active && t.cursor < rect.W {
 		s.ShowCursor(rect.X+t.cursor, rect.Y)
-	} else {
-		s.HideCursor()
 	}
 }
 
@@ -399,10 +407,7 @@ func (tv *TextViewer) Layout(x, y, w, h int) *LayoutNode {
 func (tv *TextViewer) Render(s Screen, rect Rect, style Style) {
 	tv.height = rect.H
 	start := tv.OffsetY
-	end := tv.OffsetY + rect.H
-	if end > len(tv.Lines) {
-		end = len(tv.Lines)
-	}
+	end := min(tv.OffsetY+rect.H, len(tv.Lines))
 	y := rect.Y
 	for i := start; i < end; i++ {
 		DrawString(s, rect.X, y, rect.W, tv.Lines[i], style.Apply())
@@ -523,11 +528,77 @@ func (t *TextEditor) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: t,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
+		Style:   t.style,
 	}
 }
 
+const tabSize = 4
+
+func tabToSpace(line []rune) (newLine []rune) {
+	newLine = make([]rune, 0, len(line))
+	var total int
+	for _, r := range line {
+		if r != '\t' {
+			newLine = append(newLine, r)
+			total += runewidth.RuneWidth(r)
+			continue
+		}
+
+		spaces := tabSize - total%tabSize
+		for range spaces {
+			newLine = append(newLine, ' ')
+		}
+		total += spaces
+	}
+	return newLine
+}
+
+// convert content index to screen cursor
+func indentCursor(line []rune, i int) int {
+	var total int
+	for j, r := range line {
+		if j == i {
+			return total
+		}
+		if r != '\t' {
+			total += runewidth.RuneWidth(r)
+			continue
+		}
+
+		spaces := tabSize - total%tabSize
+		total += spaces
+	}
+	return total
+}
+
+// convert clicking position to content index
+func unIndentCursor(line []rune, clickX int) int {
+	var total int
+	for j, r := range line {
+		if total >= clickX {
+			if (total - clickX) > tabSize/2 {
+				// optional, better location
+				return j - 1
+			}
+			return j
+		}
+		if r != '\t' {
+			total += runewidth.RuneWidth(r)
+			continue
+		}
+
+		spaces := tabSize - total%tabSize
+		total += spaces
+	}
+	if total >= clickX {
+		return len(line) - 1
+	}
+	// Handle a click past the end of the line
+	return len(line)
+}
+
 func (t *TextEditor) Render(s Screen, rect Rect, style Style) {
-	st := style.Merge(t.style).Apply()
+	st := t.style.Inherit(style).Apply()
 	t.viewH = rect.H
 
 	// Dynamic width calculation (for proper right-justification)
@@ -555,10 +626,12 @@ func (t *TextEditor) Render(s Screen, rect Rect, style Style) {
 			break
 		}
 
-		line := t.content[row]
+		line := tabToSpace(t.content[row])
 		if row == t.row {
 			cursorFound = true
-			cursorX = contentX + runewidth.StringWidth(string(line[:t.col]))
+			// log.Printf("line: %s, t.col: %d, %v", string(t.content[row]),
+			// 	t.col, indentCursor(t.content[row], t.col))
+			cursorX = contentX + indentCursor(t.content[row], t.col)
 			cursorY = rect.Y + i
 		}
 
@@ -574,8 +647,6 @@ func (t *TextEditor) Render(s Screen, rect Rect, style Style) {
 	// Place the cursor
 	if t.focused && cursorFound {
 		s.ShowCursor(cursorX, cursorY)
-	} else {
-		s.HideCursor()
 	}
 }
 func (t *TextEditor) FocusTarget() Element { return t }
@@ -655,6 +726,9 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		r := ev.Rune()
 		t.content[t.row] = slices.Insert(currentLine, t.col, r)
 		t.col++
+	case tcell.KeyTAB:
+		t.content[t.row] = slices.Insert(currentLine, t.col, '\t')
+		t.col++
 	}
 
 	if t.onChange != nil {
@@ -680,33 +754,10 @@ func (t *TextEditor) OnMouseDown(x, y int) {
 	}
 
 	currentLine := t.content[t.row]
-
 	clickedX := max(x-t.lineNumWidth, 0)
 
 	// 3. Calculate the target column (rune index)
-	targetCol := 0
-	displayWidth := 0
-	for i, r := range currentLine {
-		rw := runewidth.RuneWidth(r)
-
-		// Check if the clicked X is within the display width of the current rune.
-		if displayWidth+rw/2 >= clickedX {
-			targetCol = i
-			break
-		}
-
-		displayWidth += rw
-
-		if displayWidth >= clickedX {
-			targetCol = i + 1
-			break
-		}
-	}
-
-	// 4. Handle a click past the end of the line
-	if displayWidth < clickedX {
-		targetCol = len(currentLine)
-	}
+	targetCol := unIndentCursor(currentLine, clickedX)
 
 	t.col = targetCol
 	t.adjustCol()
@@ -792,6 +843,7 @@ func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
 	n := &LayoutNode{
 		Element: v,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
+		Style:   v.style,
 	}
 
 	// First pass: measure children
@@ -818,10 +870,7 @@ func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
 		}
 		_, ch := child.MinSize()
 		if g, ok := child.(*grower); ok && totalWeight > 0 {
-			ch = int(math.Ceil(float64(g.weight) * share))
-			if ch > remain {
-				ch = remain
-			}
+			ch = min(int(math.Ceil(float64(g.weight)*share)), remain)
 			remain -= ch
 		}
 		if used+ch > h {
@@ -882,6 +931,7 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 	n := &LayoutNode{
 		Element: hs,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
+		Style:   hs.style,
 	}
 	// First pass: measure children
 	totalWidth := 0
@@ -907,10 +957,7 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 		}
 		cw, _ := child.MinSize()
 		if g, ok := child.(*grower); ok && totalWeight > 0 {
-			cw = int(math.Ceil(float64(g.weight) * share))
-			if cw > remain {
-				cw = remain
-			}
+			cw = min(int(math.Ceil(float64(g.weight)*share)), remain)
 			remain -= cw
 		}
 		if used+cw > w {
@@ -928,8 +975,8 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 	return n
 }
 
-// no-op
 func (hs *hstack) Render(s Screen, rect Rect, style Style) {
+	// no-op
 }
 
 func (hs *hstack) Foreground(color string) *hstack {
@@ -1005,11 +1052,11 @@ func (d *divider) Render(s Screen, rect Rect, style Style) {
 	st := style.Apply()
 	if !d.vertical {
 		for i := range rect.W {
-			s.SetContent(rect.X+i, rect.Y+rect.H-1, '-', nil, st)
+			s.SetContent(rect.X+i, rect.Y+rect.H-1, hChar, nil, st)
 		}
 	} else {
 		for i := range rect.H {
-			s.SetContent(rect.X+rect.W-1, rect.Y+i, '|', nil, st)
+			s.SetContent(rect.X+rect.W-1, rect.Y+i, vChar, nil, st)
 		}
 	}
 }
@@ -1113,23 +1160,39 @@ func (b *border) Layout(x, y, w, h int) *LayoutNode {
 		},
 	}
 }
+
+// Box Drawing charaters
+const (
+	hChar = '─'
+	vChar = '│'
+	cTL   = '┌'
+	cTR   = '┐'
+	cBL   = '└'
+	cBR   = '┘'
+)
+
 func (b *border) Render(s Screen, rect Rect, style Style) {
-	st := style.Merge(b.style).Apply()
+	// Too small to draw a border
+	if rect.W < 2 || rect.H < 2 {
+		return
+	}
+
+	st := b.style.Inherit(style).Apply()
 	// Top and bottom borders
 	for i := 0; i < rect.W; i++ {
-		s.SetContent(rect.X+i, rect.Y, '-', nil, st)
-		s.SetContent(rect.X+i, rect.Y+rect.H-1, '-', nil, st)
+		s.SetContent(rect.X+i, rect.Y, hChar, nil, st)
+		s.SetContent(rect.X+i, rect.Y+rect.H-1, hChar, nil, st)
 	}
 	// Left and right borders
 	for i := 0; i < rect.H; i++ {
-		s.SetContent(rect.X, rect.Y+i, '|', nil, st)
-		s.SetContent(rect.X+rect.W-1, rect.Y+i, '|', nil, st)
+		s.SetContent(rect.X, rect.Y+i, vChar, nil, st)
+		s.SetContent(rect.X+rect.W-1, rect.Y+i, vChar, nil, st)
 	}
 	// Corners
-	s.SetContent(rect.X, rect.Y, '+', nil, st)
-	s.SetContent(rect.X+rect.W-1, rect.Y, '+', nil, st)
-	s.SetContent(rect.X, rect.Y+rect.H-1, '+', nil, st)
-	s.SetContent(rect.X+rect.W-1, rect.Y+rect.H-1, '+', nil, st)
+	s.SetContent(rect.X, rect.Y, cTL, nil, st)
+	s.SetContent(rect.X+rect.W-1, rect.Y, cTR, nil, st)
+	s.SetContent(rect.X, rect.Y+rect.H-1, cBL, nil, st)
+	s.SetContent(rect.X+rect.W-1, rect.Y+rect.H-1, cBR, nil, st)
 }
 
 // Spacer fills the remaining space between siblings inside an HStack or VStack.
@@ -1180,7 +1243,7 @@ type ListView struct {
 
 type ListItem struct {
 	label   string
-	OnClick func()
+	Handler func(label string)
 }
 
 func NewListView() *ListView {
@@ -1190,8 +1253,8 @@ func NewListView() *ListView {
 	}
 }
 
-func (l *ListView) Append(text string, onClick func()) {
-	l.items = append(l.items, ListItem{label: text, OnClick: onClick})
+func (l *ListView) Append(text string, handler func(text string)) {
+	l.items = append(l.items, ListItem{label: text, Handler: handler})
 }
 
 func (l *ListView) MinSize() (int, int) {
@@ -1226,9 +1289,9 @@ func (l *ListView) Render(s Screen, rect Rect, style Style) {
 		st := style
 		switch i {
 		case l.selected:
-			st = st.Merge(selectStyle)
+			st = st.Inherit(selectStyle)
 		case l.hovered:
-			st = st.Merge(hoverStyle)
+			st = st.Inherit(hoverStyle)
 		}
 
 		label := fmt.Sprintf(" %s ", item.label)
@@ -1242,8 +1305,8 @@ func (l *ListView) Render(s Screen, rect Rect, style Style) {
 func (l *ListView) OnMouseDown(x, y int) {
 	if y >= 0 && y < len(l.items) {
 		l.selected = y
-		if l.items[y].OnClick != nil {
-			l.items[y].OnClick()
+		if l.items[y].Handler != nil {
+			l.items[y].Handler(l.items[y].label)
 		}
 	}
 }
@@ -1302,7 +1365,7 @@ func (ti *TabItem) Layout(x, y, w, h int) *LayoutNode {
 func (ti *TabItem) Render(s Screen, rect Rect, style Style) {
 	st := style.Apply()
 	if ti.hovered || ti == ti.t.items[ti.t.active] {
-		st = st.Underline(true).Bold(true).Italic(true)
+		st = st.Underline(true).Bold(true)
 	}
 	DrawString(s, rect.X, rect.Y, rect.W, ti.label, st)
 }
@@ -1398,24 +1461,39 @@ func (t *TabView) Frame(w, h int) *Frame {
 // APP RUNNER
 // ---------------------------------------------------------------------
 
+var app = initApp()
+
+// Start event-loop, blocks until Stop.
+func Start(root Element) error {
+	return app.Start(root)
+}
+
+func Stop() {
+	app.Stop()
+}
+
+func Focus(e Element) {
+	app.Focus(e)
+}
+
 type App struct {
-	Screen  Screen
-	Root    Element
+	screen  Screen
+	root    Element
 	focused Element
 	hover   Element
-	tree    *LayoutNode // layout tree
+	tree    *LayoutNode
 	done    chan struct{}
-	QuitKey tcell.Key // key to quit the app, default is Escape
+	quitKey tcell.Key
 
 	clickPoint Point
 }
 
-func NewApp(root Element) *App {
-	return &App{
-		Root:    root,
+func initApp() *App {
+	a := &App{
 		done:    make(chan struct{}),
-		QuitKey: tcell.KeyEscape,
+		quitKey: tcell.KeyEscape,
 	}
+	return a
 }
 
 func drawTree(node *LayoutNode, s Screen, style Style) {
@@ -1424,16 +1502,18 @@ func drawTree(node *LayoutNode, s Screen, style Style) {
 	}
 
 	node.Element.Render(s, node.Rect, style)
+	// inherit parent style
+	merged := node.Style.Inherit(style)
 	for _, child := range node.Children {
-		drawTree(child, s, style)
+		drawTree(child, s, merged)
 	}
 }
 
 // Render builds and render the layout tree
 func (a *App) Render() {
-	w, h := a.Screen.Size()
-	a.tree = a.Root.Layout(0, 0, w, h)
-	drawTree(a.tree, a.Screen, DefaultStyle)
+	w, h := a.screen.Size()
+	a.tree = a.root.Layout(0, 0, w, h)
+	drawTree(a.tree, a.screen, DefaultStyle)
 }
 
 // Point represent a position in the screen coordinate.
@@ -1483,6 +1563,15 @@ func (a *App) Focus(e Element) {
 	if f, ok := a.focused.(Focusable); ok {
 		f.OnFocus()
 	}
+	log.Print("focused: ", prettyType(e))
+}
+
+func prettyType(v any) string {
+	t := reflect.TypeOf(v)
+	if t == nil {
+		return "<nil>"
+	}
+	return t.String()
 }
 
 func (a *App) resolveFocus(e Element) Element {
@@ -1499,12 +1588,13 @@ func (a *App) resolveFocus(e Element) Element {
 	}
 }
 
-func (a *App) Run() error {
+func (a *App) Start(root Element) error {
+	a.root = root
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return err
 	}
-	a.Screen = screen
+	a.screen = screen
 
 	if err := screen.Init(); err != nil {
 		return err
@@ -1543,7 +1633,7 @@ func (a *App) Run() error {
 
 func (a *App) handleKey(ev *tcell.EventKey) {
 	log.Printf("key: %s", ev.Name())
-	if ev.Key() == a.QuitKey {
+	if ev.Key() == a.quitKey {
 		close(a.done)
 		return
 	}
@@ -1577,7 +1667,7 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		// shift focus
 		a.Focus(hit)
 		if _, ok := a.focused.(KeyHandler); !ok {
-			a.Screen.HideCursor()
+			a.screen.HideCursor()
 		}
 	case tcell.WheelUp:
 		if i, ok := hit.(Scrollable); ok {

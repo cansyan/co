@@ -8,3 +8,7 @@ Features:
   - [ ] keybindings
 - mouse: hover, click, scroll
   - [ ] drag
+
+TODO:
+- make app view
+- refine the border
