@@ -1,4 +1,4 @@
-A text-based user interface (TUI) package written in Go, with mouse support.
+A text-based user interface (TUI) package, built on top of tcell.
 
 Features:
 - component: Button, Text, TextInput, TextViewer, TextEditor, Spacer, Divider
@@ -8,4 +8,7 @@ Features:
 - mouse: hover, click, scroll
   - [ ] drag
 
+To maintain simplicity and clarity:
+- redraw on every event
+- child element do not inherit the container's style
 
