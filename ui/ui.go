@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,18 +15,14 @@ import (
 )
 
 type Screen = tcell.Screen
-type EventKey = tcell.EventKey
-type EventMouse = tcell.EventMouse
-type EventResize = tcell.EventResize
-type Color = tcell.Color
 
 // Element is the interface implemented by all UI elements.
 type Element interface {
 	MinSize() (w, h int)
 	// Layout computes the layout node for this element given the position and size.
 	Layout(x, y, w, h int) *LayoutNode
-	// Render draws the element onto the screen within the given rectangle and style.
-	Render(s Screen, rect Rect, style Style)
+	// Render draws the element onto the screen within the given rectangle.
+	Render(s Screen, rect Rect)
 }
 
 // Hoverable represents an element that can respond to mouse hover.
@@ -75,7 +70,6 @@ type LayoutNode struct {
 	Element  Element
 	Rect     Rect
 	Children []*LayoutNode
-	Style    Style
 }
 
 type Rect struct {
@@ -83,23 +77,20 @@ type Rect struct {
 }
 
 type Style struct {
-	FG        Color
-	BG        Color
-	Reversed  bool
-	Bold      bool
-	Italic    bool
-	Underline bool
+	Forground  string
+	Background string
+	Bold       bool
+	Italic     bool
+	Underline  bool
 }
-
-var DefaultStyle = Style{FG: tcell.ColorDefault, BG: tcell.ColorDefault}
 
 func (s Style) Apply() tcell.Style {
 	st := tcell.StyleDefault
-	if s.FG != tcell.ColorDefault {
-		st = st.Foreground(s.FG)
+	if s.Forground != "" {
+		st = st.Foreground(tcell.ColorNames[s.Forground])
 	}
-	if s.BG != tcell.ColorDefault {
-		st = st.Background(s.BG)
+	if s.Background != "" {
+		st = st.Background(tcell.ColorNames[s.Background])
 	}
 	if s.Bold {
 		st = st.Bold(true)
@@ -110,27 +101,20 @@ func (s Style) Apply() tcell.Style {
 	if s.Underline {
 		st = st.Underline(true)
 	}
-	if s.Reversed {
-		st = st.Reverse(true)
-	}
 	return st
 }
 
-// Inherit returns a new Style by inheriting parent style
-func (s Style) Inherit(parent Style) Style {
+func (s Style) Merge(parent Style) Style {
 	ns := s
-	if ns.BG == 0 {
-		ns.BG = parent.BG
+	if ns.Background == "" {
+		ns.Background = parent.Background
 	}
-	if ns.FG == 0 {
-		ns.FG = parent.FG
+	if ns.Forground == "" {
+		ns.Forground = parent.Forground
 	}
 
 	ns.Bold = ns.Bold || parent.Bold
 	ns.Italic = ns.Italic || parent.Italic
-	if parent.Reversed {
-		ns.Reversed = !ns.Reversed
-	}
 	ns.Underline = ns.Underline || parent.Underline
 	return ns
 }
@@ -154,29 +138,22 @@ func DrawString(s Screen, x, y, w int, str string, style tcell.Style) {
 // components
 // ---------------------------------------------------------------------
 
-type Empty struct{}
-
-func (e Empty) MinSize() (int, int)               { return 0, 0 }
-func (e Empty) Layout(x, y, w, h int) *LayoutNode { return nil }
-func (e Empty) Render(Screen, Rect, Style)        {}
-
 type Text struct {
+	Style
 	Label string
-	Style Style
 }
 
-func NewText(c string) *Text { return &Text{Label: c, Style: DefaultStyle} }
+func NewText(c string) *Text { return &Text{Label: c} }
 
 func (t *Text) Bold() *Text      { t.Style.Bold = true; return t }
 func (t *Text) Italic() *Text    { t.Style.Italic = true; return t }
 func (t *Text) Underline() *Text { t.Style.Underline = true; return t }
-func (t *Text) Reverse() *Text   { t.Style.Reversed = true; return t }
-func (t *Text) Foreground(c string) *Text {
-	t.Style.FG = tcell.ColorNames[c]
+func (t *Text) Foreground(color string) *Text {
+	t.Style.Forground = color
 	return t
 }
-func (t *Text) Background(c string) *Text {
-	t.Style.BG = tcell.ColorNames[c]
+func (t *Text) Background(color string) *Text {
+	t.Style.Background = color
 	return t
 }
 
@@ -185,17 +162,15 @@ func (t *Text) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: t,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
-		Style:   t.Style,
 	}
 }
-func (t *Text) Render(s Screen, rect Rect, style Style) {
-	st := t.Style.Inherit(style).Apply()
-	DrawString(s, rect.X, rect.Y, rect.W, t.Label, st)
+func (t *Text) Render(s Screen, rect Rect) {
+	DrawString(s, rect.X, rect.Y, rect.W, t.Label, t.Style.Apply())
 }
 
 type Button struct {
+	Style
 	Label   string
-	style   Style
 	OnClick func()
 	hovered bool
 	pressed bool
@@ -203,15 +178,7 @@ type Button struct {
 
 // NewButton creates a new button element with the given label.
 func NewButton(label string) *Button {
-	return &Button{Label: label, style: DefaultStyle}
-}
-func (b *Button) Foreground(c string) *Button {
-	b.style.FG = tcell.ColorNames[c]
-	return b
-}
-func (b *Button) Background(c string) *Button {
-	b.style.BG = tcell.ColorNames[c]
-	return b
+	return &Button{Label: label}
 }
 
 func (b *Button) MinSize() (int, int) { return runewidth.StringWidth(b.Label) + 2, 1 }
@@ -219,19 +186,17 @@ func (b *Button) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: b,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
-		Style:   b.style,
 	}
 }
-func (b *Button) Render(s Screen, rect Rect, style Style) {
-	st := b.style
+func (b *Button) Render(s Screen, rect Rect) {
+	st := b.Style
 	if b.hovered {
 		st.Underline = true
 		st.Bold = true
 	}
 	if b.pressed {
-		st.Reversed = true
+		st.Background = "lightgray"
 	}
-	st = st.Inherit(style)
 	label := " " + b.Label + " "
 	DrawString(s, rect.X, rect.Y, rect.W, label, st.Apply())
 }
@@ -289,11 +254,11 @@ func (t *TextInput) OnChange(fn func(string)) *TextInput {
 }
 
 func (t *TextInput) Foreground(c string) *TextInput {
-	t.style.FG = tcell.ColorNames[c]
+	t.style.Forground = c
 	return t
 }
 func (t *TextInput) Background(c string) *TextInput {
-	t.style.BG = tcell.ColorNames[c]
+	t.style.Background = c
 	return t
 }
 
@@ -303,12 +268,11 @@ func (t *TextInput) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: t,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
-		Style:   t.style,
 	}
 }
 
-func (t *TextInput) Render(s Screen, rect Rect, style Style) {
-	st := t.style.Inherit(style).Apply()
+func (t *TextInput) Render(s Screen, rect Rect) {
+	st := t.style.Apply()
 	var totalW int
 	for _, r := range t.text {
 		rw := runewidth.RuneWidth(r)
@@ -377,8 +341,8 @@ func (t *TextInput) OnMouseDown(x, y int) {
 
 // TextViewer is a non-editable text viewer,
 // supports multiple lines, scrolling and following tail.
-// It can be used for log panel or debug.
 type TextViewer struct {
+	Style
 	Lines    []string
 	OffsetY  int
 	AutoTail bool
@@ -408,13 +372,13 @@ func (tv *TextViewer) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 
-func (tv *TextViewer) Render(s Screen, rect Rect, style Style) {
+func (tv *TextViewer) Render(s Screen, rect Rect) {
 	tv.height = rect.H
 	start := tv.OffsetY
 	end := min(tv.OffsetY+rect.H, len(tv.Lines))
 	y := rect.Y
 	for i := start; i < end; i++ {
-		DrawString(s, rect.X, y, rect.W, tv.Lines[i], style.Apply())
+		DrawString(s, rect.X, y, rect.W, tv.Lines[i], tv.Style.Apply())
 		y++
 	}
 }
@@ -482,16 +446,15 @@ type TextEditor struct {
 func NewTextEditor() *TextEditor {
 	return &TextEditor{
 		content: [][]rune{{}}, // Start with one empty line of runes
-		style:   DefaultStyle,
 	}
 }
 
 func (t *TextEditor) Foreground(c string) *TextEditor {
-	t.style.FG = tcell.ColorNames[c]
+	t.style.Forground = c
 	return t
 }
 func (t *TextEditor) Background(c string) *TextEditor {
-	t.style.BG = tcell.ColorNames[c]
+	t.style.Background = c
 	return t
 }
 
@@ -532,7 +495,6 @@ func (t *TextEditor) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: t,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
-		Style:   t.style,
 	}
 }
 
@@ -601,8 +563,8 @@ func unIndentCursor(line []rune, clickX int) int {
 	return len(line)
 }
 
-func (t *TextEditor) Render(s Screen, rect Rect, style Style) {
-	st := t.style.Inherit(style).Apply()
+func (t *TextEditor) Render(s Screen, rect Rect) {
+	st := t.style.Apply()
 	t.viewH = rect.H
 
 	// Dynamic width calculation (for proper right-justification)
@@ -806,479 +768,6 @@ func (t *TextEditor) OnChange(fn func()) {
 
 func (t *TextEditor) Grow(weight ...int) *grower { return Grow(t, weight...) }
 
-// ---------------------------------------------------------------------
-// Layouts
-// ---------------------------------------------------------------------
-
-type vstack struct {
-	children []Element
-	style    Style
-	spacing  int
-}
-
-// VStack creates a vertical stack layout element.
-func VStack(children ...Element) *vstack {
-	return &vstack{children: children, style: DefaultStyle}
-}
-func (v *vstack) Foreground(color string) *vstack {
-	v.style.FG = tcell.ColorNames[color]
-	return v
-}
-func (v *vstack) Background(color string) *vstack {
-	v.style.BG = tcell.ColorNames[color]
-	return v
-}
-func (v *vstack) MinSize() (int, int) {
-	maxW, totalH := 0, 0
-	for i, child := range v.children {
-		cw, ch := child.MinSize()
-		if cw > maxW {
-			maxW = cw
-		}
-		totalH += ch
-		if i < len(v.children)-1 {
-			totalH += v.spacing
-		}
-	}
-	return maxW, totalH
-}
-
-func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
-	n := &LayoutNode{
-		Element: v,
-		Rect:    Rect{X: x, Y: y, W: w, H: h},
-		Style:   v.style,
-	}
-
-	// First pass: measure children
-	totalH := 0
-	totalWeight := 0
-	for _, child := range v.children {
-		if i, ok := child.(*grower); ok {
-			totalWeight += i.weight
-		} else {
-			_, ch := child.MinSize()
-			totalH += ch
-		}
-	}
-
-	// Compute remaining space
-	remain := max(h-totalH-v.spacing*(len(v.children)-1), 0)
-	share := float64(remain) / float64(totalWeight)
-
-	// Second pass: layout children
-	used := 0
-	for i, child := range v.children {
-		if d, ok := child.(*divider); ok {
-			d.vertical = false
-		}
-		_, ch := child.MinSize()
-		if g, ok := child.(*grower); ok && totalWeight > 0 {
-			ch = min(int(math.Ceil(float64(g.weight)*share)), remain)
-			remain -= ch
-		}
-		if used+ch > h {
-			ch = h - used
-		}
-		if ch > 0 {
-			childNode := child.Layout(x, y+used, w, ch)
-			n.Children = append(n.Children, childNode)
-		}
-		used += ch
-		if i < len(v.children)-1 {
-			used += v.spacing
-		}
-	}
-	return n
-}
-
-func (v *vstack) Render(s Screen, rect Rect, style Style) {
-	// do nothing, children are rendered in drawTree()
-}
-
-func (v *vstack) Append(e Element) *vstack { v.children = append(v.children, e); return v }
-
-// Spacing sets the spacing (in rows) between child elements.
-func (v *vstack) Spacing(p int) *vstack {
-	v.spacing = p
-	return v
-}
-
-func (v *vstack) Grow(weight ...int) *grower { return Grow(v, weight...) }
-
-type hstack struct {
-	children []Element
-	Style    Style
-	spacing  int
-}
-
-// HStack creates a horizontal stack layout element.
-func HStack(children ...Element) *hstack {
-	return &hstack{children: children, Style: DefaultStyle}
-}
-func (hs *hstack) MinSize() (int, int) {
-	totalW, maxH := 0, 0
-	for i, child := range hs.children {
-		cw, ch := child.MinSize()
-		totalW += cw
-		if ch > maxH {
-			maxH = ch
-		}
-		if i < len(hs.children)-1 {
-			totalW += hs.spacing
-		}
-	}
-	return totalW, maxH
-}
-
-func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
-	n := &LayoutNode{
-		Element: hs,
-		Rect:    Rect{X: x, Y: y, W: w, H: h},
-		Style:   hs.Style,
-	}
-	// First pass: measure children
-	totalWidth := 0
-	totalWeight := 0
-	for _, child := range hs.children {
-		if g, ok := child.(*grower); ok {
-			totalWeight += g.weight
-		} else {
-			cw, _ := child.MinSize()
-			totalWidth += cw
-		}
-	}
-
-	// Compute remaining space
-	remain := max(w-totalWidth-hs.spacing*(len(hs.children)-1), 0)
-	share := float64(remain) / float64(totalWeight)
-
-	// Second pass: layout children
-	used := 0
-	for i, child := range hs.children {
-		if div, ok := child.(*divider); ok {
-			div.vertical = true
-		}
-		cw, _ := child.MinSize()
-		if g, ok := child.(*grower); ok && totalWeight > 0 {
-			cw = min(int(math.Ceil(float64(g.weight)*share)), remain)
-			remain -= cw
-		}
-		if used+cw > w {
-			cw = w - used
-		}
-		if cw > 0 {
-			childNode := child.Layout(x+used, y, cw, h)
-			n.Children = append(n.Children, childNode)
-		}
-		used += cw
-		if i < len(hs.children)-1 {
-			used += hs.spacing
-		}
-	}
-	return n
-}
-
-func (hs *hstack) Render(s Screen, rect Rect, style Style) {
-	ResetRect(s, rect, style)
-}
-
-func (hs *hstack) Foreground(color string) *hstack {
-	hs.Style.FG = tcell.ColorNames[color]
-	return hs
-}
-func (hs *hstack) Background(color string) *hstack {
-	hs.Style.BG = tcell.ColorNames[color]
-	return hs
-}
-
-func (hs *hstack) Append(e Element) *hstack { hs.children = append(hs.children, e); return hs }
-
-// Spacing sets the spacing (in columns) between child elements.
-func (hs *hstack) Spacing(p int) *hstack { hs.spacing = p; return hs }
-
-func (hs *hstack) Grow(weight ...int) *grower {
-	return Grow(hs, weight...)
-}
-
-type grower struct {
-	child  Element
-	weight int
-}
-
-// Grow expands the given element to occupy the remaining available space.
-// The optional weight (default 1) controls how extra space is distributed
-// among siblings inside an HStack or VStack.
-func Grow(e Element, weight ...int) *grower {
-	w := 1
-	if len(weight) > 0 {
-		w = weight[0]
-	}
-	return &grower{child: e, weight: w}
-}
-
-func (g *grower) Layout(x, y, w, h int) *LayoutNode {
-	return &LayoutNode{
-		Element: g,
-		Rect:    Rect{X: x, Y: y, W: w, H: h},
-		Children: []*LayoutNode{
-			g.child.Layout(x, y, w, h),
-		},
-	}
-}
-
-func (g *grower) MinSize() (int, int) {
-	return g.child.MinSize()
-}
-
-func (g *grower) Render(s Screen, rect Rect, style Style) {
-	// do nothing
-}
-
-type divider struct {
-	vertical bool
-}
-
-// Divider creates a horizontal or vertical divider line.
-// Should be used inside HStack or VStack.
-func Divider() *divider {
-	return &divider{}
-}
-
-func (d *divider) MinSize() (w, h int) { return 1, 1 }
-func (d *divider) Layout(x, y, w, h int) *LayoutNode {
-	return &LayoutNode{
-		Element: d,
-		Rect:    Rect{X: x, Y: y, W: w, H: h},
-	}
-}
-func (d *divider) Render(s Screen, rect Rect, style Style) {
-	st := style.Apply()
-	if !d.vertical {
-		for i := range rect.W {
-			s.SetContent(rect.X+i, rect.Y+rect.H-1, hChar, nil, st)
-		}
-	} else {
-		for i := range rect.H {
-			s.SetContent(rect.X+rect.W-1, rect.Y+i, vChar, nil, st)
-		}
-	}
-}
-
-type padding struct {
-	child                    Element
-	top, right, bottom, left int
-}
-
-// Padding creates a layout element that adds padding around its child.
-func Padding(child Element, p int) *padding {
-	return &padding{
-		child:  child,
-		top:    p,
-		right:  p,
-		bottom: p,
-		left:   p,
-	}
-}
-
-// PaddingH creates a layout element that adds horizontal padding around its child.
-func PaddingH(child Element, p int) *padding {
-	return &padding{
-		child: child,
-		right: p,
-		left:  p,
-	}
-}
-
-// PaddingV creates a layout element that adds vertical padding around its child.
-func PaddingV(child Element, p int) *padding {
-	return &padding{
-		child:  child,
-		top:    p,
-		bottom: p,
-	}
-}
-
-func (p *padding) MinSize() (w, h int) {
-	cw, ch := p.child.MinSize()
-	return cw + p.left + p.right, ch + p.top + p.bottom
-}
-func (p *padding) Layout(x, y, w, h int) *LayoutNode {
-	// Compute inner rectangle after padding
-	innerX := x + p.left
-	innerY := y + p.top
-	innerW := w - p.left - p.right
-	innerH := h - p.top - p.bottom
-	if innerW < 0 {
-		innerW = 0
-	}
-	if innerH < 0 {
-		innerH = 0
-	}
-
-	return &LayoutNode{
-		Element: p,
-		Rect:    Rect{X: x, Y: y, W: w, H: h},
-		Children: []*LayoutNode{
-			p.child.Layout(innerX, innerY, innerW, innerH),
-		},
-	}
-}
-
-func (p *padding) Render(s Screen, rect Rect, style Style) {
-	// do nothing, child is rendered in drawTree()
-}
-
-type border struct {
-	child Element
-	style Style
-}
-
-// Border creates a layout element that draws a border around its child.
-func Border(child Element) *border {
-	return &border{child: child, style: DefaultStyle}
-}
-
-func (b *border) MinSize() (w, h int) {
-	cw, ch := b.child.MinSize()
-	return cw + 2, ch + 2
-}
-func (b *border) Layout(x, y, w, h int) *LayoutNode {
-	// Compute inner rectangle after border
-	innerX := x + 1
-	innerY := y + 1
-	innerW := w - 2
-	innerH := h - 2
-	if innerW < 0 {
-		innerW = 0
-	}
-	if innerH < 0 {
-		innerH = 0
-	}
-
-	return &LayoutNode{
-		Element: b,
-		Rect:    Rect{X: x, Y: y, W: w, H: h},
-		Children: []*LayoutNode{
-			b.child.Layout(innerX, innerY, innerW, innerH),
-		},
-	}
-}
-
-// Box Drawing charaters
-const (
-	hChar = '─'
-	vChar = '│'
-	cTL   = '┌'
-	cTR   = '┐'
-	cBL   = '└'
-	cBR   = '┘'
-)
-
-func (b *border) Render(s Screen, rect Rect, style Style) {
-	// Too small to draw a border
-	if rect.W < 2 || rect.H < 2 {
-		return
-	}
-
-	st := b.style.Inherit(style).Apply()
-	// Top and bottom borders
-	for i := 0; i < rect.W; i++ {
-		s.SetContent(rect.X+i, rect.Y, hChar, nil, st)
-		s.SetContent(rect.X+i, rect.Y+rect.H-1, hChar, nil, st)
-	}
-	// Left and right borders
-	for i := 0; i < rect.H; i++ {
-		s.SetContent(rect.X, rect.Y+i, vChar, nil, st)
-		s.SetContent(rect.X+rect.W-1, rect.Y+i, vChar, nil, st)
-	}
-	// Corners
-	s.SetContent(rect.X, rect.Y, cTL, nil, st)
-	s.SetContent(rect.X+rect.W-1, rect.Y, cTR, nil, st)
-	s.SetContent(rect.X, rect.Y+rect.H-1, cBL, nil, st)
-	s.SetContent(rect.X+rect.W-1, rect.Y+rect.H-1, cBR, nil, st)
-}
-
-// Spacer fills the remaining space between siblings inside an HStack or VStack.
-var Spacer = Grow(Empty{})
-
-// Frame is a fixed-size wrapper that always reports the size given by W and H.
-// It layouts exactly one child element and forces the child to fill the frame.
-// Rendering is a no-op; the frame exists purely as a layout boundary.
-type Frame struct {
-	W, H  int // 0 means using child's min size
-	Child Element
-	Style Style
-}
-
-func (f *Frame) MinSize() (int, int) {
-	w, h := f.W, f.H
-	if w == 0 {
-		cw, _ := f.Child.MinSize()
-		w = cw
-	}
-	if h == 0 {
-		_, ch := f.Child.MinSize()
-		h = ch
-	}
-	return w, h
-}
-
-func (f *Frame) Layout(x, y, w, h int) *LayoutNode {
-	return &LayoutNode{
-		Element:  f,
-		Rect:     Rect{X: x, Y: y, W: w, H: h},
-		Children: []*LayoutNode{f.Child.Layout(x, y, w, h)},
-		Style:    f.Style,
-	}
-}
-
-// ResetRect resets the content of the given rectangle to the specified style.
-func ResetRect(s Screen, rect Rect, style Style) {
-	st := style.Apply()
-	for x := rect.X; x < rect.X+rect.W; x++ {
-		for y := rect.Y; y < rect.Y+rect.H; y++ {
-			s.SetContent(x, y, ' ', nil, st)
-		}
-	}
-}
-
-func (f *Frame) Render(s Screen, rect Rect, style Style) {
-	st := f.Style.Inherit(style)
-	ResetRect(s, rect, st)
-}
-
-// ---------------------------------------------------------------------
-// Containers (View)
-// ---------------------------------------------------------------------
-
-type Box struct {
-	Style Style
-	Child Element
-}
-
-func (b *Box) MinSize() (int, int) {
-	return b.Child.MinSize()
-}
-
-func (b *Box) Layout(x, y, w, h int) *LayoutNode {
-	return &LayoutNode{
-		Element:  b,
-		Style:    b.Style,
-		Rect:     Rect{X: x, Y: y, W: w, H: h},
-		Children: []*LayoutNode{b.Child.Layout(x, y, w, h)},
-	}
-}
-
-// Render sets the background color of the box area.
-func (b *Box) Render(screen Screen, rect Rect, style Style) {
-	for x := rect.X; x < rect.X+rect.W; x++ {
-		for y := rect.Y; y < rect.Y+rect.H; y++ {
-			screen.SetContent(x, y, ' ', nil, style.Apply())
-		}
-	}
-}
-
 type ListView struct {
 	items    []ListItem
 	hovered  int // -1 means nothing hovered
@@ -1318,13 +807,9 @@ func (l *ListView) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 
-func (l *ListView) Render(s Screen, rect Rect, style Style) {
-	hoverStyle := DefaultStyle
-	hoverStyle.FG = tcell.ColorRed
-	hoverStyle.Underline = true
-	selectStyle := DefaultStyle
-	selectStyle.Reversed = true
-
+func (l *ListView) Render(s Screen, rect Rect) {
+	hoverStyle := Style{Forground: "red", Underline: true}
+	selectStyle := Style{Background: "lightgray"}
 	for i, item := range l.items {
 		if i >= rect.H {
 			break
@@ -1333,14 +818,17 @@ func (l *ListView) Render(s Screen, rect Rect, style Style) {
 		var st tcell.Style
 		switch i {
 		case l.selected:
-			st = style.Inherit(selectStyle).Apply()
+			st = selectStyle.Apply()
 		case l.hovered:
-			st = style.Inherit(hoverStyle).Apply().Underline(tcell.UnderlineStyleCurly, tcell.ColorYellow)
+			st = hoverStyle.Apply().Underline(tcell.UnderlineStyleCurly, tcell.ColorYellow)
 		}
 
 		label := fmt.Sprintf(" %s ", item.label)
-		if w := runewidth.StringWidth(label); w > rect.W {
+		w := runewidth.StringWidth(label)
+		if w > rect.W {
 			label = runewidth.Truncate(label, rect.W, "…")
+		} else {
+			label = runewidth.FillRight(label, rect.W)
 		}
 		DrawString(s, rect.X, rect.Y+i, rect.W, label, st)
 	}
@@ -1406,12 +894,17 @@ func (ti *TabItem) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 
-func (ti *TabItem) Render(s Screen, rect Rect, style Style) {
-	st := style.Apply()
-	if ti.hovered || ti == ti.t.items[ti.t.active] {
-		st = st.Underline(true).Bold(true)
+var StyleHoverTab = Style{Background: "lightgray"}
+var StyleActiveTab = Style{Underline: true, Bold: true}
+
+func (ti *TabItem) Render(s Screen, rect Rect) {
+	var st Style
+	if ti == ti.t.items[ti.t.active] {
+		st = StyleActiveTab
+	} else if ti.hovered {
+		st = StyleHoverTab
 	}
-	DrawString(s, rect.X, rect.Y, rect.W, ti.label, st)
+	DrawString(s, rect.X, rect.Y, rect.W, ti.label, st.Apply())
 }
 
 func (ti *TabItem) FocusTarget() Element {
@@ -1477,7 +970,7 @@ func (t *TabView) Layout(x, y, w, h int) *LayoutNode {
 	return n
 }
 
-func (t *TabView) Render(s Screen, rect Rect, style Style) {
+func (t *TabView) Render(s Screen, rect Rect) {
 	// do nothing, children render themselves
 }
 
@@ -1499,6 +992,457 @@ func (t *TabView) Grow(weight ...int) *grower {
 // w and h can be 0, means min size.
 func (t *TabView) Frame(w, h int) *Frame {
 	return &Frame{W: w, H: h, Child: t}
+}
+
+type divider struct {
+	vertical bool
+}
+
+// Divider creates a horizontal or vertical divider line.
+// Should be used inside HStack or VStack.
+func Divider() *divider {
+	return &divider{}
+}
+
+func (d *divider) MinSize() (w, h int) { return 1, 1 }
+func (d *divider) Layout(x, y, w, h int) *LayoutNode {
+	return &LayoutNode{
+		Element: d,
+		Rect:    Rect{X: x, Y: y, W: w, H: h},
+	}
+}
+func (d *divider) Render(s Screen, rect Rect) {
+	var style tcell.Style
+	if !d.vertical {
+		for i := range rect.W {
+			s.SetContent(rect.X+i, rect.Y+rect.H-1, hChar, nil, style)
+		}
+	} else {
+		for i := range rect.H {
+			s.SetContent(rect.X+rect.W-1, rect.Y+i, vChar, nil, style)
+		}
+	}
+}
+
+type Empty struct{}
+
+func (e Empty) MinSize() (int, int)               { return 0, 0 }
+func (e Empty) Layout(x, y, w, h int) *LayoutNode { return nil }
+func (e Empty) Render(Screen, Rect)               {}
+
+// Spacer fills the remaining space between siblings inside an HStack or VStack.
+var Spacer = Grow(Empty{})
+
+// ---------------------------------------------------------------------
+// Containers
+// ---------------------------------------------------------------------
+
+type vstack struct {
+	children []Element
+	style    Style
+	spacing  int
+}
+
+// VStack returns a container that arranges children vertically.
+func VStack(children ...Element) *vstack {
+	return &vstack{children: children}
+}
+func (v *vstack) Foreground(color string) *vstack {
+	v.style.Forground = color
+	return v
+}
+func (v *vstack) Background(color string) *vstack {
+	v.style.Background = color
+	return v
+}
+func (v *vstack) MinSize() (int, int) {
+	maxW, totalH := 0, 0
+	for i, child := range v.children {
+		cw, ch := child.MinSize()
+		if cw > maxW {
+			maxW = cw
+		}
+		totalH += ch
+		if i < len(v.children)-1 {
+			totalH += v.spacing
+		}
+	}
+	return maxW, totalH
+}
+
+func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
+	n := &LayoutNode{
+		Element: v,
+		Rect:    Rect{X: x, Y: y, W: w, H: h},
+	}
+
+	// First pass: measure children
+	totalH := 0
+	totalWeight := 0
+	for _, child := range v.children {
+		if i, ok := child.(*grower); ok {
+			totalWeight += i.weight
+		} else {
+			_, ch := child.MinSize()
+			totalH += ch
+		}
+	}
+
+	// Compute remaining space
+	remain := max(h-totalH-v.spacing*(len(v.children)-1), 0)
+	share := float64(remain) / float64(totalWeight)
+
+	// Second pass: layout children
+	used := 0
+	for i, child := range v.children {
+		if d, ok := child.(*divider); ok {
+			d.vertical = false
+		}
+		_, ch := child.MinSize()
+		if g, ok := child.(*grower); ok && totalWeight > 0 {
+			ch = min(int(math.Ceil(float64(g.weight)*share)), remain)
+			remain -= ch
+		}
+		if used+ch > h {
+			ch = h - used
+		}
+		if ch > 0 {
+			childNode := child.Layout(x, y+used, w, ch)
+			n.Children = append(n.Children, childNode)
+		}
+		used += ch
+		if i < len(v.children)-1 {
+			used += v.spacing
+		}
+	}
+	return n
+}
+
+func (v *vstack) Render(s Screen, rect Rect) {
+	ResetRect(s, rect, v.style)
+}
+
+func (v *vstack) Append(e ...Element) *vstack {
+	v.children = append(v.children, e...)
+	return v
+}
+
+// Spacing sets the spacing (in rows) between child elements.
+func (v *vstack) Spacing(p int) *vstack {
+	v.spacing = p
+	return v
+}
+
+func (v *vstack) Grow(weight ...int) *grower { return Grow(v, weight...) }
+
+type hstack struct {
+	children []Element
+	Style    Style
+	spacing  int
+}
+
+// HStack returns a container that arranges children horizontally.
+func HStack(children ...Element) *hstack {
+	return &hstack{children: children}
+}
+func (hs *hstack) MinSize() (int, int) {
+	totalW, maxH := 0, 0
+	for i, child := range hs.children {
+		cw, ch := child.MinSize()
+		totalW += cw
+		if ch > maxH {
+			maxH = ch
+		}
+		if i < len(hs.children)-1 {
+			totalW += hs.spacing
+		}
+	}
+	return totalW, maxH
+}
+
+func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
+	n := &LayoutNode{
+		Element: hs,
+		Rect:    Rect{X: x, Y: y, W: w, H: h},
+	}
+	// First pass: measure children
+	totalWidth := 0
+	totalWeight := 0
+	for _, child := range hs.children {
+		if g, ok := child.(*grower); ok {
+			totalWeight += g.weight
+		} else {
+			cw, _ := child.MinSize()
+			totalWidth += cw
+		}
+	}
+
+	// Compute remaining space
+	remain := max(w-totalWidth-hs.spacing*(len(hs.children)-1), 0)
+	share := float64(remain) / float64(totalWeight)
+
+	// Second pass: layout children
+	used := 0
+	for i, child := range hs.children {
+		if div, ok := child.(*divider); ok {
+			div.vertical = true
+		}
+		cw, _ := child.MinSize()
+		if g, ok := child.(*grower); ok && totalWeight > 0 {
+			cw = min(int(math.Ceil(float64(g.weight)*share)), remain)
+			remain -= cw
+		}
+		if used+cw > w {
+			cw = w - used
+		}
+		if cw > 0 {
+			childNode := child.Layout(x+used, y, cw, h)
+			n.Children = append(n.Children, childNode)
+		}
+		used += cw
+		if i < len(hs.children)-1 {
+			used += hs.spacing
+		}
+	}
+	return n
+}
+
+func (hs *hstack) Render(s Screen, rect Rect) {
+	ResetRect(s, rect, hs.Style)
+}
+
+func (hs *hstack) Foreground(color string) *hstack {
+	hs.Style.Forground = color
+	return hs
+}
+func (hs *hstack) Background(color string) *hstack {
+	hs.Style.Background = color
+	return hs
+}
+
+func (hs *hstack) Append(e ...Element) *hstack {
+	hs.children = append(hs.children, e...)
+	return hs
+}
+
+// Spacing sets the spacing (in columns) between child elements.
+func (hs *hstack) Spacing(p int) *hstack { hs.spacing = p; return hs }
+
+func (hs *hstack) Grow(weight ...int) *grower {
+	return Grow(hs, weight...)
+}
+
+// grower is a element wrapper, won't render
+type grower struct {
+	child  Element
+	weight int
+}
+
+// Grow expands the given element to occupy the remaining available space.
+// The optional weight (default 1) controls how extra space is distributed
+// among siblings inside an HStack or VStack.
+func Grow(e Element, weight ...int) *grower {
+	w := 1
+	if len(weight) > 0 {
+		w = weight[0]
+	}
+	return &grower{child: e, weight: w}
+}
+
+func (g *grower) Layout(x, y, w, h int) *LayoutNode {
+	return &LayoutNode{
+		Element: g,
+		Rect:    Rect{X: x, Y: y, W: w, H: h},
+		Children: []*LayoutNode{
+			g.child.Layout(x, y, w, h),
+		},
+	}
+}
+
+func (g *grower) MinSize() (int, int) {
+	return g.child.MinSize()
+}
+
+func (g *grower) Render(s Screen, rect Rect) {
+	// do nothing
+}
+
+type padding struct {
+	child                    Element
+	top, right, bottom, left int
+}
+
+// Padding adds padding around its child.
+func Padding(child Element, p int) *padding {
+	return &padding{
+		child:  child,
+		top:    p,
+		right:  p,
+		bottom: p,
+		left:   p,
+	}
+}
+
+// PaddingH adds horizontal padding around its child.
+func PaddingH(child Element, p int) *padding {
+	return &padding{
+		child: child,
+		right: p,
+		left:  p,
+	}
+}
+
+// PaddingV adds vertical padding around its child.
+func PaddingV(child Element, p int) *padding {
+	return &padding{
+		child:  child,
+		top:    p,
+		bottom: p,
+	}
+}
+
+func (p *padding) MinSize() (w, h int) {
+	cw, ch := p.child.MinSize()
+	return cw + p.left + p.right, ch + p.top + p.bottom
+}
+func (p *padding) Layout(x, y, w, h int) *LayoutNode {
+	// Compute inner rectangle after padding
+	innerX := x + p.left
+	innerY := y + p.top
+	innerW := w - p.left - p.right
+	innerH := h - p.top - p.bottom
+	if innerW < 0 {
+		innerW = 0
+	}
+	if innerH < 0 {
+		innerH = 0
+	}
+
+	return &LayoutNode{
+		Element: p,
+		Rect:    Rect{X: x, Y: y, W: w, H: h},
+		Children: []*LayoutNode{
+			p.child.Layout(innerX, innerY, innerW, innerH),
+		},
+	}
+}
+
+func (p *padding) Render(s Screen, rect Rect) {
+	// no-op
+}
+
+type Box struct {
+	Style
+	child Element
+}
+
+// NewBox return a box container that draws border around the child.
+func NewBox(child Element) *Box {
+	return &Box{child: child}
+}
+
+func (b *Box) MinSize() (w, h int) {
+	cw, ch := b.child.MinSize()
+	return cw + 2, ch + 2
+}
+func (b *Box) Layout(x, y, w, h int) *LayoutNode {
+	// Compute inner rectangle after border
+	innerX := x + 1
+	innerY := y + 1
+	innerW := w - 2
+	innerH := h - 2
+	if innerW < 0 {
+		innerW = 0
+	}
+	if innerH < 0 {
+		innerH = 0
+	}
+
+	return &LayoutNode{
+		Element: b,
+		Rect:    Rect{X: x, Y: y, W: w, H: h},
+		Children: []*LayoutNode{
+			b.child.Layout(innerX, innerY, innerW, innerH),
+		},
+	}
+}
+
+// Box Drawing charaters
+const (
+	hChar = '─'
+	vChar = '│'
+	cTL   = '┌'
+	cTR   = '┐'
+	cBL   = '└'
+	cBR   = '┘'
+)
+
+func (b *Box) Render(s Screen, rect Rect) {
+	// Too small to draw a border
+	if rect.W < 2 || rect.H < 2 {
+		return
+	}
+
+	st := b.Style.Apply()
+	// Top and bottom borders
+	for i := 0; i < rect.W; i++ {
+		s.SetContent(rect.X+i, rect.Y, hChar, nil, st)
+		s.SetContent(rect.X+i, rect.Y+rect.H-1, hChar, nil, st)
+	}
+	// Left and right borders
+	for i := 0; i < rect.H; i++ {
+		s.SetContent(rect.X, rect.Y+i, vChar, nil, st)
+		s.SetContent(rect.X+rect.W-1, rect.Y+i, vChar, nil, st)
+	}
+	// Corners
+	s.SetContent(rect.X, rect.Y, cTL, nil, st)
+	s.SetContent(rect.X+rect.W-1, rect.Y, cTR, nil, st)
+	s.SetContent(rect.X, rect.Y+rect.H-1, cBL, nil, st)
+	s.SetContent(rect.X+rect.W-1, rect.Y+rect.H-1, cBR, nil, st)
+}
+
+// Frame is a fixed-size wrapper that always reports the size given by W and H.
+// It layouts exactly one child element and forces the child to fill the frame.
+type Frame struct {
+	Style     // TODO: maybe embed?
+	W, H  int // 0 means using child's min size
+	Child Element
+}
+
+func (f *Frame) MinSize() (int, int) {
+	w, h := f.W, f.H
+	if w == 0 {
+		cw, _ := f.Child.MinSize()
+		w = cw
+	}
+	if h == 0 {
+		_, ch := f.Child.MinSize()
+		h = ch
+	}
+	return w, h
+}
+
+func (f *Frame) Layout(x, y, w, h int) *LayoutNode {
+	return &LayoutNode{
+		Element:  f,
+		Rect:     Rect{X: x, Y: y, W: w, H: h},
+		Children: []*LayoutNode{f.Child.Layout(x, y, w, h)},
+	}
+}
+
+// ResetRect resets the content of the given rectangle to the specified style.
+func ResetRect(s Screen, rect Rect, style Style) {
+	st := style.Apply()
+	for x := rect.X; x < rect.X+rect.W; x++ {
+		for y := rect.Y; y < rect.Y+rect.H; y++ {
+			// when debugging, printing '.' would be better
+			s.SetContent(x, y, ' ', nil, st)
+		}
+	}
+}
+
+func (f *Frame) Render(s Screen, rect Rect) {
+	ResetRect(s, rect, f.Style)
 }
 
 // ---------------------------------------------------------------------
@@ -1540,16 +1484,14 @@ func initApp() *App {
 	return a
 }
 
-func drawTree(node *LayoutNode, s Screen, style Style) {
+func drawTree(node *LayoutNode, s Screen) {
 	if node == nil {
 		return
 	}
 
-	node.Element.Render(s, node.Rect, style)
-	// inherit parent style
-	merged := node.Style.Inherit(style)
+	node.Element.Render(s, node.Rect)
 	for _, child := range node.Children {
-		drawTree(child, s, merged)
+		drawTree(child, s)
 	}
 }
 
@@ -1557,7 +1499,7 @@ func drawTree(node *LayoutNode, s Screen, style Style) {
 func (a *App) Render() {
 	w, h := a.screen.Size()
 	a.tree = a.root.Layout(0, 0, w, h)
-	drawTree(a.tree, a.screen, DefaultStyle)
+	drawTree(a.tree, a.screen)
 }
 
 // Point represent a position in the screen coordinate.
@@ -1607,16 +1549,16 @@ func (a *App) Focus(e Element) {
 	if f, ok := a.focused.(Focusable); ok {
 		f.OnFocus()
 	}
-	log.Print("focused: ", prettyType(e))
+	// log.Print("focused: ", prettyType(a.focused))
 }
 
-func prettyType(v any) string {
-	t := reflect.TypeOf(v)
-	if t == nil {
-		return "<nil>"
-	}
-	return t.String()
-}
+// func prettyType(v any) string {
+// 	t := reflect.TypeOf(v)
+// 	if t == nil {
+// 		return "<nil>"
+// 	}
+// 	return t.String()
+// }
 
 func (a *App) resolveFocus(e Element) Element {
 	for {
@@ -1664,12 +1606,12 @@ func (a *App) Start(root Element) error {
 
 		ev := screen.PollEvent()
 		switch ev := ev.(type) {
-		case *EventResize:
+		case *tcell.EventResize:
 			draw()
 			screen.Sync()
-		case *EventKey:
+		case *tcell.EventKey:
 			a.handleKey(ev)
-		case *EventMouse:
+		case *tcell.EventMouse:
 			a.handleMouse(ev)
 		}
 	}

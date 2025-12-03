@@ -31,6 +31,7 @@ type app struct {
 	tabs    []*tab
 	active  int
 	btnNew  *ui.Button
+	btnSave *ui.Button
 	btnQuit *ui.Button
 	status  *ui.Text
 }
@@ -38,13 +39,14 @@ type app struct {
 func newApp() *app {
 	v := &app{
 		sidebar: new(ui.TabView),
+		btnNew:  ui.NewButton("New"),
+		btnSave: ui.NewButton("Save"),
 		btnQuit: ui.NewButton("Quit"),
 		status:  ui.NewText("Ready"),
 	}
 	v.appendTab("untitled", "")
 	ui.Focus(v)
 
-	v.btnNew = ui.NewButton("New")
 	v.btnNew.OnClick = func() {
 		v.appendTab("untitled", "")
 		ui.Focus(v)
@@ -62,11 +64,11 @@ func newApp() *app {
 		v.appendTab(name, string(bs))
 	})
 	v.sidebar.Append("Folder", folder)
-	// symbolList := ui.NewListView()
-	// symbolList.Append("Element", nil)
-	// symbolList.Append("Text", nil)
-	// symbolList.Append("TextInput", nil)
-	// v.sidebar.Append("Symbol", symbolList)
+	symbolList := ui.NewListView()
+	symbolList.Append("Element", nil)
+	symbolList.Append("Text", nil)
+	symbolList.Append("TextInput", nil)
+	v.sidebar.Append("Symbol", symbolList)
 	return v
 }
 
@@ -98,12 +100,12 @@ func (a *app) deleteTab(i int) {
 	}
 }
 
-func (a *app) setActive(i int) {
-	if len(a.tabs) == 0 || i > len(a.tabs)-1 {
-		return
-	}
-	a.active = i
-}
+// func (a *app) setActive(i int) {
+// 	if len(a.tabs) == 0 || i > len(a.tabs)-1 {
+// 		return
+// 	}
+// 	a.active = i
+// }
 
 func (a *app) MinSize() (int, int) {
 	var maxW, maxH int
@@ -126,18 +128,18 @@ func (a *app) Layout(x, y, w, h int) *ui.LayoutNode {
 	}
 
 	labelView := ui.HStack()
-	for _, tab := range a.tabs {
+	for i, tab := range a.tabs {
 		labelView.Append(tab)
+		if i != len(a.tabs)-1 {
+			labelView.Append(ui.Divider())
+		}
 	}
-	tabBar := ui.HStack(labelView.Grow(), a.btnNew, a.btnQuit)
-	tabBar.Style.Reversed = true
-	editorView := ui.VStack(tabBar)
+	editorView := ui.VStack(
+		ui.HStack(labelView.Grow(), a.btnNew, a.btnSave, a.btnQuit),
+	)
 	if len(a.tabs) > 0 {
 		editorView.Append(ui.Grow(a.tabs[a.active].body))
 	}
-
-	statusBar := &ui.Frame{Child: a.status, W: w}
-	statusBar.Style.Reversed = true
 
 	view := ui.VStack(
 		ui.HStack(
@@ -145,13 +147,13 @@ func (a *app) Layout(x, y, w, h int) *ui.LayoutNode {
 			ui.Divider(),
 			editorView.Grow(),
 		).Grow(),
-		statusBar,
+		a.status,
 	)
 	n.Children = append(n.Children, view.Layout(x, y, w, h))
 	return n
 }
 
-func (a *app) Render(ui.Screen, ui.Rect, ui.Style) {
+func (a *app) Render(ui.Screen, ui.Rect) {
 	// no-op
 }
 
@@ -182,10 +184,12 @@ func (t *tab) Layout(x, y, w, h int) *ui.LayoutNode {
 		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
 	}
 }
-func (t *tab) Render(screen ui.Screen, r ui.Rect, style ui.Style) {
-	st := t.style.Inherit(style)
-	if t.hovered || t == t.av.tabs[t.av.active] {
-		st.Reversed = !st.Reversed
+func (t *tab) Render(screen ui.Screen, r ui.Rect) {
+	var st ui.Style
+	if t == t.av.tabs[t.av.active] {
+		st = t.style.Merge(ui.StyleActiveTab)
+	} else if t.hovered {
+		st = t.style.Merge(ui.StyleHoverTab)
 	}
 
 	format := " %s x "
