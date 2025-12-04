@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"tui/ui"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -19,6 +21,7 @@ func main() {
 	log.SetOutput(f)
 
 	app := newApp()
+	ui.BindKey("Ctrl+P", app.showPalatte)
 	if err := ui.Start(app); err != nil {
 		log.Print(err)
 		return
@@ -34,6 +37,7 @@ type app struct {
 	btnSave *ui.Button
 	btnQuit *ui.Button
 	status  *ui.Text
+	palette *Palette
 }
 
 func newApp() *app {
@@ -55,7 +59,8 @@ func newApp() *app {
 
 	folder := ui.NewListView()
 	folder.Append("file1.txt", nil)
-	folder.Append("go.mod", func(name string) {
+	folder.Append("go.mod", func() {
+		name := "go.mod"
 		bs, err := os.ReadFile(name)
 		if err != nil {
 			log.Print(err)
@@ -100,13 +105,6 @@ func (a *app) deleteTab(i int) {
 	}
 }
 
-// func (a *app) setActive(i int) {
-// 	if len(a.tabs) == 0 || i > len(a.tabs)-1 {
-// 		return
-// 	}
-// 	a.active = i
-// }
-
 func (a *app) MinSize() (int, int) {
 	var maxW, maxH int
 	for _, t := range a.tabs {
@@ -150,6 +148,13 @@ func (a *app) Layout(x, y, w, h int) *ui.LayoutNode {
 		a.status,
 	)
 	n.Children = append(n.Children, view.Layout(x, y, w, h))
+
+	if a.palette != nil {
+		pw, ph := a.palette.MinSize()
+		px := x + (w-pw)/2
+		py := y + (h-ph)/4
+		n.Children = append(n.Children, a.palette.Layout(px, py, pw, ph))
+	}
 	return n
 }
 
@@ -158,14 +163,41 @@ func (a *app) Render(ui.Screen, ui.Rect) {
 }
 
 func (a *app) FocusTarget() ui.Element {
-	if len(a.tabs) == 0 {
+	if a.palette != nil || len(a.tabs) == 0 {
 		return a
 	}
 	return a.tabs[a.active].body
 }
 
-func (a *app) OnFocus() {}
-func (a *app) OnBlur()  {}
+func (a *app) OnFocus() { a.palette.OnFocus() }
+func (a *app) OnBlur() {
+	// while clicking outside palette, close it
+	a.palette = nil
+}
+
+func (a *app) showPalatte() {
+	palette := NewPalette()
+	palette.Add("New File", func() {
+		a.appendTab("untitled", "")
+		ui.Focus(a)
+	})
+	palette.Add("Quit", ui.Stop)
+	a.palette = palette
+	ui.Focus(a)
+}
+
+func (a *app) HandleKey(ev *tcell.EventKey) {
+	log.Print("app handle key")
+	if a.palette != nil {
+		if ev.Key() == tcell.KeyEsc {
+			a.palette = nil
+			ui.Focus(a)
+			return
+		}
+		a.palette.HandleKey(ev)
+		return
+	}
+}
 
 type tab struct {
 	av      *app
@@ -240,3 +272,93 @@ func (t *tab) FocusTarget() ui.Element {
 
 func (t *tab) OnFocus() {}
 func (t *tab) OnBlur()  {}
+
+type Palette struct {
+	ui.Style
+	cmds []*struct {
+		Name   string
+		Action func()
+	}
+	input  *ui.TextInput
+	list   *ui.ListView
+	active int
+}
+
+func NewPalette() *Palette {
+	p := &Palette{
+		input: new(ui.TextInput),
+		list:  ui.NewListView(),
+	}
+	p.list.Selected = 0
+	p.input.OnChange(func() {
+		keyword := p.input.Text()
+		p.list.Clear()
+		p.list.Selected = 0
+		for _, cmd := range p.cmds {
+			if keyword == "" || containIgnoreCase(cmd.Name, keyword) {
+				p.list.Append(cmd.Name, cmd.Action)
+			}
+		}
+	})
+	return p
+}
+
+func (p *Palette) Add(name string, action func()) {
+	p.cmds = append(p.cmds, &struct {
+		Name   string
+		Action func()
+	}{Name: name, Action: action})
+	p.list.Append(name, action)
+}
+
+func (p *Palette) MinSize() (int, int) {
+	w1, h1 := 30, 1 // input box size
+	w2, _ := p.list.MinSize()
+	h2 := len(p.cmds)
+	return max(w1, w2) + 2, h1 + h2 + 2 // +2 for box border
+}
+
+func (p *Palette) Layout(x, y, w, h int) *ui.LayoutNode {
+	n := &ui.LayoutNode{
+		Element: p,
+		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
+	}
+	view := ui.NewBox(ui.VStack(
+		p.input,
+		ui.Grow(p.list),
+	))
+	n.Children = append(n.Children, view.Layout(x, y, w, h))
+	return n
+}
+
+func (p *Palette) Render(ui.Screen, ui.Rect) {
+	// no-op
+}
+
+func (p *Palette) HandleKey(ev *tcell.EventKey) {
+	switch ev.Key() {
+	case tcell.KeyDown:
+		p.list.Selected = (p.list.Selected + 1) % len(p.list.Items)
+	case tcell.KeyUp:
+		p.list.Selected = (p.list.Selected - 1 + len(p.list.Items)) % len(p.list.Items)
+	case tcell.KeyEnter:
+		if len(p.list.Items) > 0 {
+			item := p.list.Items[p.list.Selected]
+			item.Action()
+		}
+	default:
+		p.input.HandleKey(ev)
+	}
+}
+
+func (p *Palette) FocusTarget() ui.Element {
+	return p
+}
+func (p *Palette) OnFocus() { p.input.OnFocus() }
+func (p *Palette) OnBlur()  {}
+
+func containIgnoreCase(s, substr string) bool {
+	s = strings.ToLower(s)
+	substr = strings.ToLower(substr)
+	return strings.Contains(s, substr)
+}

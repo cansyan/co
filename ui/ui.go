@@ -228,18 +228,18 @@ func (b *Button) OnMouseUp(x, y int) {
 type TextInput struct {
 	text     []rune
 	cursor   int
-	active   bool
+	focused  bool
 	style    Style
-	onChange func(string)
+	onChange func()
 }
 
-// func NewTextInput() *TextInput {
+// func NewTextInput(placeholder string) *TextInput {
 // 	return &TextInput{
 // 		style: DefaultStyle,
 // 	}
 // }
 
-func (t *TextInput) String() string {
+func (t *TextInput) Text() string {
 	return string(t.text)
 }
 
@@ -248,7 +248,7 @@ func (t *TextInput) SetText(s string) {
 	t.cursor = len(t.text)
 }
 
-func (t *TextInput) OnChange(fn func(string)) *TextInput {
+func (t *TextInput) OnChange(fn func()) *TextInput {
 	t.onChange = fn
 	return t
 }
@@ -273,26 +273,19 @@ func (t *TextInput) Layout(x, y, w, h int) *LayoutNode {
 
 func (t *TextInput) Render(s Screen, rect Rect) {
 	st := t.style.Apply()
-	var totalW int
-	for _, r := range t.text {
-		rw := runewidth.RuneWidth(r)
-		if totalW+rw > rect.W {
-			break
-		}
-		s.SetContent(rect.X+totalW, rect.Y, r, nil, st)
-		totalW += rw
-	}
-	if t.active && t.cursor < rect.W {
+	text := runewidth.FillRight(string(t.text), rect.W)
+	DrawString(s, rect.X, rect.Y, rect.W, text, st)
+	if t.focused && t.cursor < rect.W {
 		s.ShowCursor(rect.X+t.cursor, rect.Y)
 	}
 }
 
 func (t *TextInput) FocusTarget() Element { return t }
-func (t *TextInput) OnFocus()             { t.active = true }
-func (t *TextInput) OnBlur()              { t.active = false }
+func (t *TextInput) OnFocus()             { t.focused = true }
+func (t *TextInput) OnBlur()              { t.focused = false }
 
 func (t *TextInput) HandleKey(ev *tcell.EventKey) {
-	if !t.active {
+	if !t.focused {
 		return
 	}
 	switch ev.Key() {
@@ -309,14 +302,14 @@ func (t *TextInput) HandleKey(ev *tcell.EventKey) {
 			t.text = slices.Delete(t.text, t.cursor-1, t.cursor)
 			t.cursor--
 			if t.onChange != nil {
-				t.onChange(string(t.text))
+				t.onChange()
 			}
 		}
 	case tcell.KeyDelete:
 		if t.cursor < len(t.text) {
 			t.text = slices.Delete(t.text, t.cursor, t.cursor+1)
 			if t.onChange != nil {
-				t.onChange(string(t.text))
+				t.onChange()
 			}
 		}
 	case tcell.KeyRune:
@@ -324,7 +317,7 @@ func (t *TextInput) HandleKey(ev *tcell.EventKey) {
 		t.text = slices.Insert(t.text, t.cursor, r)
 		t.cursor++
 		if t.onChange != nil {
-			t.onChange(string(t.text))
+			t.onChange()
 		}
 	}
 }
@@ -769,35 +762,41 @@ func (t *TextEditor) OnChange(fn func()) {
 func (t *TextEditor) Grow(weight ...int) *grower { return Grow(t, weight...) }
 
 type ListView struct {
-	items    []ListItem
-	hovered  int // -1 means nothing hovered
-	selected int // -1 means nothing selected, changes only on click
+	Items    []ListItem
+	Hovered  int // -1 means nothing hovered
+	Selected int // -1 means nothing selected, changes only on click
 }
 
 type ListItem struct {
-	label   string
-	Handler func(label string)
+	Label  string
+	Action func()
 }
 
 func NewListView() *ListView {
 	return &ListView{
-		hovered:  -1,
-		selected: -1,
+		Hovered:  -1,
+		Selected: -1,
 	}
 }
 
-func (l *ListView) Append(text string, handler func(text string)) {
-	l.items = append(l.items, ListItem{label: text, Handler: handler})
+func (l *ListView) Append(text string, handler func()) {
+	l.Items = append(l.Items, ListItem{Label: text, Action: handler})
+}
+
+func (l *ListView) Clear() {
+	l.Items = nil
+	l.Hovered = -1
+	l.Selected = -1
 }
 
 func (l *ListView) MinSize() (int, int) {
 	maxW := 10
-	for _, it := range l.items {
-		if w := runewidth.StringWidth(it.label); w > maxW {
+	for _, it := range l.Items {
+		if w := runewidth.StringWidth(it.Label); w > maxW {
 			maxW = w
 		}
 	}
-	return maxW + 2, len(l.items) // a bit of padding + one row per item
+	return maxW + 2, len(l.Items) // a bit of padding + one row per item
 }
 
 func (l *ListView) Layout(x, y, w, h int) *LayoutNode {
@@ -810,20 +809,20 @@ func (l *ListView) Layout(x, y, w, h int) *LayoutNode {
 func (l *ListView) Render(s Screen, rect Rect) {
 	hoverStyle := Style{Forground: "red", Underline: true}
 	selectStyle := Style{Background: "lightgray"}
-	for i, item := range l.items {
+	for i, item := range l.Items {
 		if i >= rect.H {
 			break
 		}
 
 		var st tcell.Style
 		switch i {
-		case l.selected:
+		case l.Selected:
 			st = selectStyle.Apply()
-		case l.hovered:
+		case l.Hovered:
 			st = hoverStyle.Apply().Underline(tcell.UnderlineStyleCurly, tcell.ColorYellow)
 		}
 
-		label := fmt.Sprintf(" %s ", item.label)
+		label := fmt.Sprintf(" %s ", item.Label)
 		w := runewidth.StringWidth(label)
 		if w > rect.W {
 			label = runewidth.Truncate(label, rect.W, "…")
@@ -835,10 +834,10 @@ func (l *ListView) Render(s Screen, rect Rect) {
 }
 
 func (l *ListView) OnMouseDown(x, y int) {
-	if y >= 0 && y < len(l.items) {
-		l.selected = y
-		if l.items[y].Handler != nil {
-			l.items[y].Handler(l.items[y].label)
+	if y >= 0 && y < len(l.Items) {
+		l.Selected = y
+		if l.Items[y].Action != nil {
+			l.Items[y].Action()
 		}
 	}
 }
@@ -848,14 +847,14 @@ func (l *ListView) OnMouseUp(x, y int) {}
 func (l *ListView) OnMouseEnter() {}
 
 func (l *ListView) OnMouseMove(rx, ry int) {
-	if ry < 0 || ry >= len(l.items) {
-		l.hovered = -1
+	if ry < 0 || ry >= len(l.Items) {
+		l.Hovered = -1
 		return
 	}
-	l.hovered = ry
+	l.Hovered = ry
 }
 
-func (l *ListView) OnMouseLeave() { l.hovered = -1 }
+func (l *ListView) OnMouseLeave() { l.Hovered = -1 }
 
 type TabItem struct {
 	t       *TabView
@@ -1464,6 +1463,10 @@ func Focus(e Element) {
 	app.Focus(e)
 }
 
+func BindKey(key string, action func()) {
+	app.keybinding[key] = action
+}
+
 type App struct {
 	screen  Screen
 	root    Element
@@ -1471,16 +1474,17 @@ type App struct {
 	hover   Element
 	tree    *LayoutNode
 	done    chan struct{}
-	quitKey tcell.Key
 
 	clickPoint Point
+	keybinding map[string]func()
 }
 
 func initApp() *App {
 	a := &App{
-		done:    make(chan struct{}),
-		quitKey: tcell.KeyEscape,
+		done:       make(chan struct{}),
+		keybinding: make(map[string]func()),
 	}
+	a.keybinding["Ctrl+Q"] = a.Stop
 	return a
 }
 
@@ -1619,10 +1623,11 @@ func (a *App) Start(root Element) error {
 
 func (a *App) handleKey(ev *tcell.EventKey) {
 	log.Printf("key: %s", ev.Name())
-	if ev.Key() == a.quitKey {
-		close(a.done)
+	if f, ok := a.keybinding[ev.Name()]; ok {
+		f()
 		return
 	}
+
 	if a.focused == nil {
 		return
 	}
