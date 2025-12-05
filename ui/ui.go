@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -77,7 +78,7 @@ type Rect struct {
 }
 
 type Style struct {
-	Forground  string
+	Foreground string
 	Background string
 	Bold       bool
 	Italic     bool
@@ -86,8 +87,8 @@ type Style struct {
 
 func (s Style) Apply() tcell.Style {
 	st := tcell.StyleDefault
-	if s.Forground != "" {
-		st = st.Foreground(tcell.ColorNames[s.Forground])
+	if s.Foreground != "" {
+		st = st.Foreground(tcell.ColorNames[s.Foreground])
 	}
 	if s.Background != "" {
 		st = st.Background(tcell.ColorNames[s.Background])
@@ -109,8 +110,8 @@ func (s Style) Merge(parent Style) Style {
 	if ns.Background == "" {
 		ns.Background = parent.Background
 	}
-	if ns.Forground == "" {
-		ns.Forground = parent.Forground
+	if ns.Foreground == "" {
+		ns.Foreground = parent.Foreground
 	}
 
 	ns.Bold = ns.Bold || parent.Bold
@@ -149,7 +150,7 @@ func (t *Text) Bold() *Text      { t.Style.Bold = true; return t }
 func (t *Text) Italic() *Text    { t.Style.Italic = true; return t }
 func (t *Text) Underline() *Text { t.Style.Underline = true; return t }
 func (t *Text) Foreground(color string) *Text {
-	t.Style.Forground = color
+	t.Style.Foreground = color
 	return t
 }
 func (t *Text) Background(color string) *Text {
@@ -191,11 +192,10 @@ func (b *Button) Layout(x, y, w, h int) *LayoutNode {
 func (b *Button) Render(s Screen, rect Rect) {
 	st := b.Style
 	if b.hovered {
-		st.Underline = true
-		st.Bold = true
+		st.Background = "lightgray"
 	}
 	if b.pressed {
-		st.Background = "lightgray"
+		st.Background = "gray"
 	}
 	label := " " + b.Label + " "
 	DrawString(s, rect.X, rect.Y, rect.W, label, st.Apply())
@@ -254,7 +254,7 @@ func (t *TextInput) OnChange(fn func()) *TextInput {
 }
 
 func (t *TextInput) Foreground(c string) *TextInput {
-	t.style.Forground = c
+	t.style.Foreground = c
 	return t
 }
 func (t *TextInput) Background(c string) *TextInput {
@@ -443,7 +443,7 @@ func NewTextEditor() *TextEditor {
 }
 
 func (t *TextEditor) Foreground(c string) *TextEditor {
-	t.style.Forground = c
+	t.style.Foreground = c
 	return t
 }
 func (t *TextEditor) Background(c string) *TextEditor {
@@ -807,7 +807,7 @@ func (l *ListView) Layout(x, y, w, h int) *LayoutNode {
 }
 
 func (l *ListView) Render(s Screen, rect Rect) {
-	hoverStyle := Style{Forground: "red", Underline: true}
+	hoverStyle := Style{Foreground: "red", Underline: true}
 	selectStyle := Style{Background: "lightgray"}
 	for i, item := range l.Items {
 		if i >= rect.H {
@@ -1047,7 +1047,7 @@ func VStack(children ...Element) *vstack {
 	return &vstack{children: children}
 }
 func (v *vstack) Foreground(color string) *vstack {
-	v.style.Forground = color
+	v.style.Foreground = color
 	return v
 }
 func (v *vstack) Background(color string) *vstack {
@@ -1211,7 +1211,7 @@ func (hs *hstack) Render(s Screen, rect Rect) {
 }
 
 func (hs *hstack) Foreground(color string) *hstack {
-	hs.Style.Forground = color
+	hs.Style.Foreground = color
 	return hs
 }
 func (hs *hstack) Background(color string) *hstack {
@@ -1467,6 +1467,10 @@ func BindKey(key string, action func()) {
 	app.keybinding[key] = action
 }
 
+func Root() Element {
+	return app.root
+}
+
 type App struct {
 	screen  Screen
 	root    Element
@@ -1484,7 +1488,7 @@ func initApp() *App {
 		done:       make(chan struct{}),
 		keybinding: make(map[string]func()),
 	}
-	a.keybinding["Ctrl+Q"] = a.Stop
+	a.keybinding["Ctrl+C"] = a.Stop
 	return a
 }
 
@@ -1527,7 +1531,9 @@ func hitTest(n *LayoutNode, p Point) (Element, Point) {
 		return nil, Point{}
 	}
 
-	for _, child := range n.Children {
+	// Check children in reverse order (topmost first)
+	for i := len(n.Children) - 1; i >= 0; i-- {
+		child := n.Children[i]
 		if e, local := hitTest(child, p); e != nil {
 			return e, local
 		}
@@ -1540,6 +1546,7 @@ func hitTest(n *LayoutNode, p Point) (Element, Point) {
 }
 
 func (a *App) Focus(e Element) {
+	// log.Print("try focus: ", prettyType(e))
 	if e == nil {
 		return
 	}
@@ -1553,16 +1560,19 @@ func (a *App) Focus(e Element) {
 	if f, ok := a.focused.(Focusable); ok {
 		f.OnFocus()
 	}
-	// log.Print("focused: ", prettyType(a.focused))
+	if _, ok := a.focused.(KeyHandler); !ok {
+		a.screen.HideCursor()
+	}
+	log.Print("focused: ", prettyType(a.focused))
 }
 
-// func prettyType(v any) string {
-// 	t := reflect.TypeOf(v)
-// 	if t == nil {
-// 		return "<nil>"
-// 	}
-// 	return t.String()
-// }
+func prettyType(v any) string {
+	t := reflect.TypeOf(v)
+	if t == nil {
+		return "<nil>"
+	}
+	return t.String()
+}
 
 func (a *App) resolveFocus(e Element) Element {
 	for {
@@ -1657,9 +1667,6 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 
 		// shift focus
 		a.Focus(hit)
-		if _, ok := a.focused.(KeyHandler); !ok {
-			a.screen.HideCursor()
-		}
 	case tcell.WheelUp:
 		if i, ok := hit.(Scrollable); ok {
 			i.OnScroll(-1)

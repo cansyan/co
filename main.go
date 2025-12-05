@@ -7,6 +7,8 @@ import (
 	"strings"
 	"tui/ui"
 
+	"slices"
+
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
 )
@@ -22,6 +24,10 @@ func main() {
 
 	app := newApp()
 	ui.BindKey("Ctrl+P", app.showPalatte)
+	ui.BindKey("Ctrl+W", func() {
+		app.deleteTab(app.active)
+		ui.Focus(app)
+	})
 	if err := ui.Start(app); err != nil {
 		log.Print(err)
 		return
@@ -97,7 +103,7 @@ func (a *app) deleteTab(i int) {
 		return
 	}
 
-	a.tabs = append(a.tabs[:i], a.tabs[i+1:]...)
+	a.tabs = slices.Delete(a.tabs, i, i+1)
 	if i < a.active {
 		a.active--
 	} else if i == a.active {
@@ -149,7 +155,7 @@ func (a *app) Layout(x, y, w, h int) *ui.LayoutNode {
 	)
 	n.Children = append(n.Children, view.Layout(x, y, w, h))
 
-	if a.palette != nil {
+	if a.palette != nil && !a.palette.hide {
 		pw, ph := a.palette.MinSize()
 		px := x + (w-pw)/2
 		py := y + (h-ph)/4
@@ -163,17 +169,14 @@ func (a *app) Render(ui.Screen, ui.Rect) {
 }
 
 func (a *app) FocusTarget() ui.Element {
-	if a.palette != nil || len(a.tabs) == 0 {
+	if len(a.tabs) == 0 {
 		return a
 	}
 	return a.tabs[a.active].body
 }
 
-func (a *app) OnFocus() { a.palette.OnFocus() }
-func (a *app) OnBlur() {
-	// while clicking outside palette, close it
-	a.palette = nil
-}
+func (a *app) OnFocus() {}
+func (a *app) OnBlur()  {}
 
 func (a *app) showPalatte() {
 	palette := NewPalette()
@@ -182,21 +185,11 @@ func (a *app) showPalatte() {
 		ui.Focus(a)
 	})
 	palette.Add("Quit", ui.Stop)
+	palette.Add("Format", func() {
+		log.Print("go fmt")
+	})
 	a.palette = palette
-	ui.Focus(a)
-}
-
-func (a *app) HandleKey(ev *tcell.EventKey) {
-	log.Print("app handle key")
-	if a.palette != nil {
-		if ev.Key() == tcell.KeyEsc {
-			a.palette = nil
-			ui.Focus(a)
-			return
-		}
-		a.palette.HandleKey(ev)
-		return
-	}
+	ui.Focus(palette)
 }
 
 type tab struct {
@@ -279,9 +272,9 @@ type Palette struct {
 		Name   string
 		Action func()
 	}
-	input  *ui.TextInput
-	list   *ui.ListView
-	active int
+	input *ui.TextInput
+	list  *ui.ListView
+	hide  bool
 }
 
 func NewPalette() *Palette {
@@ -337,14 +330,20 @@ func (p *Palette) Render(ui.Screen, ui.Rect) {
 
 func (p *Palette) HandleKey(ev *tcell.EventKey) {
 	switch ev.Key() {
+	case tcell.KeyESC:
+		p.hide = true
+		ui.Focus(ui.Root())
 	case tcell.KeyDown:
 		p.list.Selected = (p.list.Selected + 1) % len(p.list.Items)
 	case tcell.KeyUp:
-		p.list.Selected = (p.list.Selected - 1 + len(p.list.Items)) % len(p.list.Items)
+		n := len(p.list.Items)
+		p.list.Selected = (p.list.Selected - 1 + n) % n
 	case tcell.KeyEnter:
 		if len(p.list.Items) > 0 {
 			item := p.list.Items[p.list.Selected]
 			item.Action()
+			p.hide = true
+			ui.Focus(ui.Root())
 		}
 	default:
 		p.input.HandleKey(ev)
@@ -355,7 +354,7 @@ func (p *Palette) FocusTarget() ui.Element {
 	return p
 }
 func (p *Palette) OnFocus() { p.input.OnFocus() }
-func (p *Palette) OnBlur()  {}
+func (p *Palette) OnBlur()  { p.hide = true }
 
 func containIgnoreCase(s, substr string) bool {
 	s = strings.ToLower(s)
