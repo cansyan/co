@@ -16,39 +16,44 @@ import (
 )
 
 func init() {
+	app = initApp()
 	SetLightTheme()
 }
 
 var (
 	colorFG     string
 	colorBG     string
-	colorCursor string
+	colorCursor = "#D88A40"
 	colorBorder = "#D0D0D0"
 
-	StyleHover     Style
-	StyleHighlight Style
+	StyleHover    Style
+	StyleSelected Style
+
+	// light:
+	// #FAFAFB background, or #F7F7F8
+	// #F2F2F4 hover
+	// #E4E6EA selected
+	// #D0D0D0 border, divider
+	// #D88A40 cursor
+
+	// dark:
+	// #1E1E20 background
+	// #2A2A2E hover
+	// #DCEAF7 selected
 )
 
 func SetLightTheme() {
 	colorFG = "black"
-	colorBG = "white"
-	colorCursor = "orange"
-	StyleHover = Style{Background: "#E0E0E0"}
-	StyleHighlight = Style{Background: "silver"}
-	// lighter than lightgray:
-	//   silver
-	//   #E0E0E0 – for background
-	//   #D0D0D0 – for border, divider
-	// darker than lightgray:
-	//   #A0A4A8 – cold gray
+	colorBG = "#FAFAFB"
+	StyleHover = Style{Background: "#F2F2F4"}
+	StyleSelected = Style{Background: "#E4E6EA", Foreground: "black"}
 }
 
 func SetDarkTheme() {
 	colorFG = "white"
-	colorBG = "black"
-	colorCursor = "orange"
-	StyleHover = Style{Background: "orange"}
-	StyleHighlight = Style{Background: "silver", Foreground: "black"}
+	colorBG = "#1E1E20"
+	StyleHover = Style{Background: "#2A2A2E"}
+	StyleSelected = Style{Background: "#DCEAF7", Foreground: "black"}
 }
 
 type Screen = tcell.Screen
@@ -855,7 +860,7 @@ func (l *ListView) Render(s Screen, rect Rect) {
 		var st Style
 		switch i {
 		case l.Selected:
-			st = StyleHighlight
+			st = StyleSelected
 		case l.Hovered:
 			st = StyleHover
 		}
@@ -1496,7 +1501,7 @@ func (f *Frame) Render(s Screen, rect Rect) {
 // APP RUNNER
 // ---------------------------------------------------------------------
 
-var app = initApp()
+var app *App
 
 // Start event-loop, blocks until Stop.
 func Start(root Element) error {
@@ -1649,7 +1654,7 @@ func (a *App) Start(root Element) error {
 	}
 	defer screen.Fini()
 	screen.EnableMouse()
-	screen.SetCursorStyle(tcell.CursorStyleDefault, tcell.ColorNames[colorCursor])
+	screen.SetCursorStyle(tcell.CursorStyleDefault, tcell.GetColor(colorCursor))
 
 	draw := func() {
 		screen.Clear()
