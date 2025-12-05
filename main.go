@@ -36,7 +36,6 @@ func main() {
 
 // app implements ui.Element
 type app struct {
-	sidebar *ui.TabView
 	tabs    []*tab
 	active  int
 	btnNew  *ui.Button
@@ -48,7 +47,6 @@ type app struct {
 
 func newApp() *app {
 	v := &app{
-		sidebar: new(ui.TabView),
 		btnNew:  ui.NewButton("New"),
 		btnSave: ui.NewButton("Save"),
 		btnQuit: ui.NewButton("Quit"),
@@ -62,24 +60,6 @@ func newApp() *app {
 		ui.Focus(v)
 	}
 	v.btnQuit.OnClick = ui.Stop
-
-	folder := ui.NewListView()
-	folder.Append("file1.txt", nil)
-	folder.Append("go.mod", func() {
-		name := "go.mod"
-		bs, err := os.ReadFile(name)
-		if err != nil {
-			log.Print(err)
-			return
-		}
-		v.appendTab(name, string(bs))
-	})
-	v.sidebar.Append("Folder", folder)
-	symbolList := ui.NewListView()
-	symbolList.Append("Element", nil)
-	symbolList.Append("Text", nil)
-	symbolList.Append("TextInput", nil)
-	v.sidebar.Append("Symbol", symbolList)
 	return v
 }
 
@@ -146,19 +126,17 @@ func (a *app) Layout(x, y, w, h int) *ui.LayoutNode {
 	}
 
 	view := ui.VStack(
-		ui.HStack(
-			a.sidebar.Frame(17, 0),
-			ui.Divider(),
-			editorView.Grow(),
-		).Grow(),
+		editorView.Grow(),
+		ui.Divider(),
 		a.status,
 	)
 	n.Children = append(n.Children, view.Layout(x, y, w, h))
 
 	if a.palette != nil && !a.palette.hide {
-		pw, ph := a.palette.MinSize()
+		pw := w / 2
+		_, ph := a.palette.MinSize()
 		px := x + (w-pw)/2
-		py := y + (h-ph)/4
+		py := 1
 		n.Children = append(n.Children, a.palette.Layout(px, py, pw, ph))
 	}
 	return n
@@ -180,6 +158,8 @@ func (a *app) OnBlur()  {}
 
 func (a *app) showPalatte() {
 	palette := NewPalette()
+	palette.Add("Color theme: light", ui.SetLightTheme)
+	palette.Add("Color theme: dark", ui.SetDarkTheme)
 	palette.Add("New File", func() {
 		a.appendTab("untitled", "")
 		ui.Focus(a)
@@ -214,7 +194,7 @@ func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 	if t == t.av.tabs[t.av.active] {
 		st = t.style.Merge(ui.StyleActiveTab)
 	} else if t.hovered {
-		st = t.style.Merge(ui.StyleHoverTab)
+		st = t.style.Merge(ui.StyleHover)
 	}
 
 	format := " %s x "
@@ -316,11 +296,11 @@ func (p *Palette) Layout(x, y, w, h int) *ui.LayoutNode {
 		Element: p,
 		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
 	}
-	view := ui.NewBox(ui.VStack(
+	box := ui.NewBox(ui.VStack(
 		p.input,
 		ui.Grow(p.list),
 	))
-	n.Children = append(n.Children, view.Layout(x, y, w, h))
+	n.Children = append(n.Children, box.Layout(x, y, w, h))
 	return n
 }
 

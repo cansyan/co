@@ -15,6 +15,42 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
+func init() {
+	SetLightTheme()
+}
+
+var (
+	colorFG     string
+	colorBG     string
+	colorCursor string
+	colorBorder = "#D0D0D0"
+
+	StyleHover     Style
+	StyleHighlight Style
+)
+
+func SetLightTheme() {
+	colorFG = "black"
+	colorBG = "white"
+	colorCursor = "orange"
+	StyleHover = Style{Background: "#E0E0E0"}
+	StyleHighlight = Style{Background: "silver"}
+	// lighter than lightgray:
+	//   silver
+	//   #E0E0E0 – for background
+	//   #D0D0D0 – for border, divider
+	// darker than lightgray:
+	//   #A0A4A8 – cold gray
+}
+
+func SetDarkTheme() {
+	colorFG = "white"
+	colorBG = "black"
+	colorCursor = "orange"
+	StyleHover = Style{Background: "orange"}
+	StyleHighlight = Style{Background: "silver", Foreground: "black"}
+}
+
 type Screen = tcell.Screen
 
 // Element is the interface implemented by all UI elements.
@@ -88,10 +124,14 @@ type Style struct {
 func (s Style) Apply() tcell.Style {
 	st := tcell.StyleDefault
 	if s.Foreground != "" {
-		st = st.Foreground(tcell.ColorNames[s.Foreground])
+		st = st.Foreground(tcell.GetColor(s.Foreground))
+	} else {
+		st = st.Foreground(tcell.GetColor(colorFG))
 	}
 	if s.Background != "" {
-		st = st.Background(tcell.ColorNames[s.Background])
+		st = st.Background(tcell.GetColor(s.Background))
+	} else {
+		st = st.Background(tcell.GetColor(colorBG))
 	}
 	if s.Bold {
 		st = st.Bold(true)
@@ -192,7 +232,7 @@ func (b *Button) Layout(x, y, w, h int) *LayoutNode {
 func (b *Button) Render(s Screen, rect Rect) {
 	st := b.Style
 	if b.hovered {
-		st.Background = "lightgray"
+		st = st.Merge(StyleHover)
 	}
 	if b.pressed {
 		st.Background = "gray"
@@ -807,19 +847,17 @@ func (l *ListView) Layout(x, y, w, h int) *LayoutNode {
 }
 
 func (l *ListView) Render(s Screen, rect Rect) {
-	hoverStyle := Style{Foreground: "red", Underline: true}
-	selectStyle := Style{Background: "lightgray"}
 	for i, item := range l.Items {
 		if i >= rect.H {
 			break
 		}
 
-		var st tcell.Style
+		var st Style
 		switch i {
 		case l.Selected:
-			st = selectStyle.Apply()
+			st = StyleHighlight
 		case l.Hovered:
-			st = hoverStyle.Apply().Underline(tcell.UnderlineStyleCurly, tcell.ColorYellow)
+			st = StyleHover
 		}
 
 		label := fmt.Sprintf(" %s ", item.Label)
@@ -829,7 +867,7 @@ func (l *ListView) Render(s Screen, rect Rect) {
 		} else {
 			label = runewidth.FillRight(label, rect.W)
 		}
-		DrawString(s, rect.X, rect.Y+i, rect.W, label, st)
+		DrawString(s, rect.X, rect.Y+i, rect.W, label, st.Apply())
 	}
 }
 
@@ -893,15 +931,14 @@ func (ti *TabItem) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 
-var StyleHoverTab = Style{Background: "lightgray"}
-var StyleActiveTab = Style{Underline: true, Bold: true}
+var StyleActiveTab = Style{Underline: true}
 
 func (ti *TabItem) Render(s Screen, rect Rect) {
 	var st Style
 	if ti == ti.t.items[ti.t.active] {
 		st = StyleActiveTab
 	} else if ti.hovered {
-		st = StyleHoverTab
+		st = StyleHover
 	}
 	DrawString(s, rect.X, rect.Y, rect.W, ti.label, st.Apply())
 }
@@ -1011,14 +1048,14 @@ func (d *divider) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 func (d *divider) Render(s Screen, rect Rect) {
-	var style tcell.Style
+	style := Style{Foreground: colorBorder}
 	if !d.vertical {
 		for i := range rect.W {
-			s.SetContent(rect.X+i, rect.Y+rect.H-1, hChar, nil, style)
+			s.SetContent(rect.X+i, rect.Y+rect.H-1, hChar, nil, style.Apply())
 		}
 	} else {
 		for i := range rect.H {
-			s.SetContent(rect.X+rect.W-1, rect.Y+i, vChar, nil, style)
+			s.SetContent(rect.X+rect.W-1, rect.Y+i, vChar, nil, style.Apply())
 		}
 	}
 }
@@ -1330,12 +1367,12 @@ func (p *padding) Render(s Screen, rect Rect) {
 	// no-op
 }
 
+// Box draws border around the child.
 type Box struct {
 	Style
 	child Element
 }
 
-// NewBox return a box container that draws border around the child.
 func NewBox(child Element) *Box {
 	return &Box{child: child}
 }
@@ -1382,7 +1419,8 @@ func (b *Box) Render(s Screen, rect Rect) {
 		return
 	}
 
-	st := b.Style.Apply()
+	style := Style{Foreground: colorBorder}
+	st := style.Merge(b.Style).Apply()
 	// Top and bottom borders
 	for i := 0; i < rect.W; i++ {
 		s.SetContent(rect.X+i, rect.Y, hChar, nil, st)
@@ -1398,6 +1436,16 @@ func (b *Box) Render(s Screen, rect Rect) {
 	s.SetContent(rect.X+rect.W-1, rect.Y, cTR, nil, st)
 	s.SetContent(rect.X, rect.Y+rect.H-1, cBL, nil, st)
 	s.SetContent(rect.X+rect.W-1, rect.Y+rect.H-1, cBR, nil, st)
+}
+
+func (b *Box) Foreground(color string) *Box {
+	b.Style.Foreground = color
+	return b
+}
+
+func (b *Box) Background(color string) *Box {
+	b.Style.Background = color
+	return b
 }
 
 // Frame is a fixed-size wrapper that always reports the size given by W and H.
@@ -1601,6 +1649,7 @@ func (a *App) Start(root Element) error {
 	}
 	defer screen.Fini()
 	screen.EnableMouse()
+	screen.SetCursorStyle(tcell.CursorStyleDefault, tcell.ColorNames[colorCursor])
 
 	draw := func() {
 		screen.Clear()
