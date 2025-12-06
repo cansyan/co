@@ -126,6 +126,7 @@ type Style struct {
 	Underline  bool
 }
 
+// Apply convert Style to tcell type, uses current color theme by default.
 func (s Style) Apply() tcell.Style {
 	st := tcell.StyleDefault
 	if s.Foreground != "" {
@@ -1078,24 +1079,19 @@ var Spacer = Grow(Empty{})
 // Containers
 // ---------------------------------------------------------------------
 
+// vstack is a vertical layout container.
+// Itself does not apply any visual styling like background colors, borders,
+// it is completely transparent and invisible
 type vstack struct {
 	children []Element
-	style    Style
 	spacing  int
 }
 
-// VStack returns a container that arranges children vertically.
+// VStack arranges children vertically.
 func VStack(children ...Element) *vstack {
 	return &vstack{children: children}
 }
-func (v *vstack) Foreground(color string) *vstack {
-	v.style.Foreground = color
-	return v
-}
-func (v *vstack) Background(color string) *vstack {
-	v.style.Background = color
-	return v
-}
+
 func (v *vstack) MinSize() (int, int) {
 	maxW, totalH := 0, 0
 	for i, child := range v.children {
@@ -1160,7 +1156,7 @@ func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
 }
 
 func (v *vstack) Render(s Screen, rect Rect) {
-	ResetRect(s, rect, v.style)
+	// no-op
 }
 
 func (v *vstack) Append(e ...Element) *vstack {
@@ -1174,15 +1170,23 @@ func (v *vstack) Spacing(p int) *vstack {
 	return v
 }
 
+// scale the container
 func (v *vstack) Grow(weight ...int) *grower { return Grow(v, weight...) }
 
+// add border
+func (v *vstack) Border(color string) *Box {
+	return NewBox(v).Foreground(color)
+}
+
+// hstack is a horizontal layout container.
+// Itself does not apply any visual styling like background colors, borders,
+// it is completely transparent and invisible
 type hstack struct {
 	children []Element
-	Style    Style
 	spacing  int
 }
 
-// HStack returns a container that arranges children horizontally.
+// HStack arranges children horizontally.
 func HStack(children ...Element) *hstack {
 	return &hstack{children: children}
 }
@@ -1249,16 +1253,7 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 }
 
 func (hs *hstack) Render(s Screen, rect Rect) {
-	ResetRect(s, rect, hs.Style)
-}
-
-func (hs *hstack) Foreground(color string) *hstack {
-	hs.Style.Foreground = color
-	return hs
-}
-func (hs *hstack) Background(color string) *hstack {
-	hs.Style.Background = color
-	return hs
+	// no-op
 }
 
 func (hs *hstack) Append(e ...Element) *hstack {
@@ -1271,6 +1266,10 @@ func (hs *hstack) Spacing(p int) *hstack { hs.spacing = p; return hs }
 
 func (hs *hstack) Grow(weight ...int) *grower {
 	return Grow(hs, weight...)
+}
+
+func (hs *hstack) Border(color string) *Box {
+	return NewBox(hs).Foreground(color)
 }
 
 // grower is a element wrapper, won't render
@@ -1425,7 +1424,7 @@ func (b *Box) Render(s Screen, rect Rect) {
 	}
 
 	style := Style{Foreground: colorBorder}
-	st := style.Merge(b.Style).Apply()
+	st := b.Style.Merge(style).Apply()
 	// Top and bottom borders
 	for i := 0; i < rect.W; i++ {
 		s.SetContent(rect.X+i, rect.Y, hChar, nil, st)
@@ -1657,7 +1656,7 @@ func (a *App) Start(root Element) error {
 	screen.SetCursorStyle(tcell.CursorStyleDefault, tcell.GetColor(colorCursor))
 
 	draw := func() {
-		screen.Clear()
+		screen.Fill(' ', Style{}.Apply())
 		a.Render()
 		screen.Show()
 	}

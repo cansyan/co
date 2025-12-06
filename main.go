@@ -296,11 +296,11 @@ func (p *Palette) Layout(x, y, w, h int) *ui.LayoutNode {
 		Element: p,
 		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
 	}
-	box := ui.NewBox(ui.VStack(
+	view := ui.VStack(
 		p.input,
 		ui.Grow(p.list),
-	))
-	n.Children = append(n.Children, box.Layout(x, y, w, h))
+	).Border("sliver")
+	n.Children = append(n.Children, view.Layout(x, y, w, h))
 	return n
 }
 
