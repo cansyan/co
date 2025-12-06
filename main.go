@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"tui/ui"
 
@@ -22,78 +23,88 @@ func main() {
 	defer f.Close()
 	log.SetOutput(f)
 
-	app := newApp()
-	ui.BindKey("Ctrl+P", app.showPalatte)
-	ui.BindKey("Ctrl+W", func() {
-		app.deleteTab(app.active)
-		ui.Focus(app)
+	root := newRoot()
+	if len(os.Args) > 1 {
+		err := root.openFile(os.Args[1])
+		if err != nil {
+			log.Print(err)
+			return
+		}
+	} else {
+		root.appendTab("untitled", "")
+	}
+
+	app := ui.Default()
+	app.SetRoot(root)
+	app.BindKey("Ctrl+P", root.showPalatte)
+	app.BindKey("Ctrl+W", func() {
+		root.deleteTab(root.active)
+		app.Focus(root)
 	})
-	if err := ui.Start(app); err != nil {
+	// TODO: reconsider the focus handling policy of the framework, maybe it should focus automatically?
+	app.Focus(root)
+	if err := app.Run(); err != nil {
 		log.Print(err)
 		return
 	}
 }
 
-// app implements ui.Element
-type app struct {
+// root implements ui.Element
+type root struct {
 	tabs    []*tab
 	active  int
 	btnNew  *ui.Button
 	btnSave *ui.Button
 	btnQuit *ui.Button
 	status  *ui.Text
-	palette *Palette
 }
 
-func newApp() *app {
-	v := &app{
+func newRoot() *root {
+	r := &root{
 		btnNew:  ui.NewButton("New"),
 		btnSave: ui.NewButton("Save"),
 		btnQuit: ui.NewButton("Quit"),
 		status:  ui.NewText("Ready"),
 	}
-	v.appendTab("untitled", "")
-	ui.Focus(v)
-
-	v.btnNew.OnClick = func() {
-		v.appendTab("untitled", "")
-		ui.Focus(v)
+	r.btnNew.OnClick = func() {
+		r.appendTab("untitled", "")
+		ui.Default().Focus(r)
 	}
-	v.btnQuit.OnClick = ui.Stop
-	return v
+	r.btnQuit.OnClick = ui.Default().Stop
+	return r
 }
 
-func (a *app) appendTab(label string, content string) {
+func (r *root) appendTab(label string, content string) {
 	editor := ui.NewTextEditor()
 	editor.SetText(content)
 	editor.OnChange(func() {
 		row, col := editor.Cursor()
-		a.status.Label = fmt.Sprintf("Line %d, Column %d", row+1, col+1)
+		r.status.Label = fmt.Sprintf("Line %d, Column %d", row+1, col+1)
 	})
-	a.tabs = append(a.tabs, &tab{
-		av:    a,
+	r.tabs = append(r.tabs, &tab{
+		av:    r,
 		label: label,
 		body:  editor,
 	})
-	a.active = len(a.tabs) - 1
+	r.active = len(r.tabs) - 1
 }
 
-func (a *app) deleteTab(i int) {
-	if i < 0 || i >= len(a.tabs) {
+func (r *root) deleteTab(i int) {
+	if i < 0 || i >= len(r.tabs) {
 		return
 	}
 
-	a.tabs = slices.Delete(a.tabs, i, i+1)
-	if i < a.active {
-		a.active--
-	} else if i == a.active {
-		a.active = max(0, len(a.tabs)-1)
+	r.tabs = slices.Delete(r.tabs, i, i+1)
+	if i < r.active {
+		r.active--
+	} else if i == r.active {
+		r.active = max(0, len(r.tabs)-1)
 	}
 }
 
-func (a *app) MinSize() (int, int) {
+func (r *root) MinSize() (int, int) {
 	var maxW, maxH int
-	for _, t := range a.tabs {
+	for _, t := range r.tabs {
 		w, h := t.body.MinSize()
 		if w > maxW {
 			maxW = w
@@ -105,75 +116,87 @@ func (a *app) MinSize() (int, int) {
 	return maxW, maxH + 1 // +1 for tab label
 }
 
-func (a *app) Layout(x, y, w, h int) *ui.LayoutNode {
+func (r *root) Layout(x, y, w, h int) *ui.LayoutNode {
 	n := &ui.LayoutNode{
-		Element: a,
+		Element: r,
 		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
 	}
 
 	labelView := ui.HStack()
-	for i, tab := range a.tabs {
+	for i, tab := range r.tabs {
 		labelView.Append(tab)
-		if i != len(a.tabs)-1 {
+		if i != len(r.tabs)-1 {
 			labelView.Append(ui.Divider())
 		}
 	}
 	editorView := ui.VStack(
-		ui.HStack(labelView.Grow(), a.btnNew, a.btnSave, a.btnQuit),
+		ui.HStack(labelView.Grow(), r.btnNew, r.btnSave, r.btnQuit),
 	)
-	if len(a.tabs) > 0 {
-		editorView.Append(ui.Grow(a.tabs[a.active].body))
+	if len(r.tabs) > 0 {
+		editorView.Append(ui.Grow(r.tabs[r.active].body))
 	}
 
 	view := ui.VStack(
 		editorView.Grow(),
 		ui.Divider(),
-		a.status,
+		r.status,
 	)
 	n.Children = append(n.Children, view.Layout(x, y, w, h))
-
-	if a.palette != nil && !a.palette.hide {
-		pw := w / 2
-		_, ph := a.palette.MinSize()
-		px := x + (w-pw)/2
-		py := 1
-		n.Children = append(n.Children, a.palette.Layout(px, py, pw, ph))
-	}
 	return n
 }
 
-func (a *app) Render(ui.Screen, ui.Rect) {
+func (r *root) Render(ui.Screen, ui.Rect) {
 	// no-op
 }
 
-func (a *app) FocusTarget() ui.Element {
-	if len(a.tabs) == 0 {
-		return a
+func (r *root) FocusTarget() ui.Element {
+	if len(r.tabs) == 0 {
+		return r
 	}
-	return a.tabs[a.active].body
+	return r.tabs[r.active].body
 }
 
-func (a *app) OnFocus() {}
-func (a *app) OnBlur()  {}
+func (r *root) OnFocus() {}
+func (r *root) OnBlur()  {}
 
-func (a *app) showPalatte() {
+func (r *root) showPalatte() {
 	palette := NewPalette()
 	palette.Add("Color theme: light", ui.SetLightTheme)
 	palette.Add("Color theme: dark", ui.SetDarkTheme)
 	palette.Add("New File", func() {
-		a.appendTab("untitled", "")
-		ui.Focus(a)
+		r.appendTab("untitled", "")
+		// TODO: Consider if the framework should handle focus when something is added
+		ui.Default().Focus(r)
 	})
-	palette.Add("Quit", ui.Stop)
+	palette.Add("Quit", ui.Default().Stop)
 	palette.Add("Format", func() {
 		log.Print("go fmt")
 	})
-	a.palette = palette
-	ui.Focus(palette)
+
+	w, h := ui.Default().Screen().Size()
+	pw := w / 2
+	_, ph := palette.MinSize()
+	px := (w - pw) / 2
+	py := 1
+	if py+ph > h {
+		ph = h - py
+	}
+	ui.Default().SetOverlay(palette, ui.Rect{X: px, Y: py, W: pw, H: ph})
+	ui.Default().Focus(palette)
+}
+
+func (r *root) openFile(name string) error {
+	bs, err := os.ReadFile(name)
+	if err != nil {
+		return err
+	}
+
+	r.appendTab(filepath.Base(name), string(bs))
+	return nil
 }
 
 type tab struct {
-	av      *app
+	av      *root
 	label   string
 	body    ui.Element
 	hovered bool
@@ -254,7 +277,6 @@ type Palette struct {
 	}
 	input *ui.TextInput
 	list  *ui.ListView
-	hide  bool
 }
 
 func NewPalette() *Palette {
@@ -311,8 +333,8 @@ func (p *Palette) Render(ui.Screen, ui.Rect) {
 func (p *Palette) HandleKey(ev *tcell.EventKey) {
 	switch ev.Key() {
 	case tcell.KeyESC:
-		p.hide = true
-		ui.Focus(ui.Root())
+		ui.Default().ClearOverlay()
+		ui.Default().Focus(ui.Default().Root())
 	case tcell.KeyDown:
 		p.list.Selected = (p.list.Selected + 1) % len(p.list.Items)
 	case tcell.KeyUp:
@@ -322,8 +344,8 @@ func (p *Palette) HandleKey(ev *tcell.EventKey) {
 		if len(p.list.Items) > 0 {
 			item := p.list.Items[p.list.Selected]
 			item.Action()
-			p.hide = true
-			ui.Focus(ui.Root())
+			ui.Default().ClearOverlay()
+			ui.Default().Focus(ui.Default().Root())
 		}
 	default:
 		p.input.HandleKey(ev)
@@ -334,7 +356,9 @@ func (p *Palette) FocusTarget() ui.Element {
 	return p
 }
 func (p *Palette) OnFocus() { p.input.OnFocus() }
-func (p *Palette) OnBlur()  { p.hide = true }
+func (p *Palette) OnBlur() {
+	ui.Default().ClearOverlay()
+}
 
 func containIgnoreCase(s, substr string) bool {
 	s = strings.ToLower(s)

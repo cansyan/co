@@ -16,7 +16,6 @@ import (
 )
 
 func init() {
-	app = initApp()
 	SetLightTheme()
 }
 
@@ -1496,32 +1495,30 @@ func (f *Frame) Render(s Screen, rect Rect) {
 	ResetRect(s, rect, f.Style)
 }
 
+// Overlay represents a floating element displayed on top of the main UI.
+// TODO: maybe add border? dismiss on click outside?
+type Overlay struct {
+	Rect  Rect
+	Child Element
+}
+
+func (o *Overlay) MinSize() (w, h int) { return o.Rect.W, o.Rect.H }
+
+func (o *Overlay) Layout(x, y, w, h int) *LayoutNode {
+	return &LayoutNode{
+		Element:  o,
+		Rect:     Rect{X: x, Y: y, W: w, H: h},
+		Children: []*LayoutNode{o.Child.Layout(x, y, w, h)},
+	}
+}
+
+func (o *Overlay) Render(s Screen, rect Rect) {
+	// no-op
+}
+
 // ---------------------------------------------------------------------
 // APP RUNNER
 // ---------------------------------------------------------------------
-
-var app *App
-
-// Start event-loop, blocks until Stop.
-func Start(root Element) error {
-	return app.Start(root)
-}
-
-func Stop() {
-	app.Stop()
-}
-
-func Focus(e Element) {
-	app.Focus(e)
-}
-
-func BindKey(key string, action func()) {
-	app.keybinding[key] = action
-}
-
-func Root() Element {
-	return app.root
-}
 
 type App struct {
 	screen  Screen
@@ -1532,16 +1529,53 @@ type App struct {
 	done    chan struct{}
 
 	clickPoint Point
-	keybinding map[string]func()
+	keymap     map[string]func()
+	overlay    *Overlay
 }
 
-func initApp() *App {
-	a := &App{
-		done:       make(chan struct{}),
-		keybinding: make(map[string]func()),
+var app *App
+
+func Default() *App {
+	if app == nil {
+		app = NewApp(VStack())
 	}
-	a.keybinding["Ctrl+C"] = a.Stop
+	return app
+}
+
+func NewApp(root Element) *App {
+	a := &App{
+		root:   root,
+		done:   make(chan struct{}),
+		keymap: make(map[string]func()),
+	}
+	a.keymap["Ctrl+C"] = a.Stop
 	return a
+}
+
+func (a *App) SetRoot(e Element) {
+	a.root = e
+}
+func (a *App) Root() Element {
+	return a.root
+}
+
+func (a *App) Screen() Screen {
+	return a.screen
+}
+
+func (a *App) BindKey(key string, action func()) {
+	a.keymap[key] = action
+}
+
+func (a *App) SetOverlay(e Element, rect Rect) {
+	a.overlay = &Overlay{
+		Rect:  rect,
+		Child: e,
+	}
+}
+
+func (a *App) ClearOverlay() {
+	a.overlay = nil
 }
 
 func drawTree(node *LayoutNode, s Screen) {
@@ -1555,10 +1589,14 @@ func drawTree(node *LayoutNode, s Screen) {
 	}
 }
 
-// Render builds and render the layout tree
+// Render builds the layout tree then render it to the screen.
 func (a *App) Render() {
 	w, h := a.screen.Size()
 	a.tree = a.root.Layout(0, 0, w, h)
+	if o := a.overlay; o != nil {
+		node := o.Layout(o.Rect.X, o.Rect.Y, o.Rect.W, o.Rect.H)
+		a.tree.Children = append(a.tree.Children, node)
+	}
 	drawTree(a.tree, a.screen)
 }
 
@@ -1640,8 +1678,8 @@ func (a *App) resolveFocus(e Element) Element {
 	}
 }
 
-func (a *App) Start(root Element) error {
-	a.root = root
+// Run starts the main event loop.
+func (a *App) Run() error {
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return err
@@ -1686,7 +1724,7 @@ func (a *App) Start(root Element) error {
 
 func (a *App) handleKey(ev *tcell.EventKey) {
 	log.Printf("key: %s", ev.Name())
-	if f, ok := a.keybinding[ev.Name()]; ok {
+	if f, ok := a.keymap[ev.Name()]; ok {
 		f()
 		return
 	}
