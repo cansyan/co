@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -111,6 +110,20 @@ type LayoutNode struct {
 	Element  Element
 	Rect     Rect
 	Children []*LayoutNode
+}
+
+func (n *LayoutNode) Debug() string {
+	var sb strings.Builder
+	var dump func(node *LayoutNode, indent int)
+	dump = func(node *LayoutNode, indent int) {
+		sb.WriteString(strings.Repeat("\t", indent))
+		sb.WriteString(fmt.Sprintf("%T: %+v\n", node.Element, node.Rect))
+		for _, child := range node.Children {
+			dump(child, indent+1)
+		}
+	}
+	dump(n, 0)
+	return sb.String()
 }
 
 type Rect struct {
@@ -1067,9 +1080,11 @@ func (d *divider) Render(s Screen, rect Rect) {
 
 type Empty struct{}
 
-func (e Empty) MinSize() (int, int)               { return 0, 0 }
-func (e Empty) Layout(x, y, w, h int) *LayoutNode { return nil }
-func (e Empty) Render(Screen, Rect)               {}
+func (e Empty) MinSize() (int, int) { return 0, 0 }
+func (e Empty) Layout(x, y, w, h int) *LayoutNode {
+	return &LayoutNode{Element: e, Rect: Rect{X: x, Y: y, W: w, H: h}}
+}
+func (e Empty) Render(Screen, Rect) {}
 
 // Spacer fills the remaining space between siblings inside an HStack or VStack.
 var Spacer = Grow(Empty{})
@@ -1496,7 +1511,8 @@ func (f *Frame) Render(s Screen, rect Rect) {
 }
 
 // Overlay represents a floating element displayed on top of the main UI.
-// TODO: maybe add border? dismiss on click outside?
+// It is typically used for modal dialogs, pop-up menus, or tooltips.
+// It dismiss when curren focus moves outside the overlay.
 type Overlay struct {
 	Rect  Rect
 	Child Element
@@ -1512,9 +1528,14 @@ func (o *Overlay) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 
-func (o *Overlay) Render(s Screen, rect Rect) {
-	// no-op
+// no-op
+func (o *Overlay) Render(s Screen, rect Rect) {}
+
+func (o *Overlay) FocusTarget() Element {
+	return o.Child
 }
+func (o *Overlay) OnFocus() {}
+func (o *Overlay) OnBlur()  {}
 
 // ---------------------------------------------------------------------
 // APP RUNNER
@@ -1522,10 +1543,11 @@ func (o *Overlay) Render(s Screen, rect Rect) {
 
 type App struct {
 	screen  Screen
-	root    Element
+	Root    Element // root element to render
 	focused Element
+	focusID map[string]Element
 	hover   Element
-	tree    *LayoutNode
+	tree    *LayoutNode // reflects the view hierarchy after last render
 	done    chan struct{}
 
 	clickPoint Point
@@ -1537,26 +1559,19 @@ var app *App
 
 func Default() *App {
 	if app == nil {
-		app = NewApp(VStack())
+		app = NewApp(Empty{})
 	}
 	return app
 }
 
 func NewApp(root Element) *App {
 	a := &App{
-		root:   root,
+		Root:   root,
 		done:   make(chan struct{}),
 		keymap: make(map[string]func()),
 	}
-	a.keymap["Ctrl+C"] = a.Stop
+	a.keymap["Ctrl+C"] = a.Close
 	return a
-}
-
-func (a *App) SetRoot(e Element) {
-	a.root = e
-}
-func (a *App) Root() Element {
-	return a.root
 }
 
 func (a *App) Screen() Screen {
@@ -1567,16 +1582,16 @@ func (a *App) BindKey(key string, action func()) {
 	a.keymap[key] = action
 }
 
-func (a *App) SetOverlay(e Element, rect Rect) {
+func (a *App) Overlay(e Element, rect Rect) {
 	a.overlay = &Overlay{
 		Rect:  rect,
 		Child: e,
 	}
 }
 
-func (a *App) ClearOverlay() {
-	a.overlay = nil
-}
+// func (a *App) clearOverlay() {
+// 	a.overlay = nil
+// }
 
 func drawTree(node *LayoutNode, s Screen) {
 	if node == nil {
@@ -1592,7 +1607,7 @@ func drawTree(node *LayoutNode, s Screen) {
 // Render builds the layout tree then render it to the screen.
 func (a *App) Render() {
 	w, h := a.screen.Size()
-	a.tree = a.root.Layout(0, 0, w, h)
+	a.tree = a.Root.Layout(0, 0, w, h)
 	if o := a.overlay; o != nil {
 		node := o.Layout(o.Rect.X, o.Rect.Y, o.Rect.W, o.Rect.H)
 		a.tree.Children = append(a.tree.Children, node)
@@ -1635,8 +1650,29 @@ func hitTest(n *LayoutNode, p Point) (Element, Point) {
 	}
 }
 
+// SetFocusID marks the given element with a string identifier for later focus.
+func (a *App) SetFocusID(s string, e Element) {
+	if a.focusID == nil {
+		a.focusID = make(map[string]Element)
+	}
+	a.focusID[s] = e
+}
+
+// Focus sets focus to the element identified by the given string.
+// It is intended to be used with MarkFocus, to decouple elements.
+func (a *App) FocusID(s string) {
+	if s == "" {
+		return
+	}
+	e, ok := a.focusID[s]
+	if !ok {
+		log.Printf("focus id %q not found", s)
+		return
+	}
+	a.Focus(e)
+}
+
 func (a *App) Focus(e Element) {
-	// log.Print("try focus: ", prettyType(e))
 	if e == nil {
 		return
 	}
@@ -1650,18 +1686,33 @@ func (a *App) Focus(e Element) {
 	if f, ok := a.focused.(Focusable); ok {
 		f.OnFocus()
 	}
+	log.Printf("focused: %T", a.focused)
+
 	if _, ok := a.focused.(KeyHandler); !ok {
 		a.screen.HideCursor()
 	}
-	log.Print("focused: ", prettyType(a.focused))
+
+	// dismiss overlay on blur
+	if node := findNode(a.tree, a.overlay); node != nil {
+		if found := findNode(node, a.focused); found == nil {
+			a.overlay = nil
+		}
+	}
 }
 
-func prettyType(v any) string {
-	t := reflect.TypeOf(v)
-	if t == nil {
-		return "<nil>"
+func findNode(n *LayoutNode, target Element) *LayoutNode {
+	if n == nil || target == nil {
+		return nil
 	}
-	return t.String()
+	if n.Element == target {
+		return n
+	}
+	for _, child := range n.Children {
+		if res := findNode(child, target); res != nil {
+			return res
+		}
+	}
+	return nil
 }
 
 func (a *App) resolveFocus(e Element) Element {
@@ -1678,8 +1729,11 @@ func (a *App) resolveFocus(e Element) Element {
 	}
 }
 
-// Run starts the main event loop.
-func (a *App) Run() error {
+// Serve starts the main event loop.
+func (a *App) Serve(root Element) error {
+	if root != nil {
+		a.Root = root
+	}
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return err
@@ -1792,6 +1846,6 @@ func (a *App) updateHover(e Element, lx, ly int) {
 	}
 }
 
-func (a *App) Stop() {
+func (a *App) Close() {
 	close(a.done)
 }

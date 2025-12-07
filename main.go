@@ -35,15 +35,14 @@ func main() {
 	}
 
 	app := ui.Default()
-	app.SetRoot(root)
+	app.SetFocusID("root", root)
+	app.Focus(root)
 	app.BindKey("Ctrl+P", root.showPalatte)
 	app.BindKey("Ctrl+W", func() {
 		root.deleteTab(root.active)
 		app.Focus(root)
 	})
-	// TODO: reconsider the focus handling policy of the framework, maybe it should focus automatically?
-	app.Focus(root)
-	if err := app.Run(); err != nil {
+	if err := app.Serve(root); err != nil {
 		log.Print(err)
 		return
 	}
@@ -70,7 +69,7 @@ func newRoot() *root {
 		r.appendTab("untitled", "")
 		ui.Default().Focus(r)
 	}
-	r.btnQuit.OnClick = ui.Default().Stop
+	r.btnQuit.OnClick = ui.Default().Close
 	return r
 }
 
@@ -165,10 +164,9 @@ func (r *root) showPalatte() {
 	palette.Add("Color theme: dark", ui.SetDarkTheme)
 	palette.Add("New File", func() {
 		r.appendTab("untitled", "")
-		// TODO: Consider if the framework should handle focus when something is added
 		ui.Default().Focus(r)
 	})
-	palette.Add("Quit", ui.Default().Stop)
+	palette.Add("Quit", ui.Default().Close)
 	palette.Add("Format", func() {
 		log.Print("go fmt")
 	})
@@ -181,7 +179,7 @@ func (r *root) showPalatte() {
 	if py+ph > h {
 		ph = h - py
 	}
-	ui.Default().SetOverlay(palette, ui.Rect{X: px, Y: py, W: pw, H: ph})
+	ui.Default().Overlay(palette, ui.Rect{X: px, Y: py, W: pw, H: ph})
 	ui.Default().Focus(palette)
 }
 
@@ -333,8 +331,7 @@ func (p *Palette) Render(ui.Screen, ui.Rect) {
 func (p *Palette) HandleKey(ev *tcell.EventKey) {
 	switch ev.Key() {
 	case tcell.KeyESC:
-		ui.Default().ClearOverlay()
-		ui.Default().Focus(ui.Default().Root())
+		ui.Default().FocusID("root")
 	case tcell.KeyDown:
 		p.list.Selected = (p.list.Selected + 1) % len(p.list.Items)
 	case tcell.KeyUp:
@@ -344,8 +341,7 @@ func (p *Palette) HandleKey(ev *tcell.EventKey) {
 		if len(p.list.Items) > 0 {
 			item := p.list.Items[p.list.Selected]
 			item.Action()
-			ui.Default().ClearOverlay()
-			ui.Default().Focus(ui.Default().Root())
+			ui.Default().FocusID("root")
 		}
 	default:
 		p.input.HandleKey(ev)
@@ -356,9 +352,7 @@ func (p *Palette) FocusTarget() ui.Element {
 	return p
 }
 func (p *Palette) OnFocus() { p.input.OnFocus() }
-func (p *Palette) OnBlur() {
-	ui.Default().ClearOverlay()
-}
+func (p *Palette) OnBlur()  {}
 
 func containIgnoreCase(s, substr string) bool {
 	s = strings.ToLower(s)
