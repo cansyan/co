@@ -1187,9 +1187,13 @@ func (v *vstack) Spacing(p int) *vstack {
 // scale the container
 func (v *vstack) Grow(weight ...int) *grower { return Grow(v, weight...) }
 
-// add border
-func (v *vstack) Border(color string) *Box {
-	return NewBox(v).Foreground(color)
+// add border, use colorBorder if color is absent.
+func (v *vstack) Border(color ...string) *Box {
+	box := NewBox(v)
+	if len(color) > 0 {
+		box.Foreground(color[0])
+	}
+	return box
 }
 
 // hstack is a horizontal layout container.
@@ -1425,10 +1429,8 @@ func (b *Box) Layout(x, y, w, h int) *LayoutNode {
 const (
 	hChar = '─'
 	vChar = '│'
-	cTL   = '┌'
-	cTR   = '┐'
-	cBL   = '└'
-	cBR   = '┘'
+	// round angle corner, alternative right angle ┌ ┐ └ ┘
+	cTL, cTR, cBL, cBR = '╭', '╮', '╰', '╯'
 )
 
 func (b *Box) Render(s Screen, rect Rect) {
@@ -1518,7 +1520,7 @@ type Overlay struct {
 	Child Element
 }
 
-func (o *Overlay) MinSize() (w, h int) { return o.Rect.W, o.Rect.H }
+func (o *Overlay) MinSize() (w, h int) { return o.Child.MinSize() }
 
 func (o *Overlay) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
@@ -1589,10 +1591,6 @@ func (a *App) Overlay(e Element, rect Rect) {
 	}
 }
 
-// func (a *App) clearOverlay() {
-// 	a.overlay = nil
-// }
-
 func drawTree(node *LayoutNode, s Screen) {
 	if node == nil {
 		return
@@ -1609,7 +1607,8 @@ func (a *App) Render() {
 	w, h := a.screen.Size()
 	a.tree = a.Root.Layout(0, 0, w, h)
 	if o := a.overlay; o != nil {
-		node := o.Layout(o.Rect.X, o.Rect.Y, o.Rect.W, o.Rect.H)
+		w, h = o.MinSize()
+		node := o.Layout(o.Rect.X, o.Rect.Y, o.Rect.X+w-1, o.Rect.Y+h-1)
 		a.tree.Children = append(a.tree.Children, node)
 	}
 	drawTree(a.tree, a.screen)
@@ -1692,7 +1691,7 @@ func (a *App) Focus(e Element) {
 		a.screen.HideCursor()
 	}
 
-	// dismiss overlay on blur
+	// dismiss overlay when focus outside
 	if node := findNode(a.tree, a.overlay); node != nil {
 		if found := findNode(node, a.focused); found == nil {
 			a.overlay = nil

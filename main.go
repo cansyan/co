@@ -171,15 +171,11 @@ func (r *root) showPalatte() {
 		log.Print("go fmt")
 	})
 
-	w, h := ui.Default().Screen().Size()
+	w, _ := ui.Default().Screen().Size()
 	pw := w / 2
-	_, ph := palette.MinSize()
 	px := (w - pw) / 2
 	py := 1
-	if py+ph > h {
-		ph = h - py
-	}
-	ui.Default().Overlay(palette, ui.Rect{X: px, Y: py, W: pw, H: ph})
+	ui.Default().Overlay(palette, ui.Rect{X: px, Y: py})
 	ui.Default().Focus(palette)
 }
 
@@ -306,8 +302,7 @@ func (p *Palette) Add(name string, action func()) {
 
 func (p *Palette) MinSize() (int, int) {
 	w1, h1 := 30, 1 // input box size
-	w2, _ := p.list.MinSize()
-	h2 := len(p.cmds)
+	w2, h2 := p.list.MinSize()
 	return max(w1, w2) + 2, h1 + h2 + 2 // +2 for box border
 }
 
@@ -319,7 +314,7 @@ func (p *Palette) Layout(x, y, w, h int) *ui.LayoutNode {
 	view := ui.VStack(
 		p.input,
 		ui.Grow(p.list),
-	).Border("sliver")
+	).Border()
 	n.Children = append(n.Children, view.Layout(x, y, w, h))
 	return n
 }
