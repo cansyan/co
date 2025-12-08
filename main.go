@@ -60,16 +60,16 @@ type root struct {
 
 func newRoot() *root {
 	r := &root{
-		btnNew:  ui.NewButton("New"),
-		btnSave: ui.NewButton("Save"),
-		btnQuit: ui.NewButton("Quit"),
-		status:  ui.NewText("Ready"),
+		status: ui.NewText("Ready"),
 	}
-	r.btnNew.OnClick = func() {
+	r.btnNew = ui.NewButton("New", func() {
 		r.appendTab("untitled", "")
 		ui.Default().Focus(r)
-	}
-	r.btnQuit.OnClick = ui.Default().Close
+	})
+	r.btnSave = ui.NewButton("Save", func() {
+		ui.Default().PromptYesOrNo("Save the changes?", nil, nil)
+	})
+	r.btnQuit = ui.NewButton("Quit", ui.Default().Close)
 	return r
 }
 
@@ -167,15 +167,7 @@ func (r *root) showPalatte() {
 		ui.Default().Focus(r)
 	})
 	palette.Add("Quit", ui.Default().Close)
-	palette.Add("Format", func() {
-		log.Print("go fmt")
-	})
-
-	w, _ := ui.Default().Screen().Size()
-	pw := w / 2
-	px := (w - pw) / 2
-	py := 1
-	ui.Default().Overlay(palette, ui.Rect{X: px, Y: py})
+	ui.Default().OverlayTop(palette)
 	ui.Default().Focus(palette)
 }
 
@@ -303,7 +295,7 @@ func (p *Palette) Add(name string, action func()) {
 func (p *Palette) MinSize() (int, int) {
 	w1, h1 := 30, 1 // input box size
 	w2, h2 := p.list.MinSize()
-	return max(w1, w2) + 2, h1 + h2 + 2 // +2 for box border
+	return max(w1, w2), h1 + h2
 }
 
 func (p *Palette) Layout(x, y, w, h int) *ui.LayoutNode {
@@ -313,8 +305,8 @@ func (p *Palette) Layout(x, y, w, h int) *ui.LayoutNode {
 	}
 	view := ui.VStack(
 		p.input,
-		ui.Grow(p.list),
-	).Border()
+		p.list,
+	)
 	n.Children = append(n.Children, view.Layout(x, y, w, h))
 	return n
 }

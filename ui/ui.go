@@ -229,18 +229,18 @@ func (t *Text) Render(s Screen, rect Rect) {
 
 type Button struct {
 	Style
-	Label   string
-	OnClick func()
+	label   string
+	onClick func()
 	hovered bool
 	pressed bool
 }
 
 // NewButton creates a new button element with the given label.
-func NewButton(label string) *Button {
-	return &Button{Label: label}
+func NewButton(label string, onClick func()) *Button {
+	return &Button{label: label, onClick: onClick}
 }
 
-func (b *Button) MinSize() (int, int) { return runewidth.StringWidth(b.Label) + 2, 1 }
+func (b *Button) MinSize() (int, int) { return runewidth.StringWidth(b.label) + 2, 1 }
 func (b *Button) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: b,
@@ -255,7 +255,7 @@ func (b *Button) Render(s Screen, rect Rect) {
 	if b.pressed {
 		st.Background = "gray"
 	}
-	label := " " + b.Label + " "
+	label := " " + b.label + " "
 	DrawString(s, rect.X, rect.Y, rect.W, label, st.Apply())
 }
 
@@ -275,8 +275,8 @@ func (b *Button) OnMouseDown(x, y int) {
 func (b *Button) OnMouseUp(x, y int) {
 	if b.pressed && b.hovered {
 		// real click
-		if b.OnClick != nil {
-			b.OnClick()
+		if b.onClick != nil {
+			b.onClick()
 		}
 	}
 	b.pressed = false
@@ -1196,6 +1196,12 @@ func (v *vstack) Border(color ...string) *Box {
 	return box
 }
 
+// Frame forces child to fill the frame.
+// W and H can be 0, means min size.
+func (v *vstack) Frame(w, h int) *Frame {
+	return &Frame{W: w, H: h, Child: v}
+}
+
 // hstack is a horizontal layout container.
 // Itself does not apply any visual styling like background colors, borders,
 // it is completely transparent and invisible
@@ -1288,6 +1294,12 @@ func (hs *hstack) Grow(weight ...int) *grower {
 
 func (hs *hstack) Border(color string) *Box {
 	return NewBox(hs).Foreground(color)
+}
+
+// Frame forces child to fill the frame.
+// W and H can be 0, means min size.
+func (hs *hstack) Frame(w, h int) *Frame {
+	return &Frame{W: w, H: h, Child: hs}
 }
 
 // grower is a element wrapper, won't render
@@ -1512,32 +1524,96 @@ func (f *Frame) Render(s Screen, rect Rect) {
 	ResetRect(s, rect, f.Style)
 }
 
-// Overlay represents a floating element displayed on top of the main UI.
-// It is typically used for modal dialogs, pop-up menus, or tooltips.
+// overlay is a component that appears over the main UI.
 // It dismiss when curren focus moves outside the overlay.
-type Overlay struct {
-	Rect  Rect
-	Child Element
+type overlay struct {
+	child Element
+	align string
+	dim   bool // dim the background
 }
 
-func (o *Overlay) MinSize() (w, h int) { return o.Child.MinSize() }
+func (o *overlay) MinSize() (int, int) {
+	w, h := o.child.MinSize()
+	return w + 2, h + 2 // +2 for border
+}
 
-func (o *Overlay) Layout(x, y, w, h int) *LayoutNode {
+func (o *overlay) Layout(x, y, w, h int) *LayoutNode {
+	box := NewBox(o.child)
+	mw, mh := box.MinSize()
+	switch o.align {
+	case "center":
+		x = x + (w-mw)/2
+		y = y + (h-mh)/2
+	case "top":
+		x = x + (w-mw)/2
+		y = y + 1
+	}
+
 	return &LayoutNode{
-		Element:  o,
-		Rect:     Rect{X: x, Y: y, W: w, H: h},
-		Children: []*LayoutNode{o.Child.Layout(x, y, w, h)},
+		Element: o,
+		Rect:    Rect{X: x, Y: y, W: mw, H: mh},
+		Children: []*LayoutNode{
+			box.Layout(x, y, mw, mh),
+		},
 	}
 }
 
 // no-op
-func (o *Overlay) Render(s Screen, rect Rect) {}
-
-func (o *Overlay) FocusTarget() Element {
-	return o.Child
+func (o *overlay) Render(s Screen, rect Rect) {
+	if !o.dim {
+		return
+	}
+	w, h := s.Size()
+	for x := range w {
+		for y := range h {
+			ch, comb, style, _ := s.GetContent(x, y)
+			style = style.Background(tcell.ColorDarkGray).Dim(true)
+			s.SetContent(x, y, ch, comb, style)
+		}
+	}
 }
-func (o *Overlay) OnFocus() {}
-func (o *Overlay) OnBlur()  {}
+
+func (o *overlay) FocusTarget() Element {
+	return o.child
+}
+func (o *overlay) OnFocus() {}
+func (o *overlay) OnBlur()  {}
+
+func newModal(message string, onYes func(), onNo func()) Element {
+	msg := NewText(message)
+
+	btnCancel := NewButton("Cancel", func() {
+		Default().overlay = nil
+		Default().Focus(Default().Root)
+	})
+	btnNo := NewButton("No", func() {
+		if onNo != nil {
+			onNo()
+		}
+		Default().overlay = nil
+		Default().Focus(Default().Root)
+	})
+	btnYes := NewButton("Yes", func() {
+		if onYes != nil {
+			onYes()
+		}
+		Default().overlay = nil
+		Default().Focus(Default().Root)
+	})
+	buttons := HStack(
+		btnCancel,
+		Spacer,
+		btnNo,
+		Spacer,
+		btnYes,
+	)
+
+	content := VStack(
+		Padding(msg, 1),
+		buttons,
+	).Frame(30, 0)
+	return content
+}
 
 // ---------------------------------------------------------------------
 // APP RUNNER
@@ -1554,7 +1630,7 @@ type App struct {
 
 	clickPoint Point
 	keymap     map[string]func()
-	overlay    *Overlay
+	overlay    *overlay
 }
 
 var app *App
@@ -1584,13 +1660,6 @@ func (a *App) BindKey(key string, action func()) {
 	a.keymap[key] = action
 }
 
-func (a *App) Overlay(e Element, rect Rect) {
-	a.overlay = &Overlay{
-		Rect:  rect,
-		Child: e,
-	}
-}
-
 func drawTree(node *LayoutNode, s Screen) {
 	if node == nil {
 		return
@@ -1607,8 +1676,7 @@ func (a *App) Render() {
 	w, h := a.screen.Size()
 	a.tree = a.Root.Layout(0, 0, w, h)
 	if o := a.overlay; o != nil {
-		w, h = o.MinSize()
-		node := o.Layout(o.Rect.X, o.Rect.Y, o.Rect.X+w-1, o.Rect.Y+h-1)
+		node := o.Layout(0, 0, w, h)
 		a.tree.Children = append(a.tree.Children, node)
 	}
 	drawTree(a.tree, a.screen)
@@ -1847,4 +1915,20 @@ func (a *App) updateHover(e Element, lx, ly int) {
 
 func (a *App) Close() {
 	close(a.done)
+}
+
+func (a *App) OverlayTop(e Element) {
+	a.overlay = &overlay{
+		child: e,
+		align: "top",
+	}
+}
+
+func (a *App) PromptYesOrNo(message string, onYes, onNo func()) {
+	m := newModal(message, onYes, onNo)
+	a.overlay = &overlay{
+		child: m,
+		align: "center",
+		dim:   true,
+	}
 }
