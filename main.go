@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -14,7 +15,16 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
+var dark = flag.Bool("dark", false, "use dark theme")
+
 func main() {
+	flag.Parse()
+	if *dark {
+		ui.SetDarkTheme()
+	} else {
+		ui.SetLightTheme()
+	}
+
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	f, err := os.OpenFile("/tmp/tui.log", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
@@ -24,10 +34,10 @@ func main() {
 	log.SetOutput(f)
 
 	root := newRoot()
-	if len(os.Args) > 1 {
-		err := root.openFile(os.Args[1])
+	if path := flag.Arg(0); path != "" {
+		err := root.openFile(path)
 		if err != nil {
-			log.Print(err)
+			fmt.Fprintln(os.Stderr, err)
 			return
 		}
 	} else {
@@ -39,8 +49,7 @@ func main() {
 	app.Focus(root)
 	app.BindKey("Ctrl+P", root.showPalatte)
 	app.BindKey("Ctrl+W", func() {
-		root.deleteTab(root.active)
-		app.Focus(root)
+		root.safeDeleteTab(root.active)
 	})
 	if err := app.Serve(root); err != nil {
 		log.Print(err)
@@ -80,12 +89,34 @@ func (r *root) appendTab(label string, content string) {
 		row, col := editor.Cursor()
 		r.status.Label = fmt.Sprintf("Line %d, Column %d", row+1, col+1)
 	})
-	r.tabs = append(r.tabs, &tab{
-		av:    r,
-		label: label,
-		body:  editor,
-	})
+	r.tabs = append(r.tabs, newTab(r, label, editor))
 	r.active = len(r.tabs) - 1
+}
+
+// safeDeleteTab prompts to save changes if the tab is dirty
+func (r *root) safeDeleteTab(i int) {
+	if i < 0 || i >= len(r.tabs) {
+		return
+	}
+	if e, ok := r.tabs[r.active].body.(*ui.TextEditor); !ok || !e.Dirty {
+		r.deleteTab(i)
+		ui.Default().Focus(r)
+		return
+	}
+
+	ui.Default().PromptYesOrNo(
+		"Save changes before leaving?",
+		func() {
+			// TODO: implement save functionality
+			log.Print("save file...")
+			r.deleteTab(i)
+			ui.Default().Focus(r)
+		},
+		func() {
+			r.deleteTab(i)
+			ui.Default().Focus(r)
+		},
+	)
 }
 
 func (r *root) deleteTab(i int) {
@@ -155,8 +186,9 @@ func (r *root) FocusTarget() ui.Element {
 	return r.tabs[r.active].body
 }
 
-func (r *root) OnFocus() {}
-func (r *root) OnBlur()  {}
+func (r *root) OnFocus()                     {}
+func (r *root) OnBlur()                      {}
+func (r *root) HandleKey(ev *tcell.EventKey) {}
 
 func (r *root) showPalatte() {
 	palette := NewPalette()
@@ -164,7 +196,6 @@ func (r *root) showPalatte() {
 	palette.Add("Color theme: dark", ui.SetDarkTheme)
 	palette.Add("New File", func() {
 		r.appendTab("untitled", "")
-		ui.Default().Focus(r)
 	})
 	palette.Add("Quit", ui.Default().Close)
 	ui.Default().OverlayTop(palette)
@@ -182,32 +213,54 @@ func (r *root) openFile(name string) error {
 }
 
 type tab struct {
-	av      *root
-	label   string
-	body    ui.Element
-	hovered bool
-	style   ui.Style
+	root     *root
+	label    string
+	btnClose *ui.Button
+	body     ui.Element
+	hovered  bool
+	style    ui.Style
+}
+
+func newTab(root *root, label string, body ui.Element) *tab {
+	t := &tab{
+		root:  root,
+		label: label,
+		body:  body,
+	}
+	t.btnClose = ui.NewButton("x", func() {
+		for i, tab := range root.tabs {
+			if tab == t {
+				t.root.safeDeleteTab(i)
+				return
+			}
+		}
+	})
+	return t
 }
 
 const tabItemWidth = 15
 
 func (t *tab) MinSize() (int, int) { return tabItemWidth, 1 }
 func (t *tab) Layout(x, y, w, h int) *ui.LayoutNode {
+	bw, bh := t.btnClose.MinSize()
 	return &ui.LayoutNode{
 		Element: t,
 		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
+		Children: []*ui.LayoutNode{
+			t.btnClose.Layout(x+tabItemWidth-3, y, bw, bh),
+		},
 	}
 }
 func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 	var st ui.Style
-	if t == t.av.tabs[t.av.active] {
+	if t == t.root.tabs[t.root.active] {
 		st = t.style.Merge(ui.StyleActiveTab)
 	} else if t.hovered {
 		st = t.style.Merge(ui.StyleHover)
 	}
 
-	format := " %s x "
-	labelWidth := tabItemWidth - 4
+	format := " %s"
+	labelWidth := tabItemWidth - 3 - 1 // minus button and padding
 	if runewidth.StringWidth(t.label) <= labelWidth {
 		t.label = runewidth.FillRight(t.label, labelWidth)
 	} else {
@@ -218,21 +271,11 @@ func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 }
 
 func (t *tab) OnMouseDown(lx, ly int) {
-	w, _ := t.MinSize()
-	// check if pressing charater "x"
-	if lx >= w-2 {
-		for i, tab := range t.av.tabs {
-			if tab == t {
-				t.av.deleteTab(i)
-				return
-			}
-		}
-		return
-	}
-
-	for i, tab := range t.av.tabs {
+	// like Sublime Text, instant react on clicking tab, not waiting the mouse up
+	for i, tab := range t.root.tabs {
 		if tab == t {
-			t.av.active = i
+			t.root.active = i
+			ui.Default().Focus(t.root)
 		}
 	}
 }
@@ -245,15 +288,6 @@ func (t *tab) OnMouseLeave() {
 	t.hovered = false
 }
 func (t *tab) OnMouseMove(rx, ry int) {}
-func (t *tab) FocusTarget() ui.Element {
-	if len(t.av.tabs) == 0 {
-		return t.av
-	}
-	return t.av.tabs[t.av.active].body
-}
-
-func (t *tab) OnFocus() {}
-func (t *tab) OnBlur()  {}
 
 type Palette struct {
 	ui.Style
@@ -277,7 +311,10 @@ func NewPalette() *Palette {
 		p.list.Selected = 0
 		for _, cmd := range p.cmds {
 			if keyword == "" || containIgnoreCase(cmd.Name, keyword) {
-				p.list.Append(cmd.Name, cmd.Action)
+				p.list.Append(cmd.Name, func() {
+					cmd.Action()
+					ui.Default().FocusID("root")
+				})
 			}
 		}
 	})
@@ -289,7 +326,11 @@ func (p *Palette) Add(name string, action func()) {
 		Name   string
 		Action func()
 	}{Name: name, Action: action})
-	p.list.Append(name, action)
+	f := func() {
+		action()
+		ui.Default().FocusID("root")
+	}
+	p.list.Append(name, f)
 }
 
 func (p *Palette) MinSize() (int, int) {
@@ -328,7 +369,6 @@ func (p *Palette) HandleKey(ev *tcell.EventKey) {
 		if len(p.list.Items) > 0 {
 			item := p.list.Items[p.list.Selected]
 			item.Action()
-			ui.Default().FocusID("root")
 		}
 	default:
 		p.input.HandleKey(ev)

@@ -21,7 +21,7 @@ func init() {
 var (
 	colorFG     string
 	colorBG     string
-	colorCursor = "#D88A40"
+	colorCursor = "lightpink"
 	colorBorder = "#D0D0D0"
 
 	StyleHover    Style
@@ -30,9 +30,8 @@ var (
 	// light:
 	// #FAFAFB background, or #F7F7F8
 	// #F2F2F4 hover
-	// #E4E6EA selected
+	// #DCEAF7 selected
 	// #D0D0D0 border, divider
-	// #D88A40 cursor
 
 	// dark:
 	// #1E1E20 background
@@ -44,7 +43,7 @@ func SetLightTheme() {
 	colorFG = "black"
 	colorBG = "#FAFAFB"
 	StyleHover = Style{Background: "#F2F2F4"}
-	StyleSelected = Style{Background: "#E4E6EA", Foreground: "black"}
+	StyleSelected = Style{Background: "#DCEAF7", Foreground: "black"}
 }
 
 func SetDarkTheme() {
@@ -99,12 +98,14 @@ type Focusable interface {
 	OnFocus()
 	// OnBlur is called when the element loses focus.
 	OnBlur()
+	HandleKey(ev *tcell.EventKey)
 }
 
 // KeyHandler is the interface that focusable elements can implement to handle key events.
-type KeyHandler interface {
-	HandleKey(ev *tcell.EventKey)
-}
+// TODO: since only focusable element can handle key, maybe make it into interface Focusable?
+// type KeyHandler interface {
+// 	HandleKey(ev *tcell.EventKey)
+// }
 
 type LayoutNode struct {
 	Element  Element
@@ -492,6 +493,7 @@ type TextEditor struct {
 	viewH        int // last rendered height
 	lineNumWidth int
 	onChange     func()
+	Dirty        bool
 }
 
 func NewTextEditor() *TextEditor {
@@ -718,7 +720,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		t.row++
 		t.col = 0
 		t.adjustScroll()
-
+		t.Dirty = true
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
 		if t.col > 0 {
 			t.content[t.row] = slices.Delete(currentLine, t.col-1, t.col)
@@ -732,6 +734,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.row--
 			t.adjustScroll()
 		}
+		t.Dirty = true
 	case tcell.KeyDelete:
 		if t.col < currentLineLen {
 			t.content[t.row] = slices.Delete(currentLine, t.col, t.col+1)
@@ -739,13 +742,16 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.content[t.row] = append(currentLine, t.content[t.row+1]...)
 			t.content = slices.Delete(t.content, t.row+1, t.row+2)
 		}
+		t.Dirty = true
 	case tcell.KeyRune:
 		r := ev.Rune()
 		t.content[t.row] = slices.Insert(currentLine, t.col, r)
 		t.col++
+		t.Dirty = true
 	case tcell.KeyTAB:
 		t.content[t.row] = slices.Insert(currentLine, t.col, '\t')
 		t.col++
+		t.Dirty = true
 	}
 
 	if t.onChange != nil {
@@ -1573,8 +1579,16 @@ func (o *overlay) Render(s Screen, rect Rect) {
 	}
 }
 
+func (o *overlay) HandleKey(ev *tcell.EventKey) {
+	if ev.Key() == tcell.KeyEsc {
+		Default().overlay = nil
+		Default().Focus(Default().Root)
+	}
+}
+
 func (o *overlay) FocusTarget() Element {
-	return o.child
+	// focus on itself to capture keys like ESC
+	return o
 }
 func (o *overlay) OnFocus() {}
 func (o *overlay) OnBlur()  {}
@@ -1591,14 +1605,12 @@ func newModal(message string, onYes func(), onNo func()) Element {
 			onNo()
 		}
 		Default().overlay = nil
-		Default().Focus(Default().Root)
 	})
 	btnYes := NewButton("Yes", func() {
 		if onYes != nil {
 			onYes()
 		}
 		Default().overlay = nil
-		Default().Focus(Default().Root)
 	})
 	buttons := HStack(
 		btnCancel,
@@ -1622,7 +1634,7 @@ func newModal(message string, onYes func(), onNo func()) Element {
 type App struct {
 	screen  Screen
 	Root    Element // root element to render
-	focused Element
+	focused Focusable
 	focusID map[string]Element
 	hover   Element
 	tree    *LayoutNode // reflects the view hierarchy after last render
@@ -1740,28 +1752,31 @@ func (a *App) FocusID(s string) {
 }
 
 func (a *App) Focus(e Element) {
+	log.Printf("try focus: %T", e)
 	if e == nil {
+		return
+	}
+	// ignore those can not be focused
+	e = a.resolveFocus(e)
+	fe, ok := e.(Focusable)
+	if !ok {
 		return
 	}
 
 	if a.focused != nil {
-		if f, ok := a.focused.(Focusable); ok {
-			f.OnBlur()
-		}
+		a.focused.OnBlur()
 	}
-	a.focused = a.resolveFocus(e)
-	if f, ok := a.focused.(Focusable); ok {
-		f.OnFocus()
-	}
+	a.focused = fe
+	fe.OnFocus()
 	log.Printf("focused: %T", a.focused)
 
-	if _, ok := a.focused.(KeyHandler); !ok {
-		a.screen.HideCursor()
-	}
+	// if _, ok := a.focused.(KeyHandler); !ok {
+	// 	a.screen.HideCursor()
+	// }
 
 	// dismiss overlay when focus outside
 	if node := findNode(a.tree, a.overlay); node != nil {
-		if found := findNode(node, a.focused); found == nil {
+		if found := findNode(node, e); found == nil {
 			a.overlay = nil
 		}
 	}
@@ -1853,9 +1868,7 @@ func (a *App) handleKey(ev *tcell.EventKey) {
 	if a.focused == nil {
 		return
 	}
-	if h, ok := a.focused.(KeyHandler); ok {
-		h.HandleKey(ev)
-	}
+	a.focused.HandleKey(ev)
 }
 
 // hover -> mouse down -> focus -> mouse up -> scroll
@@ -1871,14 +1884,12 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 
 	switch ev.Buttons() {
 	case tcell.ButtonPrimary:
+		a.Focus(hit)
 		a.clickPoint = Point{X: x, Y: y}
 		// mouse down
 		if i, ok := hit.(Clickable); ok {
 			i.OnMouseDown(lx, ly)
 		}
-
-		// shift focus
-		a.Focus(hit)
 	case tcell.WheelUp:
 		if i, ok := hit.(Scrollable); ok {
 			i.OnScroll(-1)
@@ -1931,4 +1942,5 @@ func (a *App) PromptYesOrNo(message string, onYes, onNo func()) {
 		align: "center",
 		dim:   true,
 	}
+	a.Focus(a.overlay)
 }
