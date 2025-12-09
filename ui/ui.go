@@ -1194,12 +1194,12 @@ func (v *vstack) Spacing(p int) *vstack {
 func (v *vstack) Grow(weight ...int) *grower { return Grow(v, weight...) }
 
 // add border, use colorBorder if color is absent.
-func (v *vstack) Border(color ...string) *Box {
-	box := NewBox(v)
+func (v *vstack) Border(color ...string) *Border {
+	b := NewBorder(v)
 	if len(color) > 0 {
-		box.Foreground(color[0])
+		b.Foreground(color[0])
 	}
-	return box
+	return b
 }
 
 // Frame forces child to fill the frame.
@@ -1298,8 +1298,12 @@ func (hs *hstack) Grow(weight ...int) *grower {
 	return Grow(hs, weight...)
 }
 
-func (hs *hstack) Border(color string) *Box {
-	return NewBox(hs).Foreground(color)
+func (hs *hstack) Border(color ...string) *Border {
+	b := NewBorder(hs)
+	if len(color) > 0 {
+		b.Foreground(color[0])
+	}
+	return b
 }
 
 // Frame forces child to fill the frame.
@@ -1349,7 +1353,7 @@ type padding struct {
 }
 
 // Padding adds padding around its child.
-func Padding(child Element, p int) *padding {
+func Padding(p int, child Element) *padding {
 	return &padding{
 		child:  child,
 		top:    p,
@@ -1360,7 +1364,7 @@ func Padding(child Element, p int) *padding {
 }
 
 // PaddingH adds horizontal padding around its child.
-func PaddingH(child Element, p int) *padding {
+func PaddingH(p int, child Element) *padding {
 	return &padding{
 		child: child,
 		right: p,
@@ -1369,7 +1373,7 @@ func PaddingH(child Element, p int) *padding {
 }
 
 // PaddingV adds vertical padding around its child.
-func PaddingV(child Element, p int) *padding {
+func PaddingV(p int, child Element) *padding {
 	return &padding{
 		child:  child,
 		top:    p,
@@ -1407,21 +1411,21 @@ func (p *padding) Render(s Screen, rect Rect) {
 	// no-op
 }
 
-// Box draws border around the child.
-type Box struct {
+// Border draws border around the child.
+type Border struct {
 	Style
 	child Element
 }
 
-func NewBox(child Element) *Box {
-	return &Box{child: child}
+func NewBorder(child Element) *Border {
+	return &Border{child: child}
 }
 
-func (b *Box) MinSize() (w, h int) {
+func (b *Border) MinSize() (w, h int) {
 	cw, ch := b.child.MinSize()
 	return cw + 2, ch + 2
 }
-func (b *Box) Layout(x, y, w, h int) *LayoutNode {
+func (b *Border) Layout(x, y, w, h int) *LayoutNode {
 	// Compute inner rectangle after border
 	innerX := x + 1
 	innerY := y + 1
@@ -1451,7 +1455,7 @@ const (
 	cTL, cTR, cBL, cBR = '╭', '╮', '╰', '╯'
 )
 
-func (b *Box) Render(s Screen, rect Rect) {
+func (b *Border) Render(s Screen, rect Rect) {
 	// Too small to draw a border
 	if rect.W < 2 || rect.H < 2 {
 		return
@@ -1476,12 +1480,12 @@ func (b *Box) Render(s Screen, rect Rect) {
 	s.SetContent(rect.X+rect.W-1, rect.Y+rect.H-1, cBR, nil, st)
 }
 
-func (b *Box) Foreground(color string) *Box {
+func (b *Border) Foreground(color string) *Border {
 	b.Style.Foreground = color
 	return b
 }
 
-func (b *Box) Background(color string) *Box {
+func (b *Border) Background(color string) *Border {
 	b.Style.Background = color
 	return b
 }
@@ -1530,101 +1534,41 @@ func (f *Frame) Render(s Screen, rect Rect) {
 	ResetRect(s, rect, f.Style)
 }
 
-// overlay is a component that appears over the main UI.
-// It dismiss when curren focus moves outside the overlay.
+// overlay is an container that appears over the main UI.
 type overlay struct {
 	child Element
 	align string
-	dim   bool // dim the background
 }
 
 func (o *overlay) MinSize() (int, int) {
-	w, h := o.child.MinSize()
-	return w + 2, h + 2 // +2 for border
+	return o.child.MinSize()
 }
 
 func (o *overlay) Layout(x, y, w, h int) *LayoutNode {
-	box := NewBox(o.child)
-	mw, mh := box.MinSize()
+	mw, mh := o.child.MinSize()
 	switch o.align {
-	case "center":
-		x = x + (w-mw)/2
-		y = y + (h-mh)/2
 	case "top":
 		x = x + (w-mw)/2
 		y = y + 1
+	case "center":
+		fallthrough
+	default:
+		x = x + (w-mw)/2
+		y = y + (h-mh)/2
 	}
 
 	return &LayoutNode{
 		Element: o,
 		Rect:    Rect{X: x, Y: y, W: mw, H: mh},
 		Children: []*LayoutNode{
-			box.Layout(x, y, mw, mh),
+			o.child.Layout(x, y, mw, mh),
 		},
 	}
 }
 
 // no-op
 func (o *overlay) Render(s Screen, rect Rect) {
-	if !o.dim {
-		return
-	}
-	w, h := s.Size()
-	for x := range w {
-		for y := range h {
-			ch, comb, style, _ := s.GetContent(x, y)
-			style = style.Background(tcell.ColorDarkGray).Dim(true)
-			s.SetContent(x, y, ch, comb, style)
-		}
-	}
-}
-
-func (o *overlay) HandleKey(ev *tcell.EventKey) {
-	if ev.Key() == tcell.KeyEsc {
-		Default().overlay = nil
-		Default().Focus(Default().Root)
-	}
-}
-
-func (o *overlay) FocusTarget() Element {
-	// focus on itself to capture keys like ESC
-	return o
-}
-func (o *overlay) OnFocus() {}
-func (o *overlay) OnBlur()  {}
-
-func newModal(message string, onYes func(), onNo func()) Element {
-	msg := NewText(message)
-
-	btnCancel := NewButton("Cancel", func() {
-		Default().overlay = nil
-		Default().Focus(Default().Root)
-	})
-	btnNo := NewButton("No", func() {
-		if onNo != nil {
-			onNo()
-		}
-		Default().overlay = nil
-	})
-	btnYes := NewButton("Yes", func() {
-		if onYes != nil {
-			onYes()
-		}
-		Default().overlay = nil
-	})
-	buttons := HStack(
-		btnCancel,
-		Spacer,
-		btnNo,
-		Spacer,
-		btnYes,
-	)
-
-	content := VStack(
-		Padding(msg, 1),
-		buttons,
-	).Frame(30, 0)
-	return content
+	ResetRect(s, rect, Style{})
 }
 
 // ---------------------------------------------------------------------
@@ -1756,25 +1700,23 @@ func (a *App) Focus(e Element) {
 	if e == nil {
 		return
 	}
-	// ignore those can not be focused
-	e = a.resolveFocus(e)
-	fe, ok := e.(Focusable)
-	if !ok {
-		return
-	}
 
 	if a.focused != nil {
 		a.focused.OnBlur()
 	}
-	a.focused = fe
-	fe.OnFocus()
+
+	e = a.resolveFocus(e)
+	fe, ok := e.(Focusable)
+	if !ok {
+		a.focused = nil
+		a.screen.HideCursor()
+	} else {
+		fe.OnFocus()
+		a.focused = fe
+	}
 	log.Printf("focused: %T", a.focused)
 
-	// if _, ok := a.focused.(KeyHandler); !ok {
-	// 	a.screen.HideCursor()
-	// }
-
-	// dismiss overlay when focus outside
+	// dismiss overlay when clicking outside of it
 	if node := findNode(a.tree, a.overlay); node != nil {
 		if found := findNode(node, e); found == nil {
 			a.overlay = nil
@@ -1928,19 +1870,13 @@ func (a *App) Close() {
 	close(a.done)
 }
 
-func (a *App) OverlayTop(e Element) {
+func (a *App) Overlay(e Element, align string) {
 	a.overlay = &overlay{
 		child: e,
-		align: "top",
+		align: align,
 	}
 }
 
-func (a *App) PromptYesOrNo(message string, onYes, onNo func()) {
-	m := newModal(message, onYes, onNo)
-	a.overlay = &overlay{
-		child: m,
-		align: "center",
-		dim:   true,
-	}
-	a.Focus(a.overlay)
+func (a *App) CloseOverlay() {
+	a.overlay = nil
 }

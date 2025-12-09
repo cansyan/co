@@ -75,9 +75,7 @@ func newRoot() *root {
 		r.appendTab("untitled", "")
 		ui.Default().Focus(r)
 	})
-	r.btnSave = ui.NewButton("Save", func() {
-		ui.Default().PromptYesOrNo("Save the changes?", nil, nil)
-	})
+	r.btnSave = ui.NewButton("Save", nil)
 	r.btnQuit = ui.NewButton("Quit", ui.Default().Close)
 	return r
 }
@@ -93,7 +91,7 @@ func (r *root) appendTab(label string, content string) {
 	r.active = len(r.tabs) - 1
 }
 
-// safeDeleteTab prompts to save changes if the tab is dirty
+// safeDeleteTab can alert user to the unsaved changes.
 func (r *root) safeDeleteTab(i int) {
 	if i < 0 || i >= len(r.tabs) {
 		return
@@ -104,19 +102,11 @@ func (r *root) safeDeleteTab(i int) {
 		return
 	}
 
-	ui.Default().PromptYesOrNo(
-		"Save changes before leaving?",
-		func() {
-			// TODO: implement save functionality
-			log.Print("save file...")
-			r.deleteTab(i)
-			ui.Default().Focus(r)
-		},
-		func() {
-			r.deleteTab(i)
-			ui.Default().Focus(r)
-		},
-	)
+	m := NewModal("Closing file and discard changes?", func() {
+		r.deleteTab(i)
+	})
+	ui.Default().Overlay(m, "center")
+	ui.Default().Focus(m)
 }
 
 func (r *root) deleteTab(i int) {
@@ -129,6 +119,10 @@ func (r *root) deleteTab(i int) {
 		r.active--
 	} else if i == r.active {
 		r.active = max(0, len(r.tabs)-1)
+	}
+
+	if len(r.tabs) == 0 {
+		ui.Default().Close()
 	}
 }
 
@@ -198,7 +192,7 @@ func (r *root) showPalatte() {
 		r.appendTab("untitled", "")
 	})
 	palette.Add("Quit", ui.Default().Close)
-	ui.Default().OverlayTop(palette)
+	ui.Default().Overlay(palette, "top")
 	ui.Default().Focus(palette)
 }
 
@@ -336,7 +330,7 @@ func (p *Palette) Add(name string, action func()) {
 func (p *Palette) MinSize() (int, int) {
 	w1, h1 := 30, 1 // input box size
 	w2, h2 := p.list.MinSize()
-	return max(w1, w2), h1 + h2
+	return max(w1, w2) + 2, h1 + h2 + 2 // +2 for the border
 }
 
 func (p *Palette) Layout(x, y, w, h int) *ui.LayoutNode {
@@ -347,7 +341,7 @@ func (p *Palette) Layout(x, y, w, h int) *ui.LayoutNode {
 	view := ui.VStack(
 		p.input,
 		p.list,
-	)
+	).Border()
 	n.Children = append(n.Children, view.Layout(x, y, w, h))
 	return n
 }
@@ -386,3 +380,79 @@ func containIgnoreCase(s, substr string) bool {
 	substr = strings.ToLower(substr)
 	return strings.Contains(s, substr)
 }
+
+type Modal struct {
+	child   ui.Element
+	onOK    func()
+	focused bool
+}
+
+func NewModal(message string, onOK func()) *Modal {
+	msg := ui.NewText(message)
+	btnCancel := ui.NewButton("Cancel", func() {
+		ui.Default().CloseOverlay()
+		ui.Default().FocusID("root")
+	})
+	btnOK := ui.NewButton("OK", func() {
+		if onOK != nil {
+			onOK()
+		}
+		ui.Default().CloseOverlay()
+		ui.Default().FocusID("root")
+	})
+
+	view := ui.NewBorder(
+		ui.Padding(1,
+			ui.VStack(
+				msg,
+				ui.HStack(
+					btnCancel,
+					ui.Spacer,
+					btnOK,
+				),
+			).Spacing(1),
+		),
+	).Foreground("red")
+	return &Modal{child: view, onOK: onOK}
+}
+
+func (m *Modal) MinSize() (int, int) {
+	return m.child.MinSize()
+}
+
+func (m *Modal) Layout(x, y, w, h int) *ui.LayoutNode {
+	node := &ui.LayoutNode{
+		Element: m,
+		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
+	}
+	node.Children = append(node.Children, m.child.Layout(x, y, w, h))
+	return node
+}
+
+func (m *Modal) Render(s ui.Screen, r ui.Rect) {
+	if m.focused {
+		// prevent TextEditor from showing cursor
+		s.HideCursor()
+	}
+}
+
+func (m *Modal) HandleKey(ev *tcell.EventKey) {
+	switch ev.Key() {
+	case tcell.KeyESC:
+		ui.Default().CloseOverlay()
+		ui.Default().FocusID("root")
+	case tcell.KeyEnter:
+		if m.onOK != nil {
+			m.onOK()
+		}
+		ui.Default().CloseOverlay()
+		ui.Default().FocusID("root")
+	}
+}
+
+func (m *Modal) FocusTarget() ui.Element {
+	return m
+}
+
+func (m *Modal) OnFocus() { m.focused = true }
+func (m *Modal) OnBlur()  { m.focused = false }
