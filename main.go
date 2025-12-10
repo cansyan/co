@@ -49,8 +49,12 @@ func main() {
 	app.Focus(root)
 	app.BindKey("Ctrl+P", root.showPalatte)
 	app.BindKey("Ctrl+S", root.saveFile)
+	app.BindKey("Esc", func() {
+		app.CloseOverlay()
+		app.Focus(root)
+	})
 	app.BindKey("Ctrl+W", func() {
-		root.safeDeleteTab(root.active)
+		root.closeTab(root.active)
 	})
 	if err := app.Serve(root); err != nil {
 		log.Print(err)
@@ -92,22 +96,67 @@ func (r *root) appendTab(label string, content string) {
 	r.active = len(r.tabs) - 1
 }
 
-// safeDeleteTab can alert user to the unsaved changes.
-func (r *root) safeDeleteTab(i int) {
+// closeTab closes the tab at index i, prompting to save if there are unsaved changes.
+func (r *root) closeTab(i int) {
 	if i < 0 || i >= len(r.tabs) {
 		return
 	}
-	if e, ok := r.tabs[r.active].body.(*ui.TextEditor); !ok || !e.Dirty {
+	tab := r.tabs[i]
+	editor, ok := tab.body.(*ui.TextEditor)
+	if !ok || !editor.Dirty {
 		r.deleteTab(i)
 		ui.Default().Focus(r)
 		return
 	}
 
-	m := NewAlert("Close file and discard changes?", func() {
-		r.deleteTab(i)
-	})
-	ui.Default().Overlay(m, "center")
-	ui.Default().Focus(m)
+	// Prompt to save changes.
+	view := ui.NewBorder(
+		ui.VStack(
+			ui.PaddingH(1, ui.NewText("Save the changes before closing?")),
+			ui.PaddingH(4, ui.VStack(
+				ui.NewButton("Save", func() {
+					if path := tab.label; path != "untitled" {
+						err := os.WriteFile(path, []byte(editor.String()), 0644)
+						if err != nil {
+							log.Print(err)
+							r.status.Label = err.Error()
+							return
+						}
+						r.deleteTab(i)
+						ui.Default().CloseOverlay()
+						ui.Default().Focus(r)
+						return
+					}
+
+					sa := NewSaveAs(func(path string) {
+						if path == "" {
+							return
+						}
+						err := os.WriteFile(path, []byte(editor.String()), 0644)
+						if err != nil {
+							log.Print(err)
+							r.status.Label = err.Error()
+							return
+						}
+						r.deleteTab(i)
+					})
+					ui.Default().Overlay(sa, "center")
+					ui.Default().Focus(sa)
+				}),
+				ui.NewButton("Don't Save", func() {
+					r.deleteTab(i)
+					ui.Default().CloseOverlay()
+					ui.Default().Focus(r)
+				}),
+				ui.NewButton("Cancel", func() {
+					ui.Default().CloseOverlay()
+					ui.Default().Focus(r)
+				}),
+			)),
+		).Spacing(1),
+	).Foreground("red")
+	ui.Default().Overlay(view, "center")
+	ui.Default().Focus(view)
 }
 
 func (r *root) deleteTab(i int) {
@@ -269,7 +318,7 @@ func newTab(root *root, label string, body ui.Element) *tab {
 	t.btnClose = ui.NewButton("x", func() {
 		for i, tab := range root.tabs {
 			if tab == t {
-				t.root.safeDeleteTab(i)
+				t.root.closeTab(i)
 				return
 			}
 		}
@@ -427,84 +476,10 @@ func containIgnoreCase(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
 
-type Alert struct {
-	child   ui.Element
-	action  func()
-	focused bool
-}
-
-func NewAlert(message string, action func()) *Alert {
-	msg := ui.NewText(message)
-	btnCancel := ui.NewButton("Cancel", func() {
-		ui.Default().CloseOverlay()
-		ui.Default().FocusID("root")
-	})
-	btnOK := ui.NewButton("OK", func() {
-		if action != nil {
-			action()
-		}
-		ui.Default().CloseOverlay()
-		ui.Default().FocusID("root")
-	})
-
-	view := ui.NewBorder(
-		ui.VStack(
-			ui.PaddingH(1, msg),
-			ui.PaddingH(4, ui.HStack(
-				btnCancel,
-				ui.Spacer,
-				btnOK,
-			)),
-		).Spacing(1),
-	).Foreground("red")
-	return &Alert{child: view, action: action}
-}
-
-func (m *Alert) MinSize() (int, int) {
-	return m.child.MinSize()
-}
-
-func (m *Alert) Layout(x, y, w, h int) *ui.LayoutNode {
-	node := &ui.LayoutNode{
-		Element: m,
-		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
-	}
-	node.Children = append(node.Children, m.child.Layout(x, y, w, h))
-	return node
-}
-
-func (m *Alert) Render(s ui.Screen, r ui.Rect) {
-	if m.focused {
-		// prevent TextEditor from showing cursor
-		s.HideCursor()
-	}
-}
-
-func (m *Alert) HandleKey(ev *tcell.EventKey) {
-	switch ev.Key() {
-	case tcell.KeyESC:
-		ui.Default().CloseOverlay()
-		ui.Default().FocusID("root")
-	case tcell.KeyEnter:
-		if m.action != nil {
-			m.action()
-		}
-		ui.Default().CloseOverlay()
-		ui.Default().FocusID("root")
-	}
-}
-
-func (m *Alert) FocusTarget() ui.Element {
-	return m
-}
-
-func (m *Alert) OnFocus() { m.focused = true }
-func (m *Alert) OnBlur()  { m.focused = false }
-
 type SaveAs struct {
-	child  ui.Element
-	action func(string)
-	input  *ui.TextInput
+	child ui.Element
+	btnOK *ui.Button
+	input *ui.TextInput
 }
 
 func NewSaveAs(action func(string)) *SaveAs {
@@ -536,9 +511,9 @@ func NewSaveAs(action func(string)) *SaveAs {
 		).Spacing(1).Frame(28, 0),
 	)
 	return &SaveAs{
-		child:  view,
-		action: action,
-		input:  input,
+		child: view,
+		btnOK: btnOK,
+		input: input,
 	}
 }
 
@@ -563,9 +538,7 @@ func (m *SaveAs) HandleKey(ev *tcell.EventKey) {
 		ui.Default().CloseOverlay()
 		ui.Default().FocusID("root")
 	case tcell.KeyEnter:
-		if m.action != nil {
-			m.action(m.input.Text())
-		}
+		m.btnOK.OnClick()
 		ui.Default().CloseOverlay()
 		ui.Default().FocusID("root")
 	default:

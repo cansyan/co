@@ -283,6 +283,10 @@ func (b *Button) OnMouseUp(x, y int) {
 	b.pressed = false
 }
 
+func (b *Button) OnClick() {
+	b.onClick()
+}
+
 // TextInput is a single-line editable text input field.
 type TextInput struct {
 	text     []rune
