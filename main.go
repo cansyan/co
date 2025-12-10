@@ -448,16 +448,14 @@ func NewAlert(message string, action func()) *Alert {
 	})
 
 	view := ui.NewBorder(
-		ui.PaddingH(1,
-			ui.VStack(
-				msg,
-				ui.HStack(
-					btnCancel,
-					ui.Spacer,
-					btnOK,
-				),
-			).Spacing(1),
-		),
+		ui.VStack(
+			ui.PaddingH(1, msg),
+			ui.PaddingH(4, ui.HStack(
+				btnCancel,
+				ui.Spacer,
+				btnOK,
+			)),
+		).Spacing(1),
 	).Foreground("red")
 	return &Alert{child: view, action: action}
 }
@@ -525,19 +523,17 @@ func NewSaveAs(action func(string)) *SaveAs {
 	})
 
 	view := ui.NewBorder(
-		ui.PaddingH(1,
-			ui.VStack(
-				ui.HStack(
-					msg,
-					input,
-				),
-				ui.HStack(
-					btnCancel,
-					ui.Spacer,
-					btnOK,
-				),
-			).Spacing(1).Frame(25, 0),
-		),
+		ui.VStack(
+			ui.PaddingH(1, ui.HStack(
+				msg,
+				ui.Grow(input),
+			)),
+			ui.PaddingH(4, ui.HStack(
+				btnCancel,
+				ui.Spacer,
+				btnOK,
+			)),
+		).Spacing(1).Frame(28, 0),
 	)
 	return &SaveAs{
 		child:  view,
