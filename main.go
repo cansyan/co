@@ -48,6 +48,7 @@ func main() {
 	app.SetFocusID("root", root)
 	app.Focus(root)
 	app.BindKey("Ctrl+P", root.showPalatte)
+	app.BindKey("Ctrl+S", root.saveFile)
 	app.BindKey("Ctrl+W", func() {
 		root.safeDeleteTab(root.active)
 	})
@@ -75,7 +76,7 @@ func newRoot() *root {
 		r.appendTab("untitled", "")
 		ui.Default().Focus(r)
 	})
-	r.btnSave = ui.NewButton("Save", nil)
+	r.btnSave = ui.NewButton("Save", r.saveFile)
 	r.btnQuit = ui.NewButton("Quit", ui.Default().Close)
 	return r
 }
@@ -102,7 +103,7 @@ func (r *root) safeDeleteTab(i int) {
 		return
 	}
 
-	m := NewModal("Closing file and discard changes?", func() {
+	m := NewAlert("Close file and discard changes?", func() {
 		r.deleteTab(i)
 	})
 	ui.Default().Overlay(m, "center")
@@ -206,6 +207,50 @@ func (r *root) openFile(name string) error {
 	return nil
 }
 
+func (r *root) saveFile() {
+	if len(r.tabs) == 0 {
+		return
+	}
+	tab := r.tabs[r.active]
+	editor, ok := tab.body.(*ui.TextEditor)
+	if !ok {
+		return
+	}
+	if !editor.Dirty {
+		ui.Default().Focus(r)
+		return
+	}
+
+	if path := tab.label; path != "untitled" {
+		err := os.WriteFile(path, []byte(editor.String()), 0644)
+		if err != nil {
+			log.Print(err)
+			r.status.Label = err.Error()
+			return
+		}
+		editor.Dirty = false
+		ui.Default().Focus(r)
+		return
+	}
+
+	sa := NewSaveAs(func(path string) {
+		if path == "" {
+			return
+		}
+		err := os.WriteFile(path, []byte(editor.String()), 0644)
+		if err != nil {
+			log.Print(err)
+			r.status.Label = err.Error()
+			return
+		}
+		tab.label = path
+		editor.Dirty = false
+		ui.Default().Focus(r)
+	})
+	ui.Default().Overlay(sa, "center")
+	ui.Default().Focus(sa)
+}
+
 type tab struct {
 	root     *root
 	label    string
@@ -255,13 +300,14 @@ func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 
 	format := " %s"
 	labelWidth := tabItemWidth - 3 - 1 // minus button and padding
+	var label string
 	if runewidth.StringWidth(t.label) <= labelWidth {
-		t.label = runewidth.FillRight(t.label, labelWidth)
+		label = runewidth.FillRight(t.label, labelWidth)
 	} else {
-		t.label = runewidth.Truncate(t.label, labelWidth, "…")
+		label = runewidth.Truncate(t.label, labelWidth, "…")
 	}
-	out := fmt.Sprintf(format, t.label)
-	ui.DrawString(screen, r.X, r.Y, r.W, out, st.Apply())
+	label = fmt.Sprintf(format, label)
+	ui.DrawString(screen, r.X, r.Y, r.W, label, st.Apply())
 }
 
 func (t *tab) OnMouseDown(lx, ly int) {
@@ -381,28 +427,28 @@ func containIgnoreCase(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
 
-type Modal struct {
+type Alert struct {
 	child   ui.Element
-	onOK    func()
+	action  func()
 	focused bool
 }
 
-func NewModal(message string, onOK func()) *Modal {
+func NewAlert(message string, action func()) *Alert {
 	msg := ui.NewText(message)
 	btnCancel := ui.NewButton("Cancel", func() {
 		ui.Default().CloseOverlay()
 		ui.Default().FocusID("root")
 	})
 	btnOK := ui.NewButton("OK", func() {
-		if onOK != nil {
-			onOK()
+		if action != nil {
+			action()
 		}
 		ui.Default().CloseOverlay()
 		ui.Default().FocusID("root")
 	})
 
 	view := ui.NewBorder(
-		ui.Padding(1,
+		ui.PaddingH(1,
 			ui.VStack(
 				msg,
 				ui.HStack(
@@ -413,14 +459,14 @@ func NewModal(message string, onOK func()) *Modal {
 			).Spacing(1),
 		),
 	).Foreground("red")
-	return &Modal{child: view, onOK: onOK}
+	return &Alert{child: view, action: action}
 }
 
-func (m *Modal) MinSize() (int, int) {
+func (m *Alert) MinSize() (int, int) {
 	return m.child.MinSize()
 }
 
-func (m *Modal) Layout(x, y, w, h int) *ui.LayoutNode {
+func (m *Alert) Layout(x, y, w, h int) *ui.LayoutNode {
 	node := &ui.LayoutNode{
 		Element: m,
 		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
@@ -429,30 +475,111 @@ func (m *Modal) Layout(x, y, w, h int) *ui.LayoutNode {
 	return node
 }
 
-func (m *Modal) Render(s ui.Screen, r ui.Rect) {
+func (m *Alert) Render(s ui.Screen, r ui.Rect) {
 	if m.focused {
 		// prevent TextEditor from showing cursor
 		s.HideCursor()
 	}
 }
 
-func (m *Modal) HandleKey(ev *tcell.EventKey) {
+func (m *Alert) HandleKey(ev *tcell.EventKey) {
 	switch ev.Key() {
 	case tcell.KeyESC:
 		ui.Default().CloseOverlay()
 		ui.Default().FocusID("root")
 	case tcell.KeyEnter:
-		if m.onOK != nil {
-			m.onOK()
+		if m.action != nil {
+			m.action()
 		}
 		ui.Default().CloseOverlay()
 		ui.Default().FocusID("root")
 	}
 }
 
-func (m *Modal) FocusTarget() ui.Element {
+func (m *Alert) FocusTarget() ui.Element {
 	return m
 }
 
-func (m *Modal) OnFocus() { m.focused = true }
-func (m *Modal) OnBlur()  { m.focused = false }
+func (m *Alert) OnFocus() { m.focused = true }
+func (m *Alert) OnBlur()  { m.focused = false }
+
+type SaveAs struct {
+	child  ui.Element
+	action func(string)
+	input  *ui.TextInput
+}
+
+func NewSaveAs(action func(string)) *SaveAs {
+	msg := ui.NewText("Save as: ")
+	input := new(ui.TextInput)
+	btnCancel := ui.NewButton("Cancel", func() {
+		ui.Default().CloseOverlay()
+		ui.Default().FocusID("root")
+	})
+	btnOK := ui.NewButton("OK", func() {
+		if action != nil {
+			action(input.Text())
+		}
+		ui.Default().CloseOverlay()
+		ui.Default().FocusID("root")
+	})
+
+	view := ui.NewBorder(
+		ui.PaddingH(1,
+			ui.VStack(
+				ui.HStack(
+					msg,
+					input,
+				),
+				ui.HStack(
+					btnCancel,
+					ui.Spacer,
+					btnOK,
+				),
+			).Spacing(1).Frame(25, 0),
+		),
+	)
+	return &SaveAs{
+		child:  view,
+		action: action,
+		input:  input,
+	}
+}
+
+func (m *SaveAs) MinSize() (int, int) {
+	return m.child.MinSize()
+}
+
+func (m *SaveAs) Layout(x, y, w, h int) *ui.LayoutNode {
+	node := &ui.LayoutNode{
+		Element: m,
+		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
+	}
+	node.Children = append(node.Children, m.child.Layout(x, y, w, h))
+	return node
+}
+
+func (m *SaveAs) Render(s ui.Screen, r ui.Rect) {}
+
+func (m *SaveAs) HandleKey(ev *tcell.EventKey) {
+	switch ev.Key() {
+	case tcell.KeyESC:
+		ui.Default().CloseOverlay()
+		ui.Default().FocusID("root")
+	case tcell.KeyEnter:
+		if m.action != nil {
+			m.action(m.input.Text())
+		}
+		ui.Default().CloseOverlay()
+		ui.Default().FocusID("root")
+	default:
+		m.input.HandleKey(ev)
+	}
+}
+
+func (m *SaveAs) FocusTarget() ui.Element {
+	return m
+}
+
+func (m *SaveAs) OnFocus() { m.input.OnFocus() }
+func (m *SaveAs) OnBlur()  {}

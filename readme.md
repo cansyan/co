@@ -4,11 +4,10 @@ Features:
 - component: Button, Text, TextInput, TextViewer, TextEditor, Spacer, Divider
 - container: VStack, HStack, Box, Padding
 - keyboard: focus management, event handling
-  - [ ] keybindings
+  - [x] keybindings
 - mouse: hover, click, scroll
   - [ ] drag
 
 To maintain simplicity:
 - redraw on every event
 - child element do not inherit the container's style
-
