@@ -45,13 +45,12 @@ func main() {
 	}
 
 	app := ui.Default()
-	app.SetFocusID("root", root)
+	// app.SetFocusID("root", root)
 	app.Focus(root)
 	app.BindKey("Ctrl+P", root.showPalatte)
 	app.BindKey("Ctrl+S", root.saveFile)
 	app.BindKey("Esc", func() {
 		app.CloseOverlay()
-		app.Focus(root)
 	})
 	app.BindKey("Ctrl+W", func() {
 		root.closeTab(root.active)
@@ -124,7 +123,6 @@ func (r *root) closeTab(i int) {
 						}
 						r.deleteTab(i)
 						ui.Default().CloseOverlay()
-						ui.Default().Focus(r)
 						return
 					}
 
@@ -141,22 +139,18 @@ func (r *root) closeTab(i int) {
 						r.deleteTab(i)
 					})
 					ui.Default().Overlay(sa, "center")
-					ui.Default().Focus(sa)
 				}),
 				ui.NewButton("Don't Save", func() {
 					r.deleteTab(i)
 					ui.Default().CloseOverlay()
-					ui.Default().Focus(r)
 				}),
 				ui.NewButton("Cancel", func() {
 					ui.Default().CloseOverlay()
-					ui.Default().Focus(r)
 				}),
 			)),
 		).Spacing(1),
 	).Foreground("red")
 	ui.Default().Overlay(view, "center")
-	ui.Default().Focus(view)
 }
 
 func (r *root) deleteTab(i int) {
@@ -243,7 +237,6 @@ func (r *root) showPalatte() {
 	})
 	palette.Add("Quit", ui.Default().Close)
 	ui.Default().Overlay(palette, "top")
-	ui.Default().Focus(palette)
 }
 
 func (r *root) openFile(name string) error {
@@ -297,7 +290,6 @@ func (r *root) saveFile() {
 		ui.Default().Focus(r)
 	})
 	ui.Default().Overlay(sa, "center")
-	ui.Default().Focus(sa)
 }
 
 type tab struct {
@@ -402,7 +394,7 @@ func NewPalette() *Palette {
 			if keyword == "" || containIgnoreCase(cmd.Name, keyword) {
 				p.list.Append(cmd.Name, func() {
 					cmd.Action()
-					ui.Default().FocusID("root")
+					ui.Default().CloseOverlay()
 				})
 			}
 		}
@@ -417,7 +409,7 @@ func (p *Palette) Add(name string, action func()) {
 	}{Name: name, Action: action})
 	f := func() {
 		action()
-		ui.Default().FocusID("root")
+		ui.Default().CloseOverlay()
 	}
 	p.list.Append(name, f)
 }
@@ -448,7 +440,7 @@ func (p *Palette) Render(ui.Screen, ui.Rect) {
 func (p *Palette) HandleKey(ev *tcell.EventKey) {
 	switch ev.Key() {
 	case tcell.KeyESC:
-		ui.Default().FocusID("root")
+		ui.Default().CloseOverlay()
 	case tcell.KeyDown:
 		p.list.Selected = (p.list.Selected + 1) % len(p.list.Items)
 	case tcell.KeyUp:
@@ -487,15 +479,14 @@ func NewSaveAs(action func(string)) *SaveAs {
 	input := new(ui.TextInput)
 	btnCancel := ui.NewButton("Cancel", func() {
 		ui.Default().CloseOverlay()
-		ui.Default().FocusID("root")
 	})
 	btnOK := ui.NewButton("OK", func() {
 		if action != nil {
 			action(input.Text())
 		}
 		ui.Default().CloseOverlay()
-		ui.Default().FocusID("root")
 	})
+	btnOK.Style = ui.StyleSelected
 
 	view := ui.NewBorder(
 		ui.VStack(
@@ -536,11 +527,9 @@ func (m *SaveAs) HandleKey(ev *tcell.EventKey) {
 	switch ev.Key() {
 	case tcell.KeyESC:
 		ui.Default().CloseOverlay()
-		ui.Default().FocusID("root")
 	case tcell.KeyEnter:
 		m.btnOK.OnClick()
 		ui.Default().CloseOverlay()
-		ui.Default().FocusID("root")
 	default:
 		m.input.HandleKey(ev)
 	}

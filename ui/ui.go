@@ -101,12 +101,6 @@ type Focusable interface {
 	HandleKey(ev *tcell.EventKey)
 }
 
-// KeyHandler is the interface that focusable elements can implement to handle key events.
-// TODO: since only focusable element can handle key, maybe make it into interface Focusable?
-// type KeyHandler interface {
-// 	HandleKey(ev *tcell.EventKey)
-// }
-
 type LayoutNode struct {
 	Element  Element
 	Rect     Rect
@@ -516,11 +510,18 @@ func (t *TextEditor) Background(c string) *TextEditor {
 }
 
 func (t *TextEditor) String() string {
-	var lines []string
-	for _, line := range t.content {
-		lines = append(lines, string(line))
+	var sb strings.Builder
+	for i, line := range t.content {
+		sb.WriteString(string(line))
+		if i != len(t.content)-1 {
+			sb.WriteByte('\n')
+		}
 	}
-	return strings.Join(lines, "\n")
+	// append final newline
+	if len(t.content) > 0 && len(t.content[len(t.content)-1]) != 0 {
+		sb.WriteByte('\n')
+	}
+	return sb.String()
 }
 
 func (t *TextEditor) SetText(s string) {
@@ -1540,8 +1541,9 @@ func (f *Frame) Render(s Screen, rect Rect) {
 
 // overlay is an container that appears over the main UI.
 type overlay struct {
-	child Element
-	align string
+	child     Element
+	align     string
+	prevFocus Element
 }
 
 func (o *overlay) MinSize() (int, int) {
@@ -1583,10 +1585,10 @@ type App struct {
 	screen  Screen
 	Root    Element // root element to render
 	focused Focusable
-	focusID map[string]Element
-	hover   Element
-	tree    *LayoutNode // reflects the view hierarchy after last render
-	done    chan struct{}
+	// focusID map[string]Element
+	hover Element
+	tree  *LayoutNode // reflects the view hierarchy after last render
+	done  chan struct{}
 
 	clickPoint Point
 	keymap     map[string]func()
@@ -1678,26 +1680,26 @@ func hitTest(n *LayoutNode, p Point) (Element, Point) {
 }
 
 // SetFocusID marks the given element with a string identifier for later focus.
-func (a *App) SetFocusID(s string, e Element) {
-	if a.focusID == nil {
-		a.focusID = make(map[string]Element)
-	}
-	a.focusID[s] = e
-}
+// func (a *App) SetFocusID(s string, e Element) {
+// 	if a.focusID == nil {
+// 		a.focusID = make(map[string]Element)
+// 	}
+// 	a.focusID[s] = e
+// }
 
 // Focus sets focus to the element identified by the given string.
 // It is intended to be used with MarkFocus, to decouple elements.
-func (a *App) FocusID(s string) {
-	if s == "" {
-		return
-	}
-	e, ok := a.focusID[s]
-	if !ok {
-		log.Printf("focus id %q not found", s)
-		return
-	}
-	a.Focus(e)
-}
+// func (a *App) FocusID(s string) {
+// 	if s == "" {
+// 		return
+// 	}
+// 	e, ok := a.focusID[s]
+// 	if !ok {
+// 		log.Printf("focus id %q not found", s)
+// 		return
+// 	}
+// 	a.Focus(e)
+// }
 
 func (a *App) Focus(e Element) {
 	log.Printf("try focus: %T", e)
@@ -1874,13 +1876,23 @@ func (a *App) Close() {
 	close(a.done)
 }
 
+// Overlay displays an overlay element over the main UI
 func (a *App) Overlay(e Element, align string) {
 	a.overlay = &overlay{
 		child: e,
 		align: align,
 	}
+	if a.focused != nil {
+		prev, _ := a.focused.(Element)
+		a.overlay.prevFocus = prev
+	}
+	a.Focus(e)
 }
 
+// CloseOverlay removes the overlay element
 func (a *App) CloseOverlay() {
+	if a.overlay != nil && a.overlay.prevFocus != nil {
+		a.Focus(a.overlay.prevFocus)
+	}
 	a.overlay = nil
 }

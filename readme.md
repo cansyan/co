@@ -2,7 +2,7 @@ A text-based user interface (TUI) package, built on top of tcell.
 
 Features:
 - component: Button, Text, TextInput, TextViewer, TextEditor, Spacer, Divider
-- container: VStack, HStack, Box, Padding
+- container: VStack, HStack, Border, Padding, Overlay
 - keyboard: focus management, event handling
   - [x] keybindings
 - mouse: hover, click, scroll
