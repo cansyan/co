@@ -1702,20 +1702,29 @@ func hitTest(n *LayoutNode, p Point) (Element, Point) {
 // }
 
 func (a *App) Focus(e Element) {
-	log.Printf("try focus: %T", e)
+	log.Printf("focus: %T -> %T", a.focused, e)
 	if e == nil {
+		if a.focused != nil {
+			a.focused.OnBlur()
+			a.screen.HideCursor()
+		}
+		a.focused = nil
+		return
+	}
+
+	if a.focused != nil && e == a.focused.(Element) {
 		return
 	}
 
 	if a.focused != nil {
 		a.focused.OnBlur()
+		a.screen.HideCursor()
 	}
 
 	e = a.resolveFocus(e)
 	fe, ok := e.(Focusable)
 	if !ok {
 		a.focused = nil
-		a.screen.HideCursor()
 	} else {
 		fe.OnFocus()
 		a.focused = fe
@@ -1891,7 +1900,7 @@ func (a *App) Overlay(e Element, align string) {
 
 // CloseOverlay removes the overlay element
 func (a *App) CloseOverlay() {
-	if a.overlay != nil && a.overlay.prevFocus != nil {
+	if a.overlay != nil {
 		a.Focus(a.overlay.prevFocus)
 	}
 	a.overlay = nil
