@@ -49,11 +49,15 @@ func main() {
 	app.Focus(root)
 	app.BindKey("Ctrl+P", root.showPalatte)
 	app.BindKey("Ctrl+S", root.saveFile)
-	app.BindKey("Esc", func() {
-		app.CloseOverlay()
-	})
 	app.BindKey("Ctrl+W", func() {
 		root.closeTab(root.active)
+	})
+	app.BindKey("Ctrl+T", func() {
+		root.appendTab("untitled", "")
+		ui.Default().Focus(root)
+	})
+	app.BindKey("Esc", func() {
+		app.CloseOverlay()
 	})
 	if err := app.Serve(root); err != nil {
 		log.Print(err)
@@ -385,11 +389,11 @@ func NewPalette() *Palette {
 		input: new(ui.TextInput),
 		list:  ui.NewListView(),
 	}
-	p.list.Selected = 0
+	p.list.Hovered = 0
 	p.input.OnChange(func() {
 		keyword := p.input.Text()
 		p.list.Clear()
-		p.list.Selected = 0
+		p.list.Hovered = 0
 		for _, cmd := range p.cmds {
 			if keyword == "" || containIgnoreCase(cmd.Name, keyword) {
 				p.list.Append(cmd.Name, func() {
@@ -442,14 +446,16 @@ func (p *Palette) HandleKey(ev *tcell.EventKey) {
 	case tcell.KeyESC:
 		ui.Default().CloseOverlay()
 	case tcell.KeyDown:
-		p.list.Selected = (p.list.Selected + 1) % len(p.list.Items)
+		p.list.Hovered = (p.list.Hovered + 1) % len(p.list.Items)
 	case tcell.KeyUp:
 		n := len(p.list.Items)
-		p.list.Selected = (p.list.Selected - 1 + n) % n
+		p.list.Hovered = (p.list.Hovered - 1 + n) % n
 	case tcell.KeyEnter:
 		if len(p.list.Items) > 0 {
-			item := p.list.Items[p.list.Selected]
-			item.Action()
+			item := p.list.Items[p.list.Hovered]
+			if item.Action != nil {
+				item.Action()
+			}
 		}
 	default:
 		p.input.HandleKey(ev)

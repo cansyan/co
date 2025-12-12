@@ -848,8 +848,8 @@ func NewListView() *ListView {
 	}
 }
 
-func (l *ListView) Append(text string, handler func()) {
-	l.Items = append(l.Items, ListItem{Label: text, Action: handler})
+func (l *ListView) Append(text string, action func()) {
+	l.Items = append(l.Items, ListItem{Label: text, Action: action})
 }
 
 func (l *ListView) Clear() {
