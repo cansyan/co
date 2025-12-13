@@ -492,6 +492,16 @@ type TextEditor struct {
 	lineNumWidth int
 	onChange     func()
 	Dirty        bool
+
+	pressed     bool
+	selectStart struct {
+		row int
+		col int
+	}
+	selectEnd struct {
+		row int
+		col int
+	}
 }
 
 func NewTextEditor() *TextEditor {
@@ -641,6 +651,8 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		return
 	}
 
+	selStartRow, selStartCol, selEndRow, selEndCol, selOK := t.selection()
+
 	var cursorX, cursorY int
 	cursorFound := false
 	// Loop over visible rows
@@ -653,8 +665,6 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		line := tabToSpace(t.content[row])
 		if row == t.row {
 			cursorFound = true
-			// log.Printf("line: %s, t.col: %d, %v", string(t.content[row]),
-			// 	t.col, indentCursor(t.content[row], t.col))
 			cursorX = contentX + indentCursor(t.content[row], t.col)
 			cursorY = rect.Y + i
 		}
@@ -665,7 +675,47 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		DrawString(s, rect.X, rect.Y+i, lineNumWidth, numStr, lineNumStyle)
 
 		// Render Line Content
-		DrawString(s, contentX, rect.Y+i, contentW, string(line), st)
+		// no selection
+		if !selOK {
+			DrawString(s, contentX, rect.Y+i, contentW, string(line), st)
+			continue
+		}
+		// with selection
+		var selStartColInline, selEndColInLine int
+		if row < selStartRow || row > selEndRow {
+			// no selection on this line
+			DrawString(s, contentX, rect.Y+i, contentW, string(line), st)
+			continue
+		}
+		if row == selStartRow {
+			selStartColInline = selStartCol
+		} else {
+			selStartColInline = 0
+		}
+		if row == selEndRow {
+			selEndColInLine = selEndCol
+		} else {
+			selEndColInLine = len(t.content[row])
+		}
+		selStartX := indentCursor(t.content[row], selStartColInline)
+		selEndX := indentCursor(t.content[row], selEndColInLine)
+		// Draw before selection
+		if selStartX > 0 {
+			DrawString(s, contentX, rect.Y+i, selStartX, string(line[:selStartX]), st)
+		}
+		// Draw selection
+		selWidth := selEndX - selStartX
+		if selWidth > 0 {
+			selStr := string(line[selStartX:selEndX])
+			selStyle := t.style.Merge(StyleSelected).Apply()
+			DrawString(s, contentX+selStartX, rect.Y+i, selWidth, selStr, selStyle)
+		}
+		// Draw after selection
+		afterStartX := selEndX
+		if afterStartX < len(line) {
+			DrawString(s, contentX+afterStartX, rect.Y+i, contentW-afterStartX,
+				string(line[afterStartX:]), st)
+		}
 	}
 
 	// Place the cursor
@@ -687,18 +737,29 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 
 	switch ev.Key() {
 	case tcell.KeyUp:
+		if _, _, _, _, ok := t.selection(); ok {
+			t.unselect()
+		}
 		if t.row > 0 {
 			t.row--
 			t.adjustCol()
 			t.adjustScroll()
 		}
 	case tcell.KeyDown:
+		if _, _, _, _, ok := t.selection(); ok {
+			t.unselect()
+		}
 		if t.row < len(t.content)-1 {
 			t.row++
 			t.adjustCol()
 			t.adjustScroll()
 		}
 	case tcell.KeyLeft:
+		if startRow, startCol, _, _, ok := t.selection(); ok {
+			t.row, t.col = startRow, startCol
+			t.unselect()
+			return
+		}
 		if t.col > 0 {
 			t.col--
 		} else if t.row > 0 {
@@ -707,6 +768,11 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.adjustScroll()
 		}
 	case tcell.KeyRight:
+		if _, _, endRow, endCol, ok := t.selection(); ok {
+			t.row, t.col = endRow, endCol
+			t.unselect()
+			return
+		}
 		if t.col < currentLineLen {
 			t.col++
 		} else if t.row < len(t.content)-1 {
@@ -715,6 +781,10 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.adjustScroll()
 		}
 	case tcell.KeyEnter:
+		if startRow, startCol, endRow, endCol, ok := t.selection(); ok {
+			t.DeleteRange(startRow, startCol, endRow, endCol)
+			t.unselect()
+		}
 		head := currentLine[:t.col]
 		tail := currentLine[t.col:]
 
@@ -727,6 +797,11 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		t.adjustScroll()
 		t.Dirty = true
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
+		if startRow, startCol, endRow, endCol, ok := t.selection(); ok {
+			t.DeleteRange(startRow, startCol, endRow, endCol)
+			t.unselect()
+			return
+		}
 		if t.col > 0 {
 			t.content[t.row] = slices.Delete(currentLine, t.col-1, t.col)
 			t.col--
@@ -741,6 +816,11 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		}
 		t.Dirty = true
 	case tcell.KeyDelete:
+		if startRow, startCol, endRow, endCol, ok := t.selection(); ok {
+			t.DeleteRange(startRow, startCol, endRow, endCol)
+			t.unselect()
+			return
+		}
 		if t.col < currentLineLen {
 			t.content[t.row] = slices.Delete(currentLine, t.col, t.col+1)
 		} else if t.row < len(t.content)-1 {
@@ -749,11 +829,19 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		}
 		t.Dirty = true
 	case tcell.KeyRune:
+		if startRow, startCol, endRow, endCol, ok := t.selection(); ok {
+			t.DeleteRange(startRow, startCol, endRow, endCol)
+			t.unselect()
+		}
 		r := ev.Rune()
 		t.content[t.row] = slices.Insert(currentLine, t.col, r)
 		t.col++
 		t.Dirty = true
 	case tcell.KeyTAB:
+		if startRow, startCol, endRow, endCol, ok := t.selection(); ok {
+			t.DeleteRange(startRow, startCol, endRow, endCol)
+			t.unselect()
+		}
 		t.content[t.row] = slices.Insert(currentLine, t.col, '\t')
 		t.col++
 		t.Dirty = true
@@ -763,7 +851,20 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		t.onChange()
 	}
 }
-func (t *TextEditor) OnMouseUp(x, y int) {}
+
+func (t *TextEditor) OnMouseUp(x, y int) {
+	t.pressed = false
+	// correct the selection range
+	if t.selectStart.row > t.selectEnd.row ||
+		(t.selectStart.row == t.selectEnd.row && t.selectStart.col > t.selectEnd.col) {
+		t.selectStart.row, t.selectEnd.row = t.selectEnd.row, t.selectStart.row
+		t.selectStart.col, t.selectEnd.col = t.selectEnd.col, t.selectStart.col
+		if t.onChange != nil {
+			t.onChange()
+		}
+	}
+}
+
 func (t *TextEditor) OnMouseDown(x, y int) {
 	// 2. Calculate the target row (relative to content)
 	targetRow := y + t.offsetY
@@ -780,6 +881,9 @@ func (t *TextEditor) OnMouseDown(x, y int) {
 	if t.row < 0 {
 		return
 	}
+	if t.onChange != nil {
+		defer t.onChange()
+	}
 
 	currentLine := t.content[t.row]
 	clickedX := max(x-t.lineNumWidth, 0)
@@ -789,9 +893,68 @@ func (t *TextEditor) OnMouseDown(x, y int) {
 
 	t.col = targetCol
 	t.adjustCol()
-	if t.onChange != nil {
-		t.onChange()
+
+	// Initialize selection
+	if !t.pressed {
+		t.pressed = true
+		t.selectStart.row = t.row
+		t.selectStart.col = t.col
+		t.selectEnd.row = t.row
+		t.selectEnd.col = t.col
 	}
+}
+
+func (t *TextEditor) OnMouseEnter() {}
+func (t *TextEditor) OnMouseLeave() {}
+func (t *TextEditor) OnMouseMove(lx, ly int) {
+	if !t.pressed {
+		return
+	}
+	if t.onChange != nil {
+		defer t.onChange()
+	}
+
+	// Drag to select
+	targetRow := ly + t.offsetY
+	if targetRow < 0 {
+		targetRow = 0
+	} else if targetRow >= len(t.content) {
+		targetRow = len(t.content) - 1
+	}
+	currentLine := t.content[targetRow]
+	clickedX := max(lx-t.lineNumWidth, 0)
+	targetCol := unIndentCursor(currentLine, clickedX)
+
+	t.selectEnd.row = targetRow
+	t.selectEnd.col = targetCol
+	t.adjustCol()
+}
+
+func (t *TextEditor) unselect() {
+	t.selectStart.row = 0
+	t.selectStart.col = 0
+	t.selectEnd.row = 0
+	t.selectEnd.col = 0
+}
+
+// selection returns the current selection range, normalized.
+// If no selection, ok is false.
+func (t *TextEditor) selection() (startRow, startCol, endRow, endCol int, ok bool) {
+	startRow = t.selectStart.row
+	startCol = t.selectStart.col
+	endRow = t.selectEnd.row
+	endCol = t.selectEnd.col
+	if startRow == endRow && startCol == endCol {
+		ok = false
+		return
+	}
+	// normalize
+	if startRow > endRow || (startRow == endRow && startCol > endCol) {
+		startRow, endRow = endRow, startRow
+		startCol, endCol = endCol, startCol
+	}
+	ok = true
+	return
 }
 
 func (t *TextEditor) OnScroll(dy int) {
@@ -818,9 +981,14 @@ func (t *TextEditor) adjustScroll() {
 	}
 }
 
-// Cursor returns the current cursor position
-func (t *TextEditor) Cursor() (row int, col int) {
-	return t.row, t.col
+// Cursor returns the current content index
+func (t *TextEditor) Debug() string {
+	s := fmt.Sprintf("Line %d, Column %d", t.row+1, t.col+1)
+	if startRow, startCol, endRow, endCol, ok := t.selection(); ok {
+		s += fmt.Sprintf(", Selecting from (%d, %d) to (%d, %d)",
+			startRow+1, startCol+1, endRow+1, endCol+1)
+	}
+	return s
 }
 
 // OnChange sets a callback function that is called whenever the text content changes.
@@ -829,6 +997,120 @@ func (t *TextEditor) OnChange(fn func()) {
 }
 
 func (t *TextEditor) Grow(weight ...int) *grower { return Grow(t, weight...) }
+
+// InsertText simulates a paste operation: it inserts a string 's' at the current
+// cursor position (t.row, t.col), correctly handling any embedded newlines ('\n').
+func (t *TextEditor) InsertText(s string) {
+	if s == "" {
+		return
+	}
+
+	lines := strings.Split(s, "\n")
+	if len(lines) == 0 {
+		return
+	}
+
+	newContent := make([][]rune, len(lines))
+	for i, line := range lines {
+		newContent[i] = []rune(line)
+	}
+
+	if t.row >= len(t.content) || t.row < 0 {
+		t.row = len(t.content) - 1
+		if t.row < 0 {
+			t.content = [][]rune{{}}
+			t.row = 0
+			t.col = 0
+		}
+	}
+
+	currentLine := t.content[t.row]
+	cursorCol := min(t.col, len(currentLine))
+
+	head := currentLine[:cursorCol]
+	tail := slices.Clone(currentLine[cursorCol:])
+
+	if len(newContent) == 1 {
+		// Single-line insert
+		t.content[t.row] = append(append(head, newContent[0]...), tail...)
+		t.col += len(newContent[0])
+	} else {
+		// Multi-line insert
+		firstLine := newContent[0]
+		t.content[t.row] = append(head, firstLine...)
+
+		lastLineIndex := len(newContent) - 1
+		newContent[lastLineIndex] = append(newContent[lastLineIndex], tail...)
+
+		middleAndLastLines := newContent[1:]
+		t.content = slices.Insert(t.content, t.row+1, middleAndLastLines...)
+
+		t.row += len(newContent) - 1
+		t.col = len(t.content[t.row]) - len(tail)
+	}
+
+	t.adjustScroll()
+	t.Dirty = true
+	if t.onChange != nil {
+		t.onChange()
+	}
+}
+
+// DeleteRange deletes a range of text defined by two cursor positions (start, end).
+// the positions are inclusive of start and exclusive of end.
+func (t *TextEditor) DeleteRange(startRow, startCol, endRow, endCol int) {
+	// 1. Normalize and clamp the selection range
+	if startRow > endRow || (startRow == endRow && startCol > endCol) {
+		startRow, endRow = endRow, startRow
+		startCol, endCol = endCol, startCol
+	}
+
+	if startRow < 0 {
+		startRow = 0
+	}
+	if endRow >= len(t.content) {
+		endRow = len(t.content) - 1
+	}
+	if startRow > endRow {
+		return
+	}
+
+	startLine := t.content[startRow]
+	endLine := t.content[endRow]
+
+	startCol = min(startCol, len(startLine))
+	endCol = min(endCol, len(endLine))
+
+	// 2. Extract Head and Tail
+	head := startLine[:startCol]
+	tail := endLine[endCol:]
+
+	// 3. Perform Merging and Deletion
+	mergedLine := append(head, tail...)
+
+	// a) Replace the starting line with the merged content
+	t.content[startRow] = mergedLine
+
+	// b) Delete intermediate lines
+	if startRow < endRow {
+		t.content = slices.Delete(t.content, startRow+1, endRow+1)
+	}
+
+	if len(t.content) == 0 {
+		t.content = [][]rune{{}}
+	}
+
+	// 4. Update Cursor State
+	t.row = startRow
+	t.col = len(head)
+
+	t.adjustCol()
+	t.adjustScroll()
+	t.Dirty = true
+	if t.onChange != nil {
+		t.onChange()
+	}
+}
 
 type ListView struct {
 	Items    []ListItem
@@ -1784,7 +2066,7 @@ func (a *App) Serve(root Element) error {
 	}
 	defer screen.Fini()
 	screen.EnableMouse()
-	screen.SetCursorStyle(tcell.CursorStyleDefault, tcell.GetColor(colorCursor))
+	screen.SetCursorStyle(tcell.CursorStyleBlinkingBar, tcell.GetColor(colorCursor))
 
 	draw := func() {
 		screen.Fill(' ', Style{}.Apply())

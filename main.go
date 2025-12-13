@@ -92,8 +92,7 @@ func (r *root) appendTab(label string, content string) {
 	editor := ui.NewTextEditor()
 	editor.SetText(content)
 	editor.OnChange(func() {
-		row, col := editor.Cursor()
-		r.status.Label = fmt.Sprintf("Line %d, Column %d", row+1, col+1)
+		r.status.Label = editor.Debug()
 	})
 	r.tabs = append(r.tabs, newTab(r, label, editor))
 	r.active = len(r.tabs) - 1

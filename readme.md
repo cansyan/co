@@ -1,4 +1,4 @@
-A text-based user interface (TUI) package, built on top of tcell.
+A text user interface (TUI) package, built on top of tcell.
 
 Features:
 - component: Button, Text, TextInput, TextViewer, TextEditor, Spacer, Divider
