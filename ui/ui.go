@@ -568,66 +568,70 @@ func (t *TextEditor) Layout(x, y, w, h int) *LayoutNode {
 
 const tabSize = 4
 
-func tabToSpace(line []rune) (newLine []rune) {
-	newLine = make([]rune, 0, len(line))
-	var total int
-	for _, r := range line {
-		if r != '\t' {
-			newLine = append(newLine, r)
-			total += runewidth.RuneWidth(r)
-			continue
-		}
+// func tabToSpace(line []rune) (newLine []rune) {
+// 	newLine = make([]rune, 0, len(line))
+// 	var total int
+// 	for _, r := range line {
+// 		if r != '\t' {
+// 			newLine = append(newLine, r)
+// 			total += runewidth.RuneWidth(r)
+// 			continue
+// 		}
 
-		spaces := tabSize - total%tabSize
-		for range spaces {
-			newLine = append(newLine, ' ')
-		}
-		total += spaces
-	}
-	return newLine
-}
+// 		spaces := tabSize - total%tabSize
+// 		for range spaces {
+// 			newLine = append(newLine, ' ')
+// 		}
+// 		total += spaces
+// 	}
+// 	return newLine
+// }
 
-// convert content index to screen cursor
-func indentCursor(line []rune, i int) int {
-	var total int
+// visualColFromLine returns the visual column (in terminal cells)
+// corresponding to rune index i in the line.
+//
+// Tabs are expanded using tabSize, and rune widths are measured with
+// runewidth.RuneWidth. If i is beyond the end of the line, the total
+// visual width of the entire line is returned.
+func visualColFromLine(line []rune, i int) int {
+	var col int
 	for j, r := range line {
 		if j == i {
-			return total
-		}
-		if r != '\t' {
-			total += runewidth.RuneWidth(r)
-			continue
+			return col
 		}
 
-		spaces := tabSize - total%tabSize
-		total += spaces
+		if r == '\t' {
+			col += tabSize - col%tabSize
+		} else {
+			col += runewidth.RuneWidth(r)
+		}
 	}
-	return total
+	return col
 }
 
-// convert clicking position to content index
-func unIndentCursor(line []rune, clickX int) int {
+// visualColToLine converts a visual column position into the
+// closest rune index in the line.
+//
+// Tabs are expanded using tabSize. When col falls inside a tab expansion,
+// the function chooses the nearest rune boundary; if the column is closer to
+// the previous column than the next, it may return the preceding rune index.
+//
+// If col is past the end of the line, len(line) is returned.
+func visualColToLine(line []rune, col int) int {
 	var total int
-	for j, r := range line {
-		if total >= clickX {
-			if (total - clickX) > tabSize/2 {
-				// optional, better location
-				return j - 1
-			}
-			return j
-		}
-		if r != '\t' {
-			total += runewidth.RuneWidth(r)
-			continue
+	for i, r := range line {
+		next := total
+		if r == '\t' {
+			next += tabSize - total%tabSize
+		} else {
+			next += runewidth.RuneWidth(r)
 		}
 
-		spaces := tabSize - total%tabSize
-		total += spaces
+		if col < next {
+			return i
+		}
+		total = next
 	}
-	if total >= clickX {
-		return len(line) - 1
-	}
-	// Handle a click past the end of the line
 	return len(line)
 }
 
@@ -652,6 +656,21 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 	}
 
 	selStartRow, selStartCol, selEndRow, selEndCol, selOK := t.selection()
+	inSelection := func(row, col int) bool {
+		if !selOK {
+			return false
+		}
+		if row < selStartRow || row > selEndRow {
+			return false
+		}
+		if row == selStartRow && col < selStartCol {
+			return false
+		}
+		if row == selEndRow && col >= selEndCol {
+			return false
+		}
+		return true
+	}
 
 	var cursorX, cursorY int
 	cursorFound := false
@@ -662,59 +681,26 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 			break
 		}
 
-		line := tabToSpace(t.content[row])
+		line := t.content[row]
 		if row == t.row {
 			cursorFound = true
-			cursorX = contentX + indentCursor(t.content[row], t.col)
+			cursorX = contentX + visualColFromLine(line, t.col)
 			cursorY = rect.Y + i
 		}
 
-		// Render Line Number (UNCONDITIONAL)
+		// draw line number
 		lineNum := row + 1
 		numStr := fmt.Sprintf("%*d ", lineNumWidth-1, lineNum)
 		DrawString(s, rect.X, rect.Y+i, lineNumWidth, numStr, lineNumStyle)
 
-		// Render Line Content
-		// no selection
-		if !selOK {
-			DrawString(s, contentX, rect.Y+i, contentW, string(line), st)
-			continue
-		}
-		// with selection
-		var selStartColInline, selEndColInLine int
-		if row < selStartRow || row > selEndRow {
-			// no selection on this line
-			DrawString(s, contentX, rect.Y+i, contentW, string(line), st)
-			continue
-		}
-		if row == selStartRow {
-			selStartColInline = selStartCol
-		} else {
-			selStartColInline = 0
-		}
-		if row == selEndRow {
-			selEndColInLine = selEndCol
-		} else {
-			selEndColInLine = len(t.content[row])
-		}
-		selStartX := indentCursor(t.content[row], selStartColInline)
-		selEndX := indentCursor(t.content[row], selEndColInLine)
-		// Draw before selection
-		if selStartX > 0 {
-			DrawString(s, contentX, rect.Y+i, selStartX, string(line[:selStartX]), st)
-		}
-		// Draw selection
-		selWidth := selEndX - selStartX
-		if selWidth > 0 {
-			selStr := string(line[selStartX:selEndX])
-			selStyle := t.style.Merge(StyleSelected).Apply()
-			DrawString(s, contentX+selStartX, rect.Y+i, selWidth, selStr, selStyle)
-		}
-		// Draw after selection
-		afterStartX := selEndX
-		if afterStartX < len(line) {
-			DrawString(s, contentX+afterStartX, rect.Y+i, contentW-afterStartX,
-				string(line[afterStartX:]), st)
+		// draw line content
+		for col, r := range line {
+			chStyle := st
+			if inSelection(row, col) {
+				chStyle = t.style.Merge(StyleSelected).Apply()
+			}
+			visualColumn := visualColFromLine(line, col)
+			s.SetContent(contentX+visualColumn, rect.Y+i, r, nil, chStyle)
 		}
 	}
 
@@ -889,7 +875,7 @@ func (t *TextEditor) OnMouseDown(x, y int) {
 	clickedX := max(x-t.lineNumWidth, 0)
 
 	// 3. Calculate the target column (rune index)
-	targetCol := unIndentCursor(currentLine, clickedX)
+	targetCol := visualColToLine(currentLine, clickedX)
 
 	t.col = targetCol
 	t.adjustCol()
@@ -923,7 +909,7 @@ func (t *TextEditor) OnMouseMove(lx, ly int) {
 	}
 	currentLine := t.content[targetRow]
 	clickedX := max(lx-t.lineNumWidth, 0)
-	targetCol := unIndentCursor(currentLine, clickedX)
+	targetCol := visualColToLine(currentLine, clickedX)
 
 	t.selectEnd.row = targetRow
 	t.selectEnd.col = targetCol
