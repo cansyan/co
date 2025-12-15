@@ -182,10 +182,19 @@ func DrawString(s Screen, x, y, w int, str string, style tcell.Style) {
 		s.SetContent(x+offset, y, r, nil, style)
 		offset += runewidth.RuneWidth(r)
 	}
-	// fill the remain space with the same background color
-	// for i := offset; i < w; i++ {
-	// 	s.SetContent(x+i, y, ' ', nil, style)
-	// }
+}
+
+// DrawRunes draws a slice of runes onto the screen at the specified position and width,
+// applying the given style. It returns the number of cells occupied.
+func DrawRunes(s Screen, x, y, w int, runes []rune, style tcell.Style) (cells int) {
+	for _, r := range runes {
+		if cells >= w {
+			break
+		}
+		s.SetContent(x+cells, y, r, nil, style)
+		cells += runewidth.RuneWidth(r)
+	}
+	return cells
 }
 
 // ---------------------------------------------------------------------
@@ -568,24 +577,17 @@ func (t *TextEditor) Layout(x, y, w, h int) *LayoutNode {
 
 const tabSize = 4
 
-// func tabToSpace(line []rune) (newLine []rune) {
-// 	newLine = make([]rune, 0, len(line))
-// 	var total int
-// 	for _, r := range line {
-// 		if r != '\t' {
-// 			newLine = append(newLine, r)
-// 			total += runewidth.RuneWidth(r)
-// 			continue
-// 		}
-
-// 		spaces := tabSize - total%tabSize
-// 		for range spaces {
-// 			newLine = append(newLine, ' ')
-// 		}
-// 		total += spaces
-// 	}
-// 	return newLine
-// }
+// visualize converts a rune to spaces if it's a tab, based on the current visual column.
+func visualize(dst []rune, r rune, visualCol int) []rune {
+	if r == '\t' {
+		spaces := tabSize - visualCol%tabSize
+		for range spaces {
+			dst = append(dst, ' ')
+		}
+		return dst
+	}
+	return append(dst, r)
+}
 
 // visualColFromLine returns the visual column (in terminal cells)
 // corresponding to rune index i in the line.
@@ -609,8 +611,7 @@ func visualColFromLine(line []rune, i int) int {
 	return col
 }
 
-// visualColToLine converts a visual column position into the
-// closest rune index in the line.
+// visualColToLine converts a visual column position into rune index in the line.
 //
 // Tabs are expanded using tabSize. When col falls inside a tab expansion,
 // the function chooses the nearest rune boundary; if the column is closer to
@@ -656,7 +657,7 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 	}
 
 	selStartRow, selStartCol, selEndRow, selEndCol, selOK := t.selection()
-	inSelection := func(row, col int) bool {
+	selected := func(row, col int) bool {
 		if !selOK {
 			return false
 		}
@@ -672,6 +673,7 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		return true
 	}
 
+	var buf [tabSize]rune
 	var cursorX, cursorY int
 	cursorFound := false
 	// Loop over visible rows
@@ -693,20 +695,36 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		numStr := fmt.Sprintf("%*d ", lineNumWidth-1, lineNum)
 		DrawString(s, rect.X, rect.Y+i, lineNumWidth, numStr, lineNumStyle)
 
+		// draw empty line indicator, if selected
+		if len(line) == 0 {
+			if selected(row, 0) {
+				chStyle := t.style.Merge(StyleSelected).Apply()
+				s.SetContent(contentX, rect.Y+i, ' ', nil, chStyle)
+			}
+			continue
+		}
+
 		// draw line content
+		var visualCol int
 		for col, r := range line {
 			chStyle := st
-			if inSelection(row, col) {
+			if selected(row, col) {
 				chStyle = t.style.Merge(StyleSelected).Apply()
 			}
-			visualColumn := visualColFromLine(line, col)
-			s.SetContent(contentX+visualColumn, rect.Y+i, r, nil, chStyle)
+			bufv := visualize(buf[:0], r, visualCol)
+			cells := DrawRunes(s, contentX+visualCol, rect.Y+i, contentW-visualCol, bufv, chStyle)
+			visualCol += cells
 		}
 	}
 
 	// Place the cursor
-	if t.focused && cursorFound {
-		s.ShowCursor(cursorX, cursorY)
+	if t.focused {
+		if cursorFound {
+			s.ShowCursor(cursorX, cursorY)
+		} else {
+			// Cursor line is not visible, hide cursor
+			s.HideCursor()
+		}
 	}
 }
 func (t *TextEditor) FocusTarget() Element { return t }
@@ -727,7 +745,9 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.unselect()
 		}
 		if t.row > 0 {
+			visualCol := visualColFromLine(t.content[t.row], t.col)
 			t.row--
+			t.col = visualColToLine(t.content[t.row], visualCol)
 			t.adjustCol()
 			t.adjustScroll()
 		}
@@ -736,7 +756,9 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.unselect()
 		}
 		if t.row < len(t.content)-1 {
+			visualCol := visualColFromLine(t.content[t.row], t.col)
 			t.row++
+			t.col = visualColToLine(t.content[t.row], visualCol)
 			t.adjustCol()
 			t.adjustScroll()
 		}
@@ -852,7 +874,7 @@ func (t *TextEditor) OnMouseUp(x, y int) {
 }
 
 func (t *TextEditor) OnMouseDown(x, y int) {
-	// 2. Calculate the target row (relative to content)
+	// Calculate the target row (relative to content)
 	targetRow := y + t.offsetY
 
 	// Clamp the target row
@@ -871,14 +893,9 @@ func (t *TextEditor) OnMouseDown(x, y int) {
 		defer t.onChange()
 	}
 
-	currentLine := t.content[t.row]
-	clickedX := max(x-t.lineNumWidth, 0)
-
-	// 3. Calculate the target column (rune index)
-	targetCol := visualColToLine(currentLine, clickedX)
-
-	t.col = targetCol
-	t.adjustCol()
+	// Calculate the target column (rune index)
+	visualCol := max(x-t.lineNumWidth, 0)
+	t.col = visualColToLine(t.content[t.row], visualCol)
 
 	// Initialize selection
 	if !t.pressed {

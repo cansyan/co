@@ -8,6 +8,7 @@ Features:
 - mouse: hover, click, scroll
   - [ ] drag
 
-To maintain simplicity:
+Design decisions:
 - redraw on every event
 - child element do not inherit the container's style
+- usability first, color theme second
