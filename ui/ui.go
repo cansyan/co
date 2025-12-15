@@ -511,6 +511,8 @@ type TextEditor struct {
 		row int
 		col int
 	}
+	// desired visual column for cursor alignment during vertical (up/down) navigation
+	desiredVisualCol int
 }
 
 func NewTextEditor() *TextEditor {
@@ -737,17 +739,26 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 	}
 
 	currentLine := t.content[t.row]
-	currentLineLen := len(currentLine)
+
+	keepVisualCol := false
+	defer func() {
+		if !keepVisualCol {
+			t.desiredVisualCol = 0
+		}
+	}()
 
 	switch ev.Key() {
 	case tcell.KeyUp:
 		if _, _, _, _, ok := t.selection(); ok {
 			t.unselect()
 		}
+		keepVisualCol = true
+		if t.desiredVisualCol == 0 {
+			t.desiredVisualCol = visualColFromLine(currentLine, t.col)
+		}
 		if t.row > 0 {
-			visualCol := visualColFromLine(t.content[t.row], t.col)
 			t.row--
-			t.col = visualColToLine(t.content[t.row], visualCol)
+			t.col = visualColToLine(t.content[t.row], t.desiredVisualCol)
 			t.adjustCol()
 			t.adjustScroll()
 		}
@@ -755,10 +766,13 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		if _, _, _, _, ok := t.selection(); ok {
 			t.unselect()
 		}
+		keepVisualCol = true
+		if t.desiredVisualCol == 0 {
+			t.desiredVisualCol = visualColFromLine(currentLine, t.col)
+		}
 		if t.row < len(t.content)-1 {
-			visualCol := visualColFromLine(t.content[t.row], t.col)
 			t.row++
-			t.col = visualColToLine(t.content[t.row], visualCol)
+			t.col = visualColToLine(t.content[t.row], t.desiredVisualCol)
 			t.adjustCol()
 			t.adjustScroll()
 		}
@@ -781,7 +795,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.unselect()
 			return
 		}
-		if t.col < currentLineLen {
+		if t.col < len(currentLine) {
 			t.col++
 		} else if t.row < len(t.content)-1 {
 			t.row++
@@ -829,7 +843,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.unselect()
 			return
 		}
-		if t.col < currentLineLen {
+		if t.col < len(currentLine) {
 			t.content[t.row] = slices.Delete(currentLine, t.col, t.col+1)
 		} else if t.row < len(t.content)-1 {
 			t.content[t.row] = append(currentLine, t.content[t.row+1]...)
