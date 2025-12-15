@@ -4,11 +4,13 @@ package ui
 
 import (
 	"fmt"
+	"go/token"
 	"log"
 	"math"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
@@ -708,13 +710,17 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 
 		// draw line content
 		var visualCol int
+		// syntax highlight
+		tokenStyles := makeTokenStyle(line)
 		for col, r := range line {
-			chStyle := st
+			charStyle := tokenStyles[col]
 			if selected(row, col) {
-				chStyle = t.style.Merge(StyleSelected).Apply()
+				charStyle = charStyle.Merge(StyleSelected)
 			}
+			finalStyle := t.style.Merge(charStyle).Apply()
+
 			bufv := visualize(buf[:0], r, visualCol)
-			cells := DrawRunes(s, contentX+visualCol, rect.Y+i, contentW-visualCol, bufv, chStyle)
+			cells := DrawRunes(s, contentX+visualCol, rect.Y+i, contentW-visualCol, bufv, finalStyle)
 			visualCol += cells
 		}
 	}
@@ -2203,4 +2209,98 @@ func (a *App) CloseOverlay() {
 		a.Focus(a.overlay.prevFocus)
 	}
 	a.overlay = nil
+}
+
+// State 定義解析器當前狀態
+type State int
+
+const (
+	StateDefault     State = iota // 預設狀態 (普通程式碼)
+	StateInString                 // 在雙引號字串內
+	StateInRawString              // 在反引號字串內
+	StateInComment                // 在單行註釋內 (我們假設只有單行註釋 `//`)
+)
+
+var (
+	StyleKeyword = Style{Foreground: "purple", Italic: true}
+	StyleString  = Style{Foreground: "darkred"}
+	StyleComment = Style{Foreground: "silver"}
+	StyleDefault = Style{} // 黑色/預設
+)
+
+func makeTokenStyle(line []rune) []Style {
+	styles := make([]Style, len(line))
+	state := StateDefault
+
+	for i := 0; i < len(line); {
+		r := line[i]
+		switch state {
+		case StateDefault:
+			switch r {
+			case '"':
+				state = StateInString
+				styles[i] = StyleString
+			case '`':
+				state = StateInRawString
+				styles[i] = StyleString
+			case '/':
+				// 檢查是否為單行註釋 "//"
+				if i+1 < len(line) && line[i+1] == '/' {
+					state = StateInComment
+					styles[i] = StyleComment
+				} else {
+					// 如果不是註釋，則檢查關鍵字 (稍後處理)
+					styles[i] = StyleDefault
+				}
+			default:
+				// 檢查是否為關鍵字
+				if isAlphaNumeric(r) {
+					// 從當前位置開始，找到完整的單詞
+					word := getWord(line, i)
+					if ok := token.IsKeyword(word); ok {
+						// 這是關鍵字，應用樣式直到單詞結束
+						for j := range len(word) {
+							styles[i+j] = StyleKeyword
+						}
+						i += len(word) // 跳過已處理的單詞
+						continue
+					}
+				}
+				styles[i] = StyleDefault
+			}
+
+		case StateInString:
+			styles[i] = StyleString
+			if r == '"' {
+				// TODO: 考慮跳脫字元 \" 的情況
+				state = StateDefault
+			}
+		case StateInRawString:
+			styles[i] = StyleString
+			if r == '`' {
+				state = StateDefault
+			}
+		case StateInComment:
+			// 行結束前，所有內容都是註釋
+			styles[i] = StyleComment
+			// (註釋狀態會一直持續到行尾，不需要在這裡重設狀態)
+		}
+		i++
+	}
+
+	return styles
+}
+
+// isAlphaNumeric 檢查字元是否為字母、數字或底線
+func isAlphaNumeric(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+}
+
+// getWord 從指定位置開始提取完整的單詞
+func getWord(line []rune, start int) string {
+	end := start
+	for end < len(line) && isAlphaNumeric(line[end]) {
+		end++
+	}
+	return string(line[start:end])
 }
