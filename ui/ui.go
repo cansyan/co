@@ -710,10 +710,9 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 
 		// draw line content
 		var visualCol int
-		// syntax highlight
-		tokenStyles := makeTokenStyle(line)
+		spans := parseHighlight(line)
 		for col, r := range line {
-			charStyle := tokenStyles[col]
+			charStyle := hlStyleForCol(spans, col)
 			if selected(row, col) {
 				charStyle = charStyle.Merge(StyleSelected)
 			}
@@ -2225,71 +2224,8 @@ var (
 	StyleKeyword = Style{Foreground: "purple", Italic: true}
 	StyleString  = Style{Foreground: "darkred"}
 	StyleComment = Style{Foreground: "silver"}
-	StyleDefault = Style{} // 黑色/預設
+	StyleDefault = Style{}
 )
-
-func makeTokenStyle(line []rune) []Style {
-	styles := make([]Style, len(line))
-	state := StateDefault
-
-	for i := 0; i < len(line); {
-		r := line[i]
-		switch state {
-		case StateDefault:
-			switch r {
-			case '"':
-				state = StateInString
-				styles[i] = StyleString
-			case '`':
-				state = StateInRawString
-				styles[i] = StyleString
-			case '/':
-				// 檢查是否為單行註釋 "//"
-				if i+1 < len(line) && line[i+1] == '/' {
-					state = StateInComment
-					styles[i] = StyleComment
-				} else {
-					// 如果不是註釋，則檢查關鍵字 (稍後處理)
-					styles[i] = StyleDefault
-				}
-			default:
-				// 檢查是否為關鍵字
-				if isAlphaNumeric(r) {
-					// 從當前位置開始，找到完整的單詞
-					word := getWord(line, i)
-					if ok := token.IsKeyword(word); ok {
-						// 這是關鍵字，應用樣式直到單詞結束
-						for j := range len(word) {
-							styles[i+j] = StyleKeyword
-						}
-						i += len(word) // 跳過已處理的單詞
-						continue
-					}
-				}
-				styles[i] = StyleDefault
-			}
-
-		case StateInString:
-			styles[i] = StyleString
-			if r == '"' {
-				// TODO: 考慮跳脫字元 \" 的情況
-				state = StateDefault
-			}
-		case StateInRawString:
-			styles[i] = StyleString
-			if r == '`' {
-				state = StateDefault
-			}
-		case StateInComment:
-			// 行結束前，所有內容都是註釋
-			styles[i] = StyleComment
-			// (註釋狀態會一直持續到行尾，不需要在這裡重設狀態)
-		}
-		i++
-	}
-
-	return styles
-}
 
 // isAlphaNumeric 檢查字元是否為字母、數字或底線
 func isAlphaNumeric(r rune) bool {
@@ -2303,4 +2239,110 @@ func getWord(line []rune, start int) string {
 		end++
 	}
 	return string(line[start:end])
+}
+
+type HighlightSpan struct {
+	Start int
+	End   int // exclusive
+	Kind  HighlightKind
+}
+
+type HighlightKind int
+
+const (
+	HLKeyword HighlightKind = iota
+	HLString
+	HLComment
+)
+
+var HighlightStyle = map[HighlightKind]Style{
+	HLKeyword: StyleKeyword,
+	HLString:  StyleString,
+	HLComment: StyleComment,
+}
+
+func hlStyleForCol(spans []HighlightSpan, i int) Style {
+	for _, span := range spans {
+		if i < span.Start {
+			break
+		}
+		if i < span.End {
+			if st, ok := HighlightStyle[span.Kind]; ok {
+				return st
+			}
+			break
+		}
+	}
+	return StyleDefault
+}
+
+// parseHighlight parse a line of code and return highlight spans.
+// This is a simple state machine-based parser for demonstration purposes.
+func parseHighlight(line []rune) []HighlightSpan {
+	var spans []HighlightSpan
+	state := StateDefault
+	start := 0
+
+	for i := 0; i < len(line); {
+		r := line[i]
+		switch state {
+		case StateDefault:
+			switch r {
+			case '"':
+				state = StateInString
+				start = i
+			case '`':
+				state = StateInRawString
+				start = i
+			case '/':
+				if i+1 < len(line) && line[i+1] == '/' {
+					state = StateInComment
+					start = i
+				}
+			default:
+				if isAlphaNumeric(r) {
+					word := getWord(line, i)
+					if ok := token.IsKeyword(word); ok {
+						spans = append(spans, HighlightSpan{
+							Start: i,
+							End:   i + len(word),
+							Kind:  HLKeyword,
+						})
+						i += len(word)
+						continue
+					}
+				}
+			}
+
+		case StateInString:
+			if r == '"' {
+				spans = append(spans, HighlightSpan{
+					Start: start,
+					End:   i + 1,
+					Kind:  HLString,
+				})
+				state = StateDefault
+			}
+		case StateInRawString:
+			if r == '`' {
+				spans = append(spans, HighlightSpan{
+					Start: start,
+					End:   i + 1,
+					Kind:  HLString,
+				})
+				state = StateDefault
+			}
+		case StateInComment:
+			spans = append(spans, HighlightSpan{
+				Start: start,
+				End:   len(line),
+				Kind:  HLComment,
+			})
+			i = len(line)
+			continue
+		}
+		i++
+	}
+
+	return spans
 }
