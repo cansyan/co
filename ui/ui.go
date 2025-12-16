@@ -709,17 +709,19 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		}
 
 		// draw line content
+		spans := highlightGo(line)
+		styles := expandStyles(spans, t.style, len(line))
+
 		var visualCol int
-		spans := parseHighlight(line)
 		for col, r := range line {
-			charStyle := hlStyleForCol(spans, col)
+			charStyle := styles[col]
 			if selected(row, col) {
 				charStyle = charStyle.Merge(StyleSelected)
 			}
-			finalStyle := t.style.Merge(charStyle).Apply()
 
 			bufv := visualize(buf[:0], r, visualCol)
-			cells := DrawRunes(s, contentX+visualCol, rect.Y+i, contentW-visualCol, bufv, finalStyle)
+			cells := DrawRunes(s, contentX+visualCol, rect.Y+i,
+				contentW-visualCol, bufv, charStyle.Apply())
 			visualCol += cells
 		}
 	}
@@ -2210,21 +2212,17 @@ func (a *App) CloseOverlay() {
 	a.overlay = nil
 }
 
-// State 定義解析器當前狀態
-type State int
-
 const (
-	StateDefault     State = iota // 預設狀態 (普通程式碼)
-	StateInString                 // 在雙引號字串內
-	StateInRawString              // 在反引號字串內
-	StateInComment                // 在單行註釋內 (我們假設只有單行註釋 `//`)
+	StateDefault     = iota // 預設狀態 (普通程式碼)
+	StateInString           // 在雙引號字串內
+	StateInRawString        // 在反引號字串內
+	StateInComment          // 在單行註釋內 (我們假設只有單行註釋 `//`)
 )
 
 var (
 	StyleKeyword = Style{Foreground: "purple", Italic: true}
 	StyleString  = Style{Foreground: "darkred"}
 	StyleComment = Style{Foreground: "silver"}
-	StyleDefault = Style{}
 )
 
 // isAlphaNumeric 檢查字元是否為字母、數字或底線
@@ -2232,54 +2230,17 @@ func isAlphaNumeric(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }
 
-// getWord 從指定位置開始提取完整的單詞
-func getWord(line []rune, start int) string {
-	end := start
-	for end < len(line) && isAlphaNumeric(line[end]) {
-		end++
-	}
-	return string(line[start:end])
-}
-
-type HighlightSpan struct {
+type StyleSpan struct {
 	Start int
 	End   int // exclusive
-	Kind  HighlightKind
+	Style Style
 }
 
-type HighlightKind int
+// TODO: when it is necessary to support other language,
+// function highlightGo can be extend to a interface Highlighter
 
-const (
-	HLKeyword HighlightKind = iota
-	HLString
-	HLComment
-)
-
-var HighlightStyle = map[HighlightKind]Style{
-	HLKeyword: StyleKeyword,
-	HLString:  StyleString,
-	HLComment: StyleComment,
-}
-
-func hlStyleForCol(spans []HighlightSpan, i int) Style {
-	for _, span := range spans {
-		if i < span.Start {
-			break
-		}
-		if i < span.End {
-			if st, ok := HighlightStyle[span.Kind]; ok {
-				return st
-			}
-			break
-		}
-	}
-	return StyleDefault
-}
-
-// parseHighlight parse a line of code and return highlight spans.
-// This is a simple state machine-based parser for demonstration purposes.
-func parseHighlight(line []rune) []HighlightSpan {
-	var spans []HighlightSpan
+func highlightGo(line []rune) []StyleSpan {
+	var spans []StyleSpan
 	state := StateDefault
 	start := 0
 
@@ -2301,42 +2262,47 @@ func parseHighlight(line []rune) []HighlightSpan {
 				}
 			default:
 				if isAlphaNumeric(r) {
-					word := getWord(line, i)
-					if ok := token.IsKeyword(word); ok {
-						spans = append(spans, HighlightSpan{
-							Start: i,
-							End:   i + len(word),
-							Kind:  HLKeyword,
-						})
-						i += len(word)
-						continue
+					j := i + 1
+					// Extract word
+					for j < len(line) && isAlphaNumeric(line[j]) {
+						j++
 					}
+					word := string(line[i:j])
+					if token.IsKeyword(word) {
+						spans = append(spans, StyleSpan{
+							Start: i,
+							End:   j,
+							Style: StyleKeyword,
+						})
+					}
+					i = j // skip over the keyword in the loop
+					continue
 				}
 			}
 
 		case StateInString:
 			if r == '"' {
-				spans = append(spans, HighlightSpan{
+				spans = append(spans, StyleSpan{
 					Start: start,
 					End:   i + 1,
-					Kind:  HLString,
+					Style: StyleString,
 				})
 				state = StateDefault
 			}
 		case StateInRawString:
 			if r == '`' {
-				spans = append(spans, HighlightSpan{
+				spans = append(spans, StyleSpan{
 					Start: start,
 					End:   i + 1,
-					Kind:  HLString,
+					Style: StyleString,
 				})
 				state = StateDefault
 			}
 		case StateInComment:
-			spans = append(spans, HighlightSpan{
+			spans = append(spans, StyleSpan{
 				Start: start,
 				End:   len(line),
-				Kind:  HLComment,
+				Style: StyleComment,
 			})
 			i = len(line)
 			continue
@@ -2345,4 +2311,17 @@ func parseHighlight(line []rune) []HighlightSpan {
 	}
 
 	return spans
+}
+
+func expandStyles(spans []StyleSpan, base Style, n int) []Style {
+	styles := make([]Style, n)
+	for i := range styles {
+		styles[i] = base
+	}
+	for _, sp := range spans {
+		for i := sp.Start; i < sp.End && i < n; i++ {
+			styles[i] = styles[i].Merge(sp.Style)
+		}
+	}
+	return styles
 }
