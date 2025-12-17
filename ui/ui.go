@@ -16,45 +16,6 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-func init() {
-	SetLightTheme()
-}
-
-var (
-	colorFG     string
-	colorBG     string
-	colorCursor = "lightpink"
-	colorBorder = "#D0D0D0"
-
-	StyleHover    Style
-	StyleSelected Style
-
-	// light:
-	// #FAFAFB background, or #F7F7F8
-	// #F2F2F4 hover
-	// #DCEAF7 selected
-	// #D0D0D0 border, divider
-
-	// dark:
-	// #1E1E20 background
-	// #2A2A2E hover
-	// #DCEAF7 selected
-)
-
-func SetLightTheme() {
-	colorFG = "black"
-	colorBG = "#FAFAFB"
-	StyleHover = Style{Background: "#F2F2F4"}
-	StyleSelected = Style{Background: "#DCEAF7", Foreground: "black"}
-}
-
-func SetDarkTheme() {
-	colorFG = "white"
-	colorBG = "#1E1E20"
-	StyleHover = Style{Background: "#2A2A2E"}
-	StyleSelected = Style{Background: "#DCEAF7", Foreground: "black"}
-}
-
 type Screen = tcell.Screen
 
 // Element is the interface implemented by all UI elements.
@@ -141,12 +102,12 @@ func (s Style) Apply() tcell.Style {
 	if s.Foreground != "" {
 		st = st.Foreground(tcell.GetColor(s.Foreground))
 	} else {
-		st = st.Foreground(tcell.GetColor(colorFG))
+		st = st.Foreground(tcell.GetColor(Theme.Foreground))
 	}
 	if s.Background != "" {
 		st = st.Background(tcell.GetColor(s.Background))
 	} else {
-		st = st.Background(tcell.GetColor(colorBG))
+		st = st.Background(tcell.GetColor(Theme.Background))
 	}
 	if s.Bold {
 		st = st.Bold(true)
@@ -256,7 +217,7 @@ func (b *Button) Layout(x, y, w, h int) *LayoutNode {
 func (b *Button) Render(s Screen, rect Rect) {
 	st := b.Style
 	if b.hovered {
-		st = st.Merge(StyleHover)
+		st = st.Merge(Style{Background: Theme.Hover})
 	}
 	if b.pressed {
 		st.Background = "gray"
@@ -641,7 +602,6 @@ func visualColToLine(line []rune, col int) int {
 }
 
 func (t *TextEditor) Render(s Screen, rect Rect) {
-	st := t.style.Apply()
 	t.viewH = rect.H
 
 	// Dynamic width calculation (for proper right-justification)
@@ -650,9 +610,9 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		numLines = 1
 	}
 	actualNumDigits := len(strconv.Itoa(numLines))
-	lineNumWidth := actualNumDigits + 2
+	lineNumWidth := actualNumDigits + 3
 	t.lineNumWidth = lineNumWidth
-	lineNumStyle := st.Reverse(false).Foreground(tcell.ColorSilver)
+	lineNumStyle := Style{Foreground: "silver"}
 
 	contentX := rect.X + lineNumWidth
 	contentW := rect.W - lineNumWidth
@@ -688,21 +648,23 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		}
 
 		line := t.content[row]
+		lnStyle := lineNumStyle
 		if row == t.row {
 			cursorFound = true
 			cursorX = contentX + visualColFromLine(line, t.col)
 			cursorY = rect.Y + i
+			lnStyle.Background = Theme.Hover
 		}
 
 		// draw line number
 		lineNum := row + 1
-		numStr := fmt.Sprintf("%*d ", lineNumWidth-1, lineNum)
-		DrawString(s, rect.X, rect.Y+i, lineNumWidth, numStr, lineNumStyle)
+		numStr := fmt.Sprintf("%*d  ", lineNumWidth-2, lineNum)
+		DrawString(s, rect.X, rect.Y+i, lineNumWidth-1, numStr, lnStyle.Apply())
 
 		// draw empty line indicator, if selected
 		if len(line) == 0 {
 			if selected(row, 0) {
-				chStyle := t.style.Merge(StyleSelected).Apply()
+				chStyle := t.style.Merge(Style{Background: Theme.Selection}).Apply()
 				s.SetContent(contentX, rect.Y+i, ' ', nil, chStyle)
 			}
 			continue
@@ -716,7 +678,7 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		for col, r := range line {
 			charStyle := styles[col]
 			if selected(row, col) {
-				charStyle = charStyle.Merge(StyleSelected)
+				charStyle.Background = Theme.Selection
 			}
 
 			bufv := visualize(buf[:0], r, visualCol)
@@ -1190,9 +1152,9 @@ func (l *ListView) Render(s Screen, rect Rect) {
 		var st Style
 		switch i {
 		case l.Selected:
-			st = StyleSelected
+			st.Background = Theme.Selection
 		case l.Hovered:
-			st = StyleHover
+			st.Background = Theme.Hover
 		}
 
 		label := fmt.Sprintf(" %s ", item.Label)
@@ -1266,14 +1228,14 @@ func (ti *TabItem) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 
-var StyleActiveTab = Style{Underline: true}
+// var StyleActiveTab = Style{Underline: true}
 
 func (ti *TabItem) Render(s Screen, rect Rect) {
 	var st Style
 	if ti == ti.t.items[ti.t.active] {
-		st = StyleActiveTab
+		st.Underline = true
 	} else if ti.hovered {
-		st = StyleHover
+		st.Background = Theme.Hover
 	}
 	DrawString(s, rect.X, rect.Y, rect.W, ti.label, st.Apply())
 }
@@ -1383,14 +1345,14 @@ func (d *divider) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 func (d *divider) Render(s Screen, rect Rect) {
-	style := Style{Foreground: colorBorder}
+	style := Style{Foreground: Theme.Border}
 	if !d.vertical {
 		for i := range rect.W {
-			s.SetContent(rect.X+i, rect.Y+rect.H-1, hChar, nil, style.Apply())
+			s.SetContent(rect.X+i, rect.Y+rect.H-1, hLine, nil, style.Apply())
 		}
 	} else {
 		for i := range rect.H {
-			s.SetContent(rect.X+rect.W-1, rect.Y+i, vChar, nil, style.Apply())
+			s.SetContent(rect.X+rect.W-1, rect.Y+i, vLine, nil, style.Apply())
 		}
 	}
 }
@@ -1760,10 +1722,11 @@ func (b *Border) Layout(x, y, w, h int) *LayoutNode {
 
 // Box Drawing charaters
 const (
-	hChar = '─'
-	vChar = '│'
+	hLine = '─'
+	vLine = '│'
 	// round angle corner, alternative right angle ┌ ┐ └ ┘
-	cTL, cTR, cBL, cBR = '╭', '╮', '╰', '╯'
+	cornerTopLeft, cornerTopRight = '╭', '╮'
+	cornerBotLeft, cornerBotRight = '╰', '╯'
 )
 
 func (b *Border) Render(s Screen, rect Rect) {
@@ -1772,23 +1735,23 @@ func (b *Border) Render(s Screen, rect Rect) {
 		return
 	}
 
-	style := Style{Foreground: colorBorder}
+	style := Style{Foreground: Theme.Border}
 	st := b.Style.Merge(style).Apply()
 	// Top and bottom borders
-	for i := 0; i < rect.W; i++ {
-		s.SetContent(rect.X+i, rect.Y, hChar, nil, st)
-		s.SetContent(rect.X+i, rect.Y+rect.H-1, hChar, nil, st)
+	for i := range rect.W {
+		s.SetContent(rect.X+i, rect.Y, hLine, nil, st)
+		s.SetContent(rect.X+i, rect.Y+rect.H-1, hLine, nil, st)
 	}
 	// Left and right borders
-	for i := 0; i < rect.H; i++ {
-		s.SetContent(rect.X, rect.Y+i, vChar, nil, st)
-		s.SetContent(rect.X+rect.W-1, rect.Y+i, vChar, nil, st)
+	for i := range rect.H {
+		s.SetContent(rect.X, rect.Y+i, vLine, nil, st)
+		s.SetContent(rect.X+rect.W-1, rect.Y+i, vLine, nil, st)
 	}
 	// Corners
-	s.SetContent(rect.X, rect.Y, cTL, nil, st)
-	s.SetContent(rect.X+rect.W-1, rect.Y, cTR, nil, st)
-	s.SetContent(rect.X, rect.Y+rect.H-1, cBL, nil, st)
-	s.SetContent(rect.X+rect.W-1, rect.Y+rect.H-1, cBR, nil, st)
+	s.SetContent(rect.X, rect.Y, cornerTopLeft, nil, st)
+	s.SetContent(rect.X+rect.W-1, rect.Y, cornerTopRight, nil, st)
+	s.SetContent(rect.X, rect.Y+rect.H-1, cornerBotLeft, nil, st)
+	s.SetContent(rect.X+rect.W-1, rect.Y+rect.H-1, cornerBotRight, nil, st)
 }
 
 func (b *Border) Foreground(color string) *Border {
@@ -2090,9 +2053,9 @@ func (a *App) Serve(root Element) error {
 	}
 	defer screen.Fini()
 	screen.EnableMouse()
-	screen.SetCursorStyle(tcell.CursorStyleBlinkingBar, tcell.GetColor(colorCursor))
 
 	draw := func() {
+		screen.SetCursorStyle(tcell.CursorStyleBlinkingBar, tcell.GetColor(Theme.Cursor))
 		screen.Fill(' ', Style{}.Apply())
 		a.Render()
 		screen.Show()
@@ -2212,24 +2175,76 @@ func (a *App) CloseOverlay() {
 	a.overlay = nil
 }
 
-const (
-	StateDefault     = iota // 預設狀態 (普通程式碼)
-	StateInString           // 在雙引號字串內
-	StateInRawString        // 在反引號字串內
-	StateInComment          // 在單行註釋內 (我們假設只有單行註釋 `//`)
-)
+var Theme ColorTheme
 
-var (
-	StyleKeyword  = Style{Foreground: "darkgreen", Italic: true}
-	StyleString   = Style{Foreground: "darkred"}
-	StyleComment  = Style{Foreground: "silver"}
-	StyleFunction = Style{Foreground: "#51B3B3"}
-)
-
-// isAlphaNumeric 檢查字元是否為字母、數字或底線
-func isAlphaNumeric(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+func init() {
+	SetDarkTheme()
 }
+
+type ColorTheme struct {
+	Foreground string
+	Background string
+	Cursor     string
+	Border     string
+	Hover      string
+	Selection  string
+	Syntax     SyntaxColor
+}
+
+type SyntaxColor struct {
+	Keyword      Style
+	String       Style
+	Comment      Style
+	Number       Style
+	FunctionName Style
+	FunctionCall Style
+}
+
+func SetLightTheme() {
+	Theme = ColorTheme{
+		Foreground: "black",
+		Background: "#FAFAFB",
+		Cursor:     "orange",
+		Border:     "#D0D0D0",
+		Hover:      "#F2F2F4",
+		Selection:  "#DCEAF7",
+		Syntax: SyntaxColor{
+			Keyword:      Style{Foreground: "#D49ECF", Italic: true},
+			String:       Style{Foreground: "#A0D28A"},
+			Comment:      Style{Foreground: "#9DA3B1"},
+			Number:       Style{Foreground: "orange"},
+			FunctionName: Style{Foreground: "#5BB4B5"},
+			FunctionCall: Style{Foreground: "#6497CD"},
+		},
+	}
+}
+
+func SetDarkTheme() {
+	// similar to Sublime Text's Mariana
+	Theme = ColorTheme{
+		Foreground: "white",
+		Background: "#303841",
+		Cursor:     "orange",
+		Border:     "#D0D0D0",
+		Hover:      "#4D5865",
+		Selection:  "#4D5865",
+		Syntax: SyntaxColor{
+			Keyword:      Style{Foreground: "#D49ECF", Italic: true},
+			String:       Style{Foreground: "#A0D28A"},
+			Comment:      Style{Foreground: "#9DA3B1"},
+			Number:       Style{Foreground: "orange"},
+			FunctionName: Style{Foreground: "#5BB4B5"},
+			FunctionCall: Style{Foreground: "#6497CD"},
+		},
+	}
+}
+
+const (
+	stateDefault     = iota // 預設狀態 (普通程式碼)
+	stateInString           // 在雙引號字串內
+	stateInRawString        // 在反引號字串內
+	stateInComment          // 在單行註釋內 (我們假設只有單行註釋 `//`)
+)
 
 type StyleSpan struct {
 	Start int
@@ -2237,28 +2252,25 @@ type StyleSpan struct {
 	Style Style
 }
 
-// when it is necessary to support other language,
-// function highlightGo can be extend to a interface Highlighter
-
 func highlightGo(line []rune) []StyleSpan {
 	var spans []StyleSpan
-	state := StateDefault
+	state := stateDefault
 	start := 0
 
 	for i := 0; i < len(line); {
 		r := line[i]
 		switch state {
-		case StateDefault:
+		case stateDefault:
 			switch r {
 			case '"':
-				state = StateInString
+				state = stateInString
 				start = i
 			case '`':
-				state = StateInRawString
+				state = stateInRawString
 				start = i
 			case '/':
 				if i+1 < len(line) && line[i+1] == '/' {
-					state = StateInComment
+					state = stateInComment
 					start = i
 				}
 			default:
@@ -2269,51 +2281,81 @@ func highlightGo(line []rune) []StyleSpan {
 						j++
 					}
 					word := string(line[i:j])
+
 					if token.IsKeyword(word) {
 						spans = append(spans, StyleSpan{
 							Start: i,
 							End:   j,
-							Style: StyleKeyword,
+							Style: Theme.Syntax.Keyword,
 						})
+						i = j // skip over the keyword in the loop
+						continue
 					}
-					// check out function calling, exclude function definition and struct method
-					if j < len(line) && line[j] == '(' &&
-						i-1 >= 0 && line[i-1] != '.' &&
-						!strings.Contains(string(line[:i]), "func") {
+
+					// function
+					if j < len(line) && line[j] == '(' {
+						if i-5 >= 0 && string(line[i-5:i]) == "func " {
+							spans = append(spans, StyleSpan{
+								Start: i,
+								End:   j,
+								Style: Theme.Syntax.FunctionName,
+							})
+						} else {
+							spans = append(spans, StyleSpan{
+								Start: i,
+								End:   j,
+								Style: Theme.Syntax.FunctionCall,
+							})
+						}
+						i = j
+						continue
+					}
+
+					isNumber := true
+					for _, c := range word {
+						if !unicode.IsDigit(c) {
+							isNumber = false
+							break
+						}
+					}
+					if isNumber {
 						spans = append(spans, StyleSpan{
 							Start: i,
 							End:   j,
-							Style: StyleFunction,
+							Style: Theme.Syntax.Number,
 						})
+						i = j
+						continue
 					}
+
 					i = j // skip over the keyword in the loop
 					continue
 				}
 			}
 
-		case StateInString:
+		case stateInString:
 			if r == '"' {
 				spans = append(spans, StyleSpan{
 					Start: start,
 					End:   i + 1,
-					Style: StyleString,
+					Style: Theme.Syntax.String,
 				})
-				state = StateDefault
+				state = stateDefault
 			}
-		case StateInRawString:
+		case stateInRawString:
 			if r == '`' {
 				spans = append(spans, StyleSpan{
 					Start: start,
 					End:   i + 1,
-					Style: StyleString,
+					Style: Theme.Syntax.String,
 				})
-				state = StateDefault
+				state = stateDefault
 			}
-		case StateInComment:
+		case stateInComment:
 			spans = append(spans, StyleSpan{
 				Start: start,
 				End:   len(line),
-				Style: StyleComment,
+				Style: Theme.Syntax.Comment,
 			})
 			i = len(line)
 			continue
@@ -2322,6 +2364,11 @@ func highlightGo(line []rune) []StyleSpan {
 	}
 
 	return spans
+}
+
+// isAlphaNumeric 檢查字元是否為字母、數字或底線
+func isAlphaNumeric(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }
 
 func expandStyles(spans []StyleSpan, base Style, n int) []Style {

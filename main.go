@@ -15,13 +15,11 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-var dark = flag.Bool("dark", false, "use dark theme")
+var light = flag.Bool("light", false, "use light color theme")
 
 func main() {
 	flag.Parse()
-	if *dark {
-		ui.SetDarkTheme()
-	} else {
+	if *light {
 		ui.SetLightTheme()
 	}
 
@@ -337,9 +335,11 @@ func (t *tab) Layout(x, y, w, h int) *ui.LayoutNode {
 func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 	var st ui.Style
 	if t == t.root.tabs[t.root.active] {
-		st = t.style.Merge(ui.StyleActiveTab)
+		st.Underline = true
+		st = t.style.Merge(st)
 	} else if t.hovered {
-		st = t.style.Merge(ui.StyleHover)
+		st.Background = ui.Theme.Hover
+		st = t.style.Merge(st)
 	}
 
 	format := " %s"
@@ -491,7 +491,7 @@ func NewSaveAs(action func(string)) *SaveAs {
 		}
 		ui.Default().CloseOverlay()
 	})
-	btnOK.Style = ui.StyleSelected
+	btnOK.Style.Background = ui.Theme.Selection
 
 	view := ui.NewBorder(
 		ui.VStack(
