@@ -164,12 +164,86 @@ func DrawRunes(s Screen, x, y, w int, runes []rune, style tcell.Style) (cells in
 // components
 // ---------------------------------------------------------------------
 
+// Modifier is a chainable transformation
+// that wraps an element with additional behavior.
+type Modifier struct {
+	Child Element
+}
+
+func (m *Modifier) MinSize() (int, int) { return m.Child.MinSize() }
+func (m *Modifier) Layout(x, y, w, h int) *LayoutNode {
+	return m.Child.Layout(x, y, w, h)
+}
+func (m *Modifier) Render(s Screen, rect Rect) {
+	m.Child.Render(s, rect)
+}
+
+// Grow expands the element to occupy the remaining available space.
+func (m *Modifier) Grow(weight ...int) *Modifier {
+	m.Child = Grow(m.Child, weight...)
+	return m
+}
+
+// Border draws border around the element.
+func (m *Modifier) Border(color ...string) *Modifier {
+	b := NewBorder(m.Child)
+	if len(color) > 0 {
+		b.Foreground(color[0])
+	}
+	m.Child = b
+	return m
+}
+
+// Frame forces the element to fill the frame.
+// W and H can be 0, means min size.
+func (m *Modifier) Frame(w, h int) *Modifier {
+	m.Child = &Frame{W: w, H: h, Child: m.Child}
+	return m
+}
+
+// Padding adds padding around the element.
+func (m *Modifier) Padding(p int) *Modifier {
+	m.Child = &padding{
+		child:  m.Child,
+		top:    p,
+		right:  p,
+		bottom: p,
+		left:   p,
+	}
+	return m
+}
+
+// PaddingH adds horizontal padding around the element.
+func (m *Modifier) PaddingH(p int) *Modifier {
+	m.Child = &padding{
+		child: m.Child,
+		right: p,
+		left:  p,
+	}
+	return m
+}
+
+// PaddingV adds vertical padding around the element.
+func (m *Modifier) PaddingV(p int) *Modifier {
+	m.Child = &padding{
+		child:  m.Child,
+		top:    p,
+		bottom: p,
+	}
+	return m
+}
+
 type Text struct {
+	*Modifier
 	Style
 	Label string
 }
 
-func NewText(c string) *Text { return &Text{Label: c} }
+func NewText(c string) *Text {
+	t := &Text{Label: c}
+	t.Modifier = &Modifier{Child: t}
+	return t
+}
 
 func (t *Text) Bold() *Text      { t.Style.Bold = true; return t }
 func (t *Text) Italic() *Text    { t.Style.Italic = true; return t }
@@ -195,6 +269,7 @@ func (t *Text) Render(s Screen, rect Rect) {
 }
 
 type Button struct {
+	*Modifier
 	Style
 	label   string
 	onClick func()
@@ -204,7 +279,9 @@ type Button struct {
 
 // NewButton creates a new button element with the given label.
 func NewButton(label string, onClick func()) *Button {
-	return &Button{label: label, onClick: onClick}
+	b := &Button{label: label, onClick: onClick}
+	b.Modifier = &Modifier{Child: b}
+	return b
 }
 
 func (b *Button) MinSize() (int, int) { return runewidth.StringWidth(b.label) + 2, 1 }
@@ -255,6 +332,7 @@ func (b *Button) OnClick() {
 
 // TextInput is a single-line editable text input field.
 type TextInput struct {
+	*Modifier
 	text     []rune
 	cursor   int
 	focused  bool
@@ -262,11 +340,11 @@ type TextInput struct {
 	onChange func()
 }
 
-// func NewTextInput(placeholder string) *TextInput {
-// 	return &TextInput{
-// 		style: DefaultStyle,
-// 	}
-// }
+func NewTextInput() *TextInput {
+	t := &TextInput{}
+	t.Modifier = &Modifier{Child: t}
+	return t
+}
 
 func (t *TextInput) Text() string {
 	return string(t.text)
@@ -364,6 +442,7 @@ func (t *TextInput) OnMouseDown(x, y int) {
 // TextViewer is a non-editable text viewer,
 // supports multiple lines, scrolling and following tail.
 type TextViewer struct {
+	*Modifier
 	Style
 	Lines    []string
 	OffsetY  int
@@ -380,6 +459,7 @@ func NewTextViewer(s string) *TextViewer {
 		}
 		tv.Lines = strings.Split(s, "\n")
 	}
+	tv.Modifier = &Modifier{Child: tv}
 	return tv
 }
 
@@ -454,6 +534,7 @@ func (tv *TextViewer) OnChange(f func()) { tv.onChange = f }
 
 // TextEditor is a multi-line editable text area.
 type TextEditor struct {
+	*Modifier
 	content      [][]rune // simple 2D slice of runes, avoid over-engineering
 	row          int      // Current line index
 	col          int      // Cursor column index (rune index)
@@ -479,9 +560,11 @@ type TextEditor struct {
 }
 
 func NewTextEditor() *TextEditor {
-	return &TextEditor{
+	t := &TextEditor{
 		content: [][]rune{{}}, // Start with one empty line of runes
 	}
+	t.Modifier = &Modifier{Child: t}
+	return t
 }
 
 func (t *TextEditor) Foreground(c string) *TextEditor {
@@ -614,7 +697,7 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 	t.lineNumWidth = lineNumWidth
 	lineNumStyle := Style{Foreground: "silver"}
 
-	contentX := rect.X + lineNumWidth+1
+	contentX := rect.X + lineNumWidth + 1
 	contentW := rect.W - lineNumWidth
 	if contentW <= 0 {
 		return
@@ -982,7 +1065,7 @@ func (t *TextEditor) OnChange(fn func()) {
 	t.onChange = fn
 }
 
-func (t *TextEditor) Grow(weight ...int) *grower { return Grow(t, weight...) }
+// func (t *TextEditor) Grow(weight ...int) *grower { return Grow(t, weight...) }
 
 // InsertText simulates a paste operation: it inserts a string 's' at the current
 // cursor position (t.row, t.col), correctly handling any embedded newlines ('\n').
@@ -1099,6 +1182,7 @@ func (t *TextEditor) DeleteRange(startRow, startCol, endRow, endCol int) {
 }
 
 type ListView struct {
+	*Modifier
 	Items    []ListItem
 	Hovered  int // -1 means nothing hovered
 	Selected int // -1 means nothing selected, changes only on click
@@ -1110,10 +1194,12 @@ type ListItem struct {
 }
 
 func NewListView() *ListView {
-	return &ListView{
+	l := &ListView{
 		Hovered:  -1,
 		Selected: -1,
 	}
+	l.Modifier = &Modifier{Child: l}
+	return l
 }
 
 func (l *ListView) Append(text string, action func()) {
@@ -1248,8 +1334,15 @@ func (ti *TabItem) OnFocus() {}
 func (ti *TabItem) OnBlur()  {}
 
 type TabView struct {
+	*Modifier
 	items  []*TabItem
 	active int
+}
+
+func NewTabView() *TabView {
+	t := &TabView{}
+	t.Modifier = &Modifier{Child: t}
+	return t
 }
 
 func (t *TabView) Append(label string, e Element) *TabView {
@@ -1317,16 +1410,6 @@ func (t *TabView) FocusTarget() Element {
 func (t *TabView) OnFocus() {}
 func (t *TabView) OnBlur()  {}
 
-func (t *TabView) Grow(weight ...int) *grower {
-	return Grow(t, weight...)
-}
-
-// Frame forces child to fill the frame.
-// w and h can be 0, means min size.
-func (t *TabView) Frame(w, h int) *Frame {
-	return &Frame{W: w, H: h, Child: t}
-}
-
 type divider struct {
 	vertical bool
 }
@@ -1376,13 +1459,16 @@ var Spacer = Grow(Empty{})
 // Itself does not apply any visual styling like background colors, borders,
 // it is completely transparent and invisible
 type vstack struct {
+	*Modifier
 	children []Element
 	spacing  int
 }
 
 // VStack arranges children vertically.
 func VStack(children ...Element) *vstack {
-	return &vstack{children: children}
+	v := &vstack{children: children}
+	v.Modifier = &Modifier{Child: v}
+	return v
 }
 
 func (v *vstack) MinSize() (int, int) {
@@ -1410,6 +1496,9 @@ func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
 	totalH := 0
 	totalWeight := 0
 	for _, child := range v.children {
+		if m, ok := child.(*Modifier); ok {
+			child = m.Child
+		}
 		if i, ok := child.(*grower); ok {
 			totalWeight += i.weight
 		} else {
@@ -1425,6 +1514,9 @@ func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
 	// Second pass: layout children
 	used := 0
 	for i, child := range v.children {
+		if m, ok := child.(*Modifier); ok {
+			child = m.Child
+		}
 		if d, ok := child.(*divider); ok {
 			d.vertical = false
 		}
@@ -1463,36 +1555,22 @@ func (v *vstack) Spacing(p int) *vstack {
 	return v
 }
 
-// scale the container
-func (v *vstack) Grow(weight ...int) *grower { return Grow(v, weight...) }
-
-// add border, use colorBorder if color is absent.
-func (v *vstack) Border(color ...string) *Border {
-	b := NewBorder(v)
-	if len(color) > 0 {
-		b.Foreground(color[0])
-	}
-	return b
-}
-
-// Frame forces child to fill the frame.
-// W and H can be 0, means min size.
-func (v *vstack) Frame(w, h int) *Frame {
-	return &Frame{W: w, H: h, Child: v}
-}
-
 // hstack is a horizontal layout container.
 // Itself does not apply any visual styling like background colors, borders,
 // it is completely transparent and invisible
 type hstack struct {
+	*Modifier
 	children []Element
 	spacing  int
 }
 
 // HStack arranges children horizontally.
 func HStack(children ...Element) *hstack {
-	return &hstack{children: children}
+	h := &hstack{children: children}
+	h.Modifier = &Modifier{Child: h}
+	return h
 }
+
 func (hs *hstack) MinSize() (int, int) {
 	totalW, maxH := 0, 0
 	for i, child := range hs.children {
@@ -1517,6 +1595,9 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 	totalWidth := 0
 	totalWeight := 0
 	for _, child := range hs.children {
+		if m, ok := child.(*Modifier); ok {
+			child = m.Child
+		}
 		if g, ok := child.(*grower); ok {
 			totalWeight += g.weight
 		} else {
@@ -1532,6 +1613,9 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 	// Second pass: layout children
 	used := 0
 	for i, child := range hs.children {
+		if m, ok := child.(*Modifier); ok {
+			child = m.Child
+		}
 		if div, ok := child.(*divider); ok {
 			div.vertical = true
 		}
@@ -1566,24 +1650,6 @@ func (hs *hstack) Append(e ...Element) *hstack {
 
 // Spacing sets the spacing (in columns) between child elements.
 func (hs *hstack) Spacing(p int) *hstack { hs.spacing = p; return hs }
-
-func (hs *hstack) Grow(weight ...int) *grower {
-	return Grow(hs, weight...)
-}
-
-func (hs *hstack) Border(color ...string) *Border {
-	b := NewBorder(hs)
-	if len(color) > 0 {
-		b.Foreground(color[0])
-	}
-	return b
-}
-
-// Frame forces child to fill the frame.
-// W and H can be 0, means min size.
-func (hs *hstack) Frame(w, h int) *Frame {
-	return &Frame{W: w, H: h, Child: hs}
-}
 
 // grower is a element wrapper, won't render
 type grower struct {
@@ -2240,10 +2306,10 @@ func SetDarkTheme() {
 }
 
 const (
-	stateDefault     = iota // 預設狀態 (普通程式碼)
-	stateInString           // 在雙引號字串內
-	stateInRawString        // 在反引號字串內
-	stateInComment          // 在單行註釋內 (我們假設只有單行註釋 `//`)
+	stateDefault     = iota
+	stateInString    // 在雙引號字串內
+	stateInRawString // 在反引號字串內
+	stateInComment   // 在單行註釋內
 )
 
 type StyleSpan struct {

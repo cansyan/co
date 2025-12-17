@@ -110,47 +110,45 @@ func (r *root) closeTab(i int) {
 	}
 
 	// Prompt to save changes.
-	view := ui.NewBorder(
+	view := ui.VStack(
+		ui.NewText("Save the changes before closing?").PaddingH(1),
 		ui.VStack(
-			ui.PaddingH(1, ui.NewText("Save the changes before closing?")),
-			ui.PaddingH(4, ui.VStack(
-				ui.NewButton("Save", func() {
-					if path := tab.label; path != "untitled" {
-						err := os.WriteFile(path, []byte(editor.String()), 0644)
-						if err != nil {
-							log.Print(err)
-							r.status.Label = err.Error()
-							return
-						}
-						r.deleteTab(i)
-						ui.Default().CloseOverlay()
+			ui.NewButton("Save", func() {
+				if path := tab.label; path != "untitled" {
+					err := os.WriteFile(path, []byte(editor.String()), 0644)
+					if err != nil {
+						log.Print(err)
+						r.status.Label = err.Error()
 						return
 					}
-
-					sa := NewSaveAs(func(path string) {
-						if path == "" {
-							return
-						}
-						err := os.WriteFile(path, []byte(editor.String()), 0644)
-						if err != nil {
-							log.Print(err)
-							r.status.Label = err.Error()
-							return
-						}
-						r.deleteTab(i)
-					})
-					ui.Default().Overlay(sa, "center")
-				}),
-				ui.NewButton("Don't Save", func() {
 					r.deleteTab(i)
 					ui.Default().CloseOverlay()
-				}),
-				ui.NewButton("Cancel", func() {
-					ui.Default().CloseOverlay()
-				}),
-			)),
-		).Spacing(1),
-	).Foreground("red")
+					return
+				}
+
+				sa := NewSaveAs(func(path string) {
+					if path == "" {
+						return
+					}
+					err := os.WriteFile(path, []byte(editor.String()), 0644)
+					if err != nil {
+						log.Print(err)
+						r.status.Label = err.Error()
+						return
+					}
+					r.deleteTab(i)
+				})
+				ui.Default().Overlay(sa, "center")
+			}),
+			ui.NewButton("Don't Save", func() {
+				r.deleteTab(i)
+				ui.Default().CloseOverlay()
+			}),
+			ui.NewButton("Cancel", func() {
+				ui.Default().CloseOverlay()
+			}),
+		).PaddingH(4),
+	).Spacing(1).Border("red")
 	ui.Default().Overlay(view, "center")
 }
 
@@ -385,7 +383,7 @@ type Palette struct {
 
 func NewPalette() *Palette {
 	p := &Palette{
-		input: new(ui.TextInput),
+		input: ui.NewTextInput(),
 		list:  ui.NewListView(),
 	}
 	p.list.Hovered = 0
@@ -493,19 +491,19 @@ func NewSaveAs(action func(string)) *SaveAs {
 	})
 	btnOK.Style.Background = ui.Theme.Selection
 
-	view := ui.NewBorder(
-		ui.VStack(
-			ui.PaddingH(1, ui.HStack(
-				msg,
-				ui.Grow(input),
-			)),
-			ui.PaddingH(4, ui.HStack(
-				btnCancel,
-				ui.Spacer,
-				btnOK,
-			)),
-		).Spacing(1).Frame(28, 0),
-	)
+	view := ui.VStack(
+		ui.HStack(
+			msg,
+			ui.Grow(input),
+		).PaddingH(1),
+
+		ui.HStack(
+			btnCancel,
+			ui.Spacer,
+			btnOK,
+		).PaddingH(4),
+	).Spacing(1).Frame(28, 0).Border()
+
 	return &SaveAs{
 		child: view,
 		btnOK: btnOK,
