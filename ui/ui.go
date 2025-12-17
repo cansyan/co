@@ -2220,9 +2220,10 @@ const (
 )
 
 var (
-	StyleKeyword = Style{Foreground: "purple", Italic: true}
-	StyleString  = Style{Foreground: "darkred"}
-	StyleComment = Style{Foreground: "silver"}
+	StyleKeyword  = Style{Foreground: "darkgreen", Italic: true}
+	StyleString   = Style{Foreground: "darkred"}
+	StyleComment  = Style{Foreground: "silver"}
+	StyleFunction = Style{Foreground: "#51B3B3"}
 )
 
 // isAlphaNumeric 檢查字元是否為字母、數字或底線
@@ -2236,7 +2237,7 @@ type StyleSpan struct {
 	Style Style
 }
 
-// TODO: when it is necessary to support other language,
+// when it is necessary to support other language,
 // function highlightGo can be extend to a interface Highlighter
 
 func highlightGo(line []rune) []StyleSpan {
@@ -2273,6 +2274,16 @@ func highlightGo(line []rune) []StyleSpan {
 							Start: i,
 							End:   j,
 							Style: StyleKeyword,
+						})
+					}
+					// check out function calling, exclude function definition and struct method
+					if j < len(line) && line[j] == '(' &&
+						i-1 >= 0 && line[i-1] != '.' &&
+						!strings.Contains(string(line[:i]), "func") {
+						spans = append(spans, StyleSpan{
+							Start: i,
+							End:   j,
+							Style: StyleFunction,
 						})
 					}
 					i = j // skip over the keyword in the loop
