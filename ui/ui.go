@@ -610,11 +610,11 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		numLines = 1
 	}
 	actualNumDigits := len(strconv.Itoa(numLines))
-	lineNumWidth := actualNumDigits + 3
+	lineNumWidth := actualNumDigits + 2
 	t.lineNumWidth = lineNumWidth
 	lineNumStyle := Style{Foreground: "silver"}
 
-	contentX := rect.X + lineNumWidth
+	contentX := rect.X + lineNumWidth+1
 	contentW := rect.W - lineNumWidth
 	if contentW <= 0 {
 		return
@@ -658,8 +658,8 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 
 		// draw line number
 		lineNum := row + 1
-		numStr := fmt.Sprintf("%*d  ", lineNumWidth-2, lineNum)
-		DrawString(s, rect.X, rect.Y+i, lineNumWidth-1, numStr, lnStyle.Apply())
+		numStr := fmt.Sprintf("%*d  ", lineNumWidth-1, lineNum)
+		DrawString(s, rect.X, rect.Y+i, lineNumWidth, numStr, lnStyle.Apply())
 
 		// draw empty line indicator, if selected
 		if len(line) == 0 {
