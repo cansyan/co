@@ -20,7 +20,7 @@ var light = flag.Bool("light", false, "use light color theme")
 func main() {
 	flag.Parse()
 	if *light {
-		ui.SetLightTheme()
+		ui.Theme = ui.NewBreakersTheme()
 	}
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -231,8 +231,12 @@ func (r *root) HandleKey(ev *tcell.EventKey) {}
 
 func (r *root) showPalatte() {
 	palette := NewPalette()
-	palette.Add("Color theme: light", ui.SetLightTheme)
-	palette.Add("Color theme: dark", ui.SetDarkTheme)
+	palette.Add("Color theme: Breaks", func() {
+		ui.Theme = ui.NewBreakersTheme()
+	})
+	palette.Add("Color theme: Mariana", func() {
+		ui.Theme = ui.NewMarianaTheme()
+	})
 	palette.Add("New File", func() {
 		r.appendTab("untitled", "")
 		ui.Default().Focus(r)

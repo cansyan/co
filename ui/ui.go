@@ -750,7 +750,7 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 			cursorFound = true
 			cursorX = contentX + visualColFromLine(line, t.col)
 			cursorY = rect.Y + i
-			lnStyle.BG = Theme.Hover
+			lnStyle.BG = Theme.Selection
 		}
 
 		// draw line number
@@ -2261,7 +2261,7 @@ func (a *App) CloseOverlay() {
 var Theme ColorTheme
 
 func init() {
-	SetDarkTheme()
+	Theme = NewMarianaTheme()
 }
 
 type ColorTheme struct {
@@ -2283,50 +2283,75 @@ type SyntaxColor struct {
 	FunctionCall Style
 }
 
-func SetLightTheme() {
-	Theme = ColorTheme{
-		Foreground: "black",
-		Background: "#FAFAFB",
-		Cursor:     "#5BB4B5",
-		Border:     "#D0D0D0",
-		Hover:      "#F2F2F4",
-		Selection:  "#E3E6E8",
+func NewBreakersTheme() ColorTheme {
+	return ColorTheme{
+		Foreground: "#333333", // grey3
+		Background: "#fbffff", // white5 (extremely light cyan-white)
+		Cursor:     "#5fb3b3", // blue2 (caret)
+		Border:     "#d9e0e4", // white2 (selection_border)
+		Hover:      "#dae0e2", // white3
+		Selection:  "#dae0e2", // white3 (line_highlight / selection)
 		Syntax: SyntaxColor{
-			Keyword:      Style{FG: "#D49ECF", FontItalic: true},
-			String:       Style{FG: "#A0D28A"},
-			Comment:      Style{FG: "#9DA3B1"},
-			Number:       Style{FG: "orange"},
-			FunctionName: Style{FG: "#5BB4B5"},
-			FunctionCall: Style{FG: "#6497CD"},
+			Keyword: Style{
+				FG:         "#c594c5", // pink
+				FontItalic: true,      // storage.type italic
+			},
+			String: Style{
+				FG: "#89bd82", // green
+			},
+			Comment: Style{
+				FG: "#999999", // grey2
+			},
+			Number: Style{
+				FG: "#fac863", // orange
+			},
+			FunctionName: Style{
+				FG: "#5fb3b3", // blue2 (entity.name.function)
+			},
+			FunctionCall: Style{
+				FG: "#6699cc", // blue (variable.function)
+			},
 		},
 	}
 }
 
-func SetDarkTheme() {
-	// similar to Sublime Text's Mariana
-	Theme = ColorTheme{
-		Foreground: "white",
-		Background: "#303841",
-		Cursor:     "orange",
-		Border:     "#D0D0D0",
-		Hover:      "#4D5865",
-		Selection:  "#4D5865",
+func NewMarianaTheme() ColorTheme {
+	return ColorTheme{
+		Foreground: "#d8dee9", // white3
+		Background: "#303841", // blue3
+		Cursor:     "#fac863", // orange
+		Border:     "#65737e", // blue4 (selection_border)
+		Hover:      "#4e5a65",
+		Selection:  "#4e5a65", // blue2 (alpha handled by terminal blending)
 		Syntax: SyntaxColor{
-			Keyword:      Style{FG: "#D49ECF", FontItalic: true},
-			String:       Style{FG: "#A0D28A"},
-			Comment:      Style{FG: "#9DA3B1"},
-			Number:       Style{FG: "orange"},
-			FunctionName: Style{FG: "#5BB4B5"},
-			FunctionCall: Style{FG: "#6497CD"},
+			Keyword: Style{
+				FG:         "#c594c5", // pink
+				FontItalic: true,
+			},
+			String: Style{
+				FG: "#99c794", // green
+			},
+			Comment: Style{
+				FG: "#a7adba", // blue6
+			},
+			Number: Style{
+				FG: "#fac863", // orange
+			},
+			FunctionName: Style{
+				FG: "#5fb3b3", // blue5 (entity.name.function)
+			},
+			FunctionCall: Style{
+				FG: "#6699cc", // blue (variable.function)
+			},
 		},
 	}
 }
 
 const (
-	stateDefault     = iota
-	stateInString    // 在雙引號字串內
-	stateInRawString // 在反引號字串內
-	stateInComment   // 在單行註釋內
+	stateDefault = iota
+	stateInString
+	stateInRawString
+	stateInComment
 )
 
 type StyleSpan struct {
