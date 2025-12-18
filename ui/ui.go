@@ -147,19 +147,6 @@ func DrawString(s Screen, x, y, w int, str string, style tcell.Style) {
 	}
 }
 
-// DrawRunes draws a slice of runes onto the screen at the specified position and width,
-// applying the given style. It returns the number of cells occupied.
-func DrawRunes(s Screen, x, y, w int, runes []rune, style tcell.Style) (cells int) {
-	for _, r := range runes {
-		if cells >= w {
-			break
-		}
-		s.SetContent(x+cells, y, r, nil, style)
-		cells += runewidth.RuneWidth(r)
-	}
-	return cells
-}
-
 // ---------------------------------------------------------------------
 // components
 // ---------------------------------------------------------------------
@@ -636,18 +623,6 @@ func (t *TextEditor) Layout(x, y, w, h int) *LayoutNode {
 
 const tabSize = 4
 
-// visualize converts a rune to spaces if it's a tab, based on the current visual column.
-func visualize(dst []rune, r rune, visualCol int) []rune {
-	if r == '\t' {
-		spaces := tabSize - visualCol%tabSize
-		for range spaces {
-			dst = append(dst, ' ')
-		}
-		return dst
-	}
-	return append(dst, r)
-}
-
 // visualColFromLine returns the visual column (in terminal cells)
 // corresponding to rune index i in the line.
 //
@@ -695,6 +670,35 @@ func visualColToLine(line []rune, col int) int {
 	return len(line)
 }
 
+func (t *TextEditor) drawRune(s tcell.Screen, x, y int, maxWidth int, r rune, visualCol int, style Style) int {
+	if maxWidth <= 0 {
+		return 0
+	}
+
+	// TAB
+	if r == '\t' {
+		spaces := tabSize - visualCol%tabSize
+		if spaces > maxWidth {
+			spaces = maxWidth
+		}
+		for i := range spaces {
+			s.SetContent(x+i, y, ' ', nil, style.Apply())
+		}
+		return spaces
+	}
+
+	// other rune
+	w := runewidth.RuneWidth(r)
+	if w <= 0 {
+		w = 1
+	}
+	if w > maxWidth {
+		return 0
+	}
+	s.SetContent(x, y, r, nil, style.Apply())
+	return w
+}
+
 func (t *TextEditor) Render(s Screen, rect Rect) {
 	t.viewH = rect.H
 
@@ -731,7 +735,6 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		return true
 	}
 
-	var buf [tabSize]rune
 	var cursorX, cursorY int
 	cursorFound := false
 	// Loop over visible rows
@@ -767,17 +770,14 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		// draw line content
 		spans := highlightGo(line)
 		styles := expandStyles(spans, t.style, len(line))
-
-		var visualCol int
+		visualCol := 0
+		y := rect.Y + i
 		for col, r := range line {
 			charStyle := styles[col]
 			if selected(row, col) {
 				charStyle.BG = Theme.Selection
 			}
-
-			bufv := visualize(buf[:0], r, visualCol)
-			cells := DrawRunes(s, contentX+visualCol, rect.Y+i,
-				contentW-visualCol, bufv, charStyle.Apply())
+			cells := t.drawRune(s, contentX+visualCol, y, contentW-visualCol, r, visualCol, charStyle)
 			visualCol += cells
 		}
 	}
