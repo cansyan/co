@@ -66,7 +66,7 @@ type Focusable interface {
 
 type LayoutNode struct {
 	Element  Element
-	Rect     Rect
+	Rect     Rect // the rectangle where the element is drawn on
 	Children []*LayoutNode
 }
 
@@ -89,33 +89,33 @@ type Rect struct {
 }
 
 type Style struct {
-	Foreground string
-	Background string
-	Bold       bool
-	Italic     bool
-	Underline  bool
+	FG            string // foreground
+	BG            string // background
+	FontBold      bool
+	FontItalic    bool
+	FontUnderline bool
 }
 
 // Apply convert Style to tcell type, uses current color theme by default.
 func (s Style) Apply() tcell.Style {
 	st := tcell.StyleDefault
-	if s.Foreground != "" {
-		st = st.Foreground(tcell.GetColor(s.Foreground))
+	if s.FG != "" {
+		st = st.Foreground(tcell.GetColor(s.FG))
 	} else {
 		st = st.Foreground(tcell.GetColor(Theme.Foreground))
 	}
-	if s.Background != "" {
-		st = st.Background(tcell.GetColor(s.Background))
+	if s.BG != "" {
+		st = st.Background(tcell.GetColor(s.BG))
 	} else {
 		st = st.Background(tcell.GetColor(Theme.Background))
 	}
-	if s.Bold {
+	if s.FontBold {
 		st = st.Bold(true)
 	}
-	if s.Italic {
+	if s.FontItalic {
 		st = st.Italic(true)
 	}
-	if s.Underline {
+	if s.FontUnderline {
 		st = st.Underline(true)
 	}
 	return st
@@ -123,16 +123,16 @@ func (s Style) Apply() tcell.Style {
 
 func (s Style) Merge(parent Style) Style {
 	ns := s
-	if ns.Background == "" {
-		ns.Background = parent.Background
+	if ns.BG == "" {
+		ns.BG = parent.BG
 	}
-	if ns.Foreground == "" {
-		ns.Foreground = parent.Foreground
+	if ns.FG == "" {
+		ns.FG = parent.FG
 	}
 
-	ns.Bold = ns.Bold || parent.Bold
-	ns.Italic = ns.Italic || parent.Italic
-	ns.Underline = ns.Underline || parent.Underline
+	ns.FontBold = ns.FontBold || parent.FontBold
+	ns.FontItalic = ns.FontItalic || parent.FontItalic
+	ns.FontUnderline = ns.FontUnderline || parent.FontUnderline
 	return ns
 }
 
@@ -172,10 +172,11 @@ type Modifier struct {
 
 func (m *Modifier) MinSize() (int, int) { return m.Child.MinSize() }
 func (m *Modifier) Layout(x, y, w, h int) *LayoutNode {
+	// bypass Modifier, make it transparent to the layout tree
 	return m.Child.Layout(x, y, w, h)
 }
 func (m *Modifier) Render(s Screen, rect Rect) {
-	m.Child.Render(s, rect)
+	// no-op
 }
 
 // Grow expands the element to occupy the remaining available space.
@@ -245,15 +246,15 @@ func NewText(c string) *Text {
 	return t
 }
 
-func (t *Text) Bold() *Text      { t.Style.Bold = true; return t }
-func (t *Text) Italic() *Text    { t.Style.Italic = true; return t }
-func (t *Text) Underline() *Text { t.Style.Underline = true; return t }
+func (t *Text) Bold() *Text      { t.Style.FontBold = true; return t }
+func (t *Text) Italic() *Text    { t.Style.FontItalic = true; return t }
+func (t *Text) Underline() *Text { t.Style.FontUnderline = true; return t }
 func (t *Text) Foreground(color string) *Text {
-	t.Style.Foreground = color
+	t.Style.FG = color
 	return t
 }
 func (t *Text) Background(color string) *Text {
-	t.Style.Background = color
+	t.Style.BG = color
 	return t
 }
 
@@ -294,11 +295,11 @@ func (b *Button) Layout(x, y, w, h int) *LayoutNode {
 func (b *Button) Render(s Screen, rect Rect) {
 	st := b.Style
 	if b.hovered {
-		st = st.Merge(Style{Background: Theme.Hover})
+		st.BG = Theme.Hover
 	}
-	if b.pressed {
-		st.Background = "gray"
-	}
+	// if b.pressed {
+	// st.BG = "gray"
+	// }
 	label := " " + b.label + " "
 	DrawString(s, rect.X, rect.Y, rect.W, label, st.Apply())
 }
@@ -328,6 +329,16 @@ func (b *Button) OnMouseUp(x, y int) {
 
 func (b *Button) OnClick() {
 	b.onClick()
+}
+
+func (b *Button) Foreground(color string) *Button {
+	b.Style.FG = color
+	return b
+}
+
+func (b *Button) Background(color string) *Button {
+	b.Style.BG = color
+	return b
 }
 
 // TextInput is a single-line editable text input field.
@@ -361,11 +372,11 @@ func (t *TextInput) OnChange(fn func()) *TextInput {
 }
 
 func (t *TextInput) Foreground(c string) *TextInput {
-	t.style.Foreground = c
+	t.style.FG = c
 	return t
 }
 func (t *TextInput) Background(c string) *TextInput {
-	t.style.Background = c
+	t.style.BG = c
 	return t
 }
 
@@ -568,11 +579,11 @@ func NewTextEditor() *TextEditor {
 }
 
 func (t *TextEditor) Foreground(c string) *TextEditor {
-	t.style.Foreground = c
+	t.style.FG = c
 	return t
 }
 func (t *TextEditor) Background(c string) *TextEditor {
-	t.style.Background = c
+	t.style.BG = c
 	return t
 }
 
@@ -695,7 +706,7 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 	actualNumDigits := len(strconv.Itoa(numLines))
 	lineNumWidth := actualNumDigits + 2
 	t.lineNumWidth = lineNumWidth
-	lineNumStyle := Style{Foreground: "silver"}
+	lineNumStyle := Style{FG: "silver"}
 
 	contentX := rect.X + lineNumWidth + 1
 	contentW := rect.W - lineNumWidth
@@ -736,7 +747,7 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 			cursorFound = true
 			cursorX = contentX + visualColFromLine(line, t.col)
 			cursorY = rect.Y + i
-			lnStyle.Background = Theme.Hover
+			lnStyle.BG = Theme.Hover
 		}
 
 		// draw line number
@@ -747,7 +758,7 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		// draw empty line indicator, if selected
 		if len(line) == 0 {
 			if selected(row, 0) {
-				chStyle := t.style.Merge(Style{Background: Theme.Selection}).Apply()
+				chStyle := t.style.Merge(Style{BG: Theme.Selection}).Apply()
 				s.SetContent(contentX, rect.Y+i, ' ', nil, chStyle)
 			}
 			continue
@@ -761,7 +772,7 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		for col, r := range line {
 			charStyle := styles[col]
 			if selected(row, col) {
-				charStyle.Background = Theme.Selection
+				charStyle.BG = Theme.Selection
 			}
 
 			bufv := visualize(buf[:0], r, visualCol)
@@ -1238,9 +1249,9 @@ func (l *ListView) Render(s Screen, rect Rect) {
 		var st Style
 		switch i {
 		case l.Selected:
-			st.Background = Theme.Selection
+			st.BG = Theme.Selection
 		case l.Hovered:
-			st.Background = Theme.Hover
+			st.BG = Theme.Hover
 		}
 
 		label := fmt.Sprintf(" %s ", item.Label)
@@ -1319,9 +1330,9 @@ func (ti *TabItem) Layout(x, y, w, h int) *LayoutNode {
 func (ti *TabItem) Render(s Screen, rect Rect) {
 	var st Style
 	if ti == ti.t.items[ti.t.active] {
-		st.Underline = true
+		st.FontUnderline = true
 	} else if ti.hovered {
-		st.Background = Theme.Hover
+		st.BG = Theme.Hover
 	}
 	DrawString(s, rect.X, rect.Y, rect.W, ti.label, st.Apply())
 }
@@ -1428,7 +1439,7 @@ func (d *divider) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 func (d *divider) Render(s Screen, rect Rect) {
-	style := Style{Foreground: Theme.Border}
+	style := Style{FG: Theme.Border}
 	if !d.vertical {
 		for i := range rect.W {
 			s.SetContent(rect.X+i, rect.Y+rect.H-1, hLine, nil, style.Apply())
@@ -1790,9 +1801,10 @@ func (b *Border) Layout(x, y, w, h int) *LayoutNode {
 const (
 	hLine = '─'
 	vLine = '│'
-	// round angle corner, alternative right angle ┌ ┐ └ ┘
-	cornerTopLeft, cornerTopRight = '╭', '╮'
-	cornerBotLeft, cornerBotRight = '╰', '╯'
+	// cornerTopLeft, cornerTopRight = '╭', '╮'
+	// cornerBotLeft, cornerBotRight = '╰', '╯'
+	cornerTopLeft, cornerTopRight = '┌', '┐'
+	cornerBotLeft, cornerBotRight = '└', '┘'
 )
 
 func (b *Border) Render(s Screen, rect Rect) {
@@ -1801,7 +1813,7 @@ func (b *Border) Render(s Screen, rect Rect) {
 		return
 	}
 
-	style := Style{Foreground: Theme.Border}
+	style := Style{FG: Theme.Border}
 	st := b.Style.Merge(style).Apply()
 	// Top and bottom borders
 	for i := range rect.W {
@@ -1821,12 +1833,12 @@ func (b *Border) Render(s Screen, rect Rect) {
 }
 
 func (b *Border) Foreground(color string) *Border {
-	b.Style.Foreground = color
+	b.Style.FG = color
 	return b
 }
 
 func (b *Border) Background(color string) *Border {
-	b.Style.Background = color
+	b.Style.BG = color
 	return b
 }
 
@@ -1890,7 +1902,7 @@ func (o *overlay) Layout(x, y, w, h int) *LayoutNode {
 	switch o.align {
 	case "top":
 		x = x + (w-mw)/2
-		y = y + 1
+		// y = y + 1
 	case "center":
 		fallthrough
 	default:
@@ -1919,7 +1931,7 @@ func (o *overlay) Render(s Screen, rect Rect) {
 type App struct {
 	screen  Screen
 	Root    Element // root element to render
-	focused Focusable
+	focused Element
 	// focusID map[string]Element
 	hover Element
 	tree  *LayoutNode // reflects the view hierarchy after last render
@@ -2040,19 +2052,23 @@ func (a *App) Focus(e Element) {
 	log.Printf("focus: %T -> %T", a.focused, e)
 	if e == nil {
 		if a.focused != nil {
-			a.focused.OnBlur()
+			if f, ok := a.focused.(Focusable); ok {
+				f.OnBlur()
+			}
 			a.screen.HideCursor()
 		}
 		a.focused = nil
 		return
 	}
 
-	if a.focused != nil && e == a.focused.(Element) {
+	if e == a.focused {
 		return
 	}
 
 	if a.focused != nil {
-		a.focused.OnBlur()
+		if f, ok := a.focused.(Focusable); ok {
+			f.OnBlur()
+		}
 		a.screen.HideCursor()
 	}
 
@@ -2062,7 +2078,7 @@ func (a *App) Focus(e Element) {
 		a.focused = nil
 	} else {
 		fe.OnFocus()
-		a.focused = fe
+		a.focused = e
 	}
 	log.Printf("focused: %T", a.focused)
 
@@ -2160,7 +2176,9 @@ func (a *App) handleKey(ev *tcell.EventKey) {
 	if a.focused == nil {
 		return
 	}
-	a.focused.HandleKey(ev)
+	if f, ok := a.focused.(Focusable); ok {
+		f.HandleKey(ev)
+	}
 }
 
 // hover -> mouse down -> focus -> mouse up -> scroll
@@ -2227,8 +2245,7 @@ func (a *App) Overlay(e Element, align string) {
 		align: align,
 	}
 	if a.focused != nil {
-		prev, _ := a.focused.(Element)
-		a.overlay.prevFocus = prev
+		a.overlay.prevFocus = a.focused
 	}
 	a.Focus(e)
 }
@@ -2270,17 +2287,17 @@ func SetLightTheme() {
 	Theme = ColorTheme{
 		Foreground: "black",
 		Background: "#FAFAFB",
-		Cursor:     "orange",
+		Cursor:     "#5BB4B5",
 		Border:     "#D0D0D0",
 		Hover:      "#F2F2F4",
-		Selection:  "#DCEAF7",
+		Selection:  "#E3E6E8",
 		Syntax: SyntaxColor{
-			Keyword:      Style{Foreground: "#D49ECF", Italic: true},
-			String:       Style{Foreground: "#A0D28A"},
-			Comment:      Style{Foreground: "#9DA3B1"},
-			Number:       Style{Foreground: "orange"},
-			FunctionName: Style{Foreground: "#5BB4B5"},
-			FunctionCall: Style{Foreground: "#6497CD"},
+			Keyword:      Style{FG: "#D49ECF", FontItalic: true},
+			String:       Style{FG: "#A0D28A"},
+			Comment:      Style{FG: "#9DA3B1"},
+			Number:       Style{FG: "orange"},
+			FunctionName: Style{FG: "#5BB4B5"},
+			FunctionCall: Style{FG: "#6497CD"},
 		},
 	}
 }
@@ -2295,12 +2312,12 @@ func SetDarkTheme() {
 		Hover:      "#4D5865",
 		Selection:  "#4D5865",
 		Syntax: SyntaxColor{
-			Keyword:      Style{Foreground: "#D49ECF", Italic: true},
-			String:       Style{Foreground: "#A0D28A"},
-			Comment:      Style{Foreground: "#9DA3B1"},
-			Number:       Style{Foreground: "orange"},
-			FunctionName: Style{Foreground: "#5BB4B5"},
-			FunctionCall: Style{Foreground: "#6497CD"},
+			Keyword:      Style{FG: "#D49ECF", FontItalic: true},
+			String:       Style{FG: "#A0D28A"},
+			Comment:      Style{FG: "#9DA3B1"},
+			Number:       Style{FG: "orange"},
+			FunctionName: Style{FG: "#5BB4B5"},
+			FunctionCall: Style{FG: "#6497CD"},
 		},
 	}
 }

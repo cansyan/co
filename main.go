@@ -112,7 +112,16 @@ func (r *root) closeTab(i int) {
 	// Prompt to save changes.
 	view := ui.VStack(
 		ui.NewText("Save the changes before closing?").PaddingH(1),
-		ui.VStack(
+		ui.HStack(
+			ui.NewButton("Don't Save", func() {
+				r.deleteTab(i)
+				ui.Default().CloseOverlay()
+			}),
+
+			ui.NewButton("Cancel", func() {
+				ui.Default().CloseOverlay()
+			}).PaddingH(2),
+
 			ui.NewButton("Save", func() {
 				if path := tab.label; path != "untitled" {
 					err := os.WriteFile(path, []byte(editor.String()), 0644)
@@ -139,17 +148,10 @@ func (r *root) closeTab(i int) {
 					r.deleteTab(i)
 				})
 				ui.Default().Overlay(sa, "center")
-			}),
-			ui.NewButton("Don't Save", func() {
-				r.deleteTab(i)
-				ui.Default().CloseOverlay()
-			}),
-			ui.NewButton("Cancel", func() {
-				ui.Default().CloseOverlay()
-			}),
-		).PaddingH(4),
-	).Spacing(1).Border("red")
-	ui.Default().Overlay(view, "center")
+			}).Background(ui.Theme.Selection),
+		).PaddingH(2),
+	).Spacing(1).Border()
+	ui.Default().Overlay(view, "top")
 }
 
 func (r *root) deleteTab(i int) {
@@ -233,6 +235,7 @@ func (r *root) showPalatte() {
 	palette.Add("Color theme: dark", ui.SetDarkTheme)
 	palette.Add("New File", func() {
 		r.appendTab("untitled", "")
+		ui.Default().Focus(r)
 	})
 	palette.Add("Quit", ui.Default().Close)
 	ui.Default().Overlay(palette, "top")
@@ -333,10 +336,10 @@ func (t *tab) Layout(x, y, w, h int) *ui.LayoutNode {
 func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 	var st ui.Style
 	if t == t.root.tabs[t.root.active] {
-		st.Underline = true
+		st.FontUnderline = true
 		st = t.style.Merge(st)
 	} else if t.hovered {
-		st.Background = ui.Theme.Hover
+		st.BG = ui.Theme.Hover
 		st = t.style.Merge(st)
 	}
 
@@ -488,8 +491,7 @@ func NewSaveAs(action func(string)) *SaveAs {
 			action(input.Text())
 		}
 		ui.Default().CloseOverlay()
-	})
-	btnOK.Style.Background = ui.Theme.Selection
+	}).Background(ui.Theme.Selection)
 
 	view := ui.VStack(
 		ui.HStack(
