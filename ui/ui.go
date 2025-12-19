@@ -281,12 +281,9 @@ func (b *Button) Layout(x, y, w, h int) *LayoutNode {
 }
 func (b *Button) Render(s Screen, rect Rect) {
 	st := b.Style
-	if b.hovered {
-		st.BG = Theme.Hover
+	if b.pressed {
+		st.BG = Theme.Selection
 	}
-	// if b.pressed {
-	// st.BG = "gray"
-	// }
 	label := " " + b.label + " "
 	DrawString(s, rect.X, rect.Y, rect.W, label, st.Apply())
 }
@@ -533,16 +530,16 @@ func (tv *TextViewer) OnChange(f func()) { tv.onChange = f }
 // TextEditor is a multi-line editable text area.
 type TextEditor struct {
 	*Modifier
-	content      [][]rune // simple 2D slice of runes, avoid over-engineering
-	row          int      // Current line index
-	col          int      // Cursor column index (rune index)
-	offsetY      int      // Vertical scroll offset
-	focused      bool
-	style        Style
-	viewH        int // last rendered height
-	lineNumWidth int
-	onChange     func()
-	Dirty        bool
+	content  [][]rune // simple 2D slice of runes, avoid over-engineering
+	row      int      // Current line index
+	col      int      // Cursor column index (rune index)
+	offsetY  int      // Vertical scroll offset
+	focused  bool
+	style    Style
+	viewH    int // last rendered height
+	contentX int
+	onChange func()
+	Dirty    bool
 
 	pressed     bool
 	selectStart struct {
@@ -709,10 +706,10 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 	}
 	actualNumDigits := len(strconv.Itoa(numLines))
 	lineNumWidth := actualNumDigits + 2
-	t.lineNumWidth = lineNumWidth
 	lineNumStyle := Style{FG: "silver"}
 
 	contentX := rect.X + lineNumWidth + 1
+	t.contentX = contentX
 	contentW := rect.W - lineNumWidth
 	if contentW <= 0 {
 		return
@@ -971,7 +968,7 @@ func (t *TextEditor) OnMouseDown(x, y int) {
 	}
 
 	// Calculate the target column (rune index)
-	visualCol := max(x-t.lineNumWidth, 0)
+	visualCol := max(x-t.contentX, 0)
 	t.col = visualColToLine(t.content[t.row], visualCol)
 
 	// Initialize selection
@@ -1002,7 +999,7 @@ func (t *TextEditor) OnMouseMove(lx, ly int) {
 		targetRow = len(t.content) - 1
 	}
 	currentLine := t.content[targetRow]
-	clickedX := max(lx-t.lineNumWidth, 0)
+	clickedX := max(lx-t.contentX, 0)
 	targetCol := visualColToLine(currentLine, clickedX)
 
 	t.selectEnd.row = targetRow
@@ -2137,7 +2134,7 @@ func (a *App) Serve(root Element) error {
 	screen.EnableMouse()
 
 	draw := func() {
-		screen.SetCursorStyle(tcell.CursorStyleBlinkingBar, tcell.GetColor(Theme.Cursor))
+		screen.SetCursorStyle(tcell.CursorStyleSteadyBlock, tcell.GetColor(Theme.Cursor))
 		screen.Fill(' ', Style{}.Apply())
 		a.Render()
 		screen.Show()
