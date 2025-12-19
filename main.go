@@ -116,6 +116,7 @@ func (r *root) closeTab(i int) {
 			ui.NewButton("Don't Save", func() {
 				r.deleteTab(i)
 				ui.Default().CloseOverlay()
+				ui.Default().Focus(r)
 			}),
 
 			ui.NewButton("Cancel", func() {
