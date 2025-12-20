@@ -609,6 +609,10 @@ func (t *TextEditor) SetText(s string) {
 	t.adjustCol()
 }
 
+func (t *TextEditor) Cursor() (row, col int) {
+	return t.row, t.col
+}
+
 func (t *TextEditor) JumpTo(row, col int) {
 	if row < 0 || row >= len(t.content) || col < 0 {
 		return
@@ -1042,6 +1046,13 @@ func (t *TextEditor) OnMouseMove(lx, ly int) {
 	t.selectEnd.row = targetRow
 	t.selectEnd.col = targetCol
 	t.adjustCol()
+}
+
+func (t *TextEditor) Select(startRow, startCol, endRow, endCol int) {
+	t.selectStart.row = startRow
+	t.selectStart.col = startCol
+	t.selectEnd.row = endRow
+	t.selectEnd.col = endCol
 }
 
 func (t *TextEditor) unselect() {
@@ -1974,7 +1985,7 @@ type App struct {
 
 	clickPoint Point
 	keymap     map[string]func()
-	overlay    *overlay
+	overlay    *overlay // for temporary display
 }
 
 var app *App

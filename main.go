@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"tui/ui"
+	"unicode/utf8"
 
 	"slices"
 
@@ -52,7 +53,13 @@ func main() {
 	app.BindKey("Ctrl+G", root.showLinePalette)
 	app.BindKey("Ctrl+O", root.showFilePalette)
 	app.BindKey("Ctrl+R", root.showSymbolPalette)
-	app.BindKey("Ctrl+F", root.showSearchPalette)
+	app.BindKey("Ctrl+F", func() {
+		root.showSearch = true
+		// 重置狀態，確保切換文件或重新開啟時會重新掃描
+		root.searchBar.matches = nil
+		root.searchBar.activeIndex = -1
+		ui.Default().Focus(root.searchBar)
+	})
 	app.BindKey("Ctrl+S", root.saveFile)
 	app.BindKey("Ctrl+W", func() {
 		root.closeTab(root.active)
@@ -62,6 +69,11 @@ func main() {
 		ui.Default().Focus(root)
 	})
 	app.BindKey("Esc", func() {
+		if root.showSearch {
+			root.showSearch = false
+			ui.Default().Focus(root)
+			return
+		}
 		app.CloseOverlay()
 	})
 	if err := app.Serve(root); err != nil {
@@ -72,12 +84,14 @@ func main() {
 
 // root implements ui.Element
 type root struct {
-	tabs    []*tab
-	active  int
-	btnNew  *ui.Button
-	btnSave *ui.Button
-	btnQuit *ui.Button
-	status  *ui.Text
+	tabs       []*tab
+	active     int
+	btnNew     *ui.Button
+	btnSave    *ui.Button
+	btnQuit    *ui.Button
+	status     *ui.Text
+	searchBar  *SearchBar
+	showSearch bool
 }
 
 func newRoot() *root {
@@ -90,6 +104,7 @@ func newRoot() *root {
 	})
 	r.btnSave = ui.NewButton("Save", r.saveFile)
 	r.btnQuit = ui.NewButton("Quit", ui.Default().Close)
+	r.searchBar = NewSearchBar(r)
 	return r
 }
 
@@ -194,11 +209,6 @@ func (r *root) MinSize() (int, int) {
 }
 
 func (r *root) Layout(x, y, w, h int) *ui.LayoutNode {
-	n := &ui.LayoutNode{
-		Element: r,
-		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
-	}
-
 	labelView := ui.HStack()
 	for i, tab := range r.tabs {
 		labelView.Append(tab)
@@ -213,12 +223,18 @@ func (r *root) Layout(x, y, w, h int) *ui.LayoutNode {
 		editorView.Append(ui.Grow(r.tabs[r.active].body))
 	}
 
-	view := ui.VStack(
-		editorView.Grow(),
-		ui.Divider(),
-		r.status,
-	)
-	n.Children = append(n.Children, view.Layout(x, y, w, h))
+	mainStack := ui.VStack()
+	mainStack.Append(editorView.Grow())
+	if r.showSearch {
+		mainStack.Append(ui.Divider(), r.searchBar)
+	}
+	mainStack.Append(ui.Divider(), r.status)
+
+	n := &ui.LayoutNode{
+		Element: r,
+		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
+	}
+	n.Children = append(n.Children, mainStack.Layout(x, y, w, h))
 	return n
 }
 
@@ -317,49 +333,6 @@ func (r *root) showSymbolPalette() {
 			editor.JumpTo(s.line, 0)
 		})
 	}
-
-	ui.Default().Overlay(p, "top")
-}
-
-func (r *root) showSearchPalette() {
-	tab := r.tabs[r.active]
-	editor, ok := tab.body.(*ui.TextEditor)
-	if !ok {
-		return
-	}
-
-	p := NewPalette()
-	p.input.SetPlaceholder("Search text...")
-
-	// Override default OnChange for live file searching
-	p.input.OnChange(func() {
-		query := strings.ToLower(p.input.Text())
-		p.list.Clear()
-		p.list.Hovered = 0
-		if query == "" {
-			return
-		}
-
-		// Iterate through lines to find matches
-		content := editor.String()
-		lines := strings.Split(content, "\n")
-		for i, line := range lines {
-			if idx := strings.Index(strings.ToLower(line), query); idx != -1 {
-				lineNum := i
-				colNum := idx
-				// Display line number and trimmed content
-				display := fmt.Sprintf("%d: %s", i+1, strings.TrimSpace(line))
-
-				p.list.Append(display, func() {
-					editor.JumpTo(lineNum, colNum)
-					ui.Default().Focus(r)
-				})
-				if len(p.list.Items) >= 10 {
-					break
-				}
-			}
-		}
-	})
 
 	ui.Default().Overlay(p, "top")
 }
@@ -647,7 +620,7 @@ func NewSaveAs(action func(string)) *SaveAs {
 	view := ui.VStack(
 		ui.HStack(
 			msg,
-			ui.Grow(input),
+			input.Grow(),
 		).PaddingH(1),
 
 		ui.HStack(
@@ -758,3 +731,204 @@ func (r *root) extractSymbols(filename, content string) []symbol {
 	}
 	return symbols
 }
+
+type match struct {
+	line int
+	col  int
+}
+
+type SearchBar struct {
+	root        *root
+	input       *ui.TextInput
+	btnPrev     *ui.Button
+	btnNext     *ui.Button
+	matches     []match
+	activeIndex int // -1 表示尚未進行導航定位
+}
+
+func NewSearchBar(r *root) *SearchBar {
+	sb := &SearchBar{root: r, activeIndex: -1}
+	sb.input = ui.NewTextInput()
+
+	// Lazy Evaluation:
+	// 當文字改變時，僅標記狀態為「需要重新掃描」，但不立即掃描
+	// 真正的計算成本被推遲到了使用者按下 Enter、Next 或 Prev 的那一刻
+	sb.input.OnChange(func() {
+		sb.matches = nil
+		sb.activeIndex = -1
+	})
+
+	sb.btnPrev = ui.NewButton("< Prev", func() { sb.navigate(false) })
+	sb.btnNext = ui.NewButton("Next >", func() { sb.navigate(true) })
+	return sb
+}
+
+func (sb *SearchBar) updateMatches() {
+	sb.matches = nil
+	sb.activeIndex = -1
+
+	query := strings.ToLower(sb.input.Text())
+	if query == "" {
+		return
+	}
+
+	tab := sb.root.tabs[sb.root.active]
+	editor, ok := tab.body.(*ui.TextEditor)
+	if !ok {
+		return
+	}
+
+	content := editor.String()
+	lowerContent := strings.ToLower(content)
+
+	currentPos := 0
+	lineCount := 0
+	lastLineStart := 0
+
+	for {
+		idx := strings.Index(lowerContent[currentPos:], query)
+		if idx == -1 {
+			break
+		}
+
+		// 絕對座標
+		matchPos := currentPos + idx
+
+		// 計算從上一次匹配到現在經過了多少個換行符
+		// 這樣只需要掃描匹配點之間的區間
+		for i := currentPos; i < matchPos; i++ {
+			if content[i] == '\n' {
+				lineCount++
+				lastLineStart = i + 1
+			}
+		}
+
+		// 處理中文寬度：將 Byte 偏移量轉為 Rune 偏移量
+		// 只需要計算從該行起始 (lastLineStart) 到 匹配點 (matchPos) 之間有多少個 UTF-8 Rune
+		linePrefix := content[lastLineStart:matchPos]
+		runeCol := utf8.RuneCountInString(linePrefix)
+
+		sb.matches = append(sb.matches, match{
+			line: lineCount,
+			col:  runeCol,
+		})
+
+		currentPos = matchPos + len(query)
+	}
+}
+
+// 根據編輯器當前游標位置，找到最接近的匹配項索引
+func (sb *SearchBar) setInitialActiveIndex() {
+	if len(sb.matches) == 0 {
+		return
+	}
+
+	tab := sb.root.tabs[sb.root.active]
+	editor, ok := tab.body.(*ui.TextEditor)
+	if !ok {
+		return
+	}
+
+	curLine, curCol := editor.Cursor()
+
+	// 尋找第一個在游標位置之後的匹配項
+	for i, m := range sb.matches {
+		if m.line > curLine || (m.line == curLine && m.col >= curCol) {
+			sb.activeIndex = i
+			return
+		}
+	}
+
+	// 若游標已在所有匹配項之後，則循環回第一個
+	sb.activeIndex = 0
+}
+
+func (sb *SearchBar) navigate(forward bool) {
+	// 只有在真正需要結果時才更新 matches
+	if sb.matches == nil {
+		sb.updateMatches()
+	}
+
+	count := len(sb.matches)
+	if count == 0 {
+		return
+	}
+
+	// 首次導航：尋找最接近游標的匹配項
+	if sb.activeIndex == -1 {
+		sb.setInitialActiveIndex()
+		// 如果是向上找(Prev)，在定位後需再往前退一格
+		if !forward {
+			sb.activeIndex = (sb.activeIndex - 1 + count) % count
+		}
+	} else {
+		// 常規移動
+		if forward {
+			sb.activeIndex = (sb.activeIndex + 1) % count
+		} else {
+			sb.activeIndex = (sb.activeIndex - 1 + count) % count
+		}
+	}
+
+	sb.syncEditor()
+}
+
+func (sb *SearchBar) syncEditor() {
+	m := sb.matches[sb.activeIndex]
+	tab := sb.root.tabs[sb.root.active]
+	if editor, ok := tab.body.(*ui.TextEditor); ok {
+		queryLen := len(sb.input.Text())
+		editor.JumpTo(m.line, m.col+queryLen)
+		editor.Select(m.line, m.col, m.line, m.col+queryLen)
+	}
+}
+
+func (sb *SearchBar) Layout(x, y, w, h int) *ui.LayoutNode {
+	countStr := " 0/0 "
+	if len(sb.matches) > 0 {
+		displayIdx := sb.activeIndex + 1
+		if sb.activeIndex == -1 {
+			displayIdx = 0
+		}
+		countStr = fmt.Sprintf(" %d/%d ", displayIdx, len(sb.matches))
+	}
+
+	view := ui.HStack(
+		ui.NewText("Find: ").PaddingH(1),
+		sb.input.Grow(),
+		ui.NewText(countStr).PaddingH(1),
+		sb.btnPrev,
+		sb.btnNext,
+	)
+	return view.Layout(x, y, w, h)
+}
+
+func (sb *SearchBar) MinSize() (int, int) {
+	return 10, 1
+}
+
+func (sb *SearchBar) Render(s ui.Screen, r ui.Rect) {}
+
+func (sb *SearchBar) HandleKey(ev *tcell.EventKey) {
+	switch ev.Key() {
+	case tcell.KeyEnter:
+		sb.navigate(true)
+		// can not detect key shift+enter,
+		// tcell's current implementation does not report modifier key Shift
+	case tcell.KeyUp:
+		sb.navigate(false)
+	case tcell.KeyDown:
+		sb.navigate(true)
+	case tcell.KeyESC:
+		// leave this as a backup, but the global
+		// binding will likely catch ESC first
+		sb.root.showSearch = false
+		ui.Default().Focus(sb.root)
+	default:
+		sb.input.HandleKey(ev)
+	}
+}
+
+func (sb *SearchBar) FocusTarget() ui.Element { return sb }
+func (sb *SearchBar) OnFocus()                { sb.input.OnFocus() }
+func (sb *SearchBar) OnBlur()                 { sb.input.OnBlur() }
