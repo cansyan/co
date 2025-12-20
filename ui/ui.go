@@ -597,6 +597,31 @@ func (t *TextEditor) SetText(s string) {
 	t.adjustCol()
 }
 
+func (t *TextEditor) JumpTo(row, col int) {
+	if row < 0 || row >= len(t.content) || col < 0 {
+		return
+	}
+	t.row = row
+	t.col = col
+	t.adjustCol()
+
+	// 1. Center the row
+	t.offsetY = row - (t.viewH / 2)
+
+	// 2. Limit the bottom (prevent scrolling into empty space)
+	// If file is shorter than viewH, maxOffsetY will be negative
+	maxOffsetY := len(t.content) - t.viewH
+	if t.offsetY > maxOffsetY {
+		t.offsetY = maxOffsetY
+	}
+
+	// 3. Limit the top (the ultimate safety net)
+	// This fixes negative offsets from step 1 OR step 2
+	if t.offsetY < 0 {
+		t.offsetY = 0
+	}
+}
+
 func (t *TextEditor) adjustCol() {
 	if t.row < len(t.content) {
 		lineLen := len(t.content[t.row])
@@ -1047,6 +1072,7 @@ func (t *TextEditor) OnScroll(dy int) {
 }
 
 // adjustScroll ensures the cursor (t.row) is visible on the screen.
+// It is intended for regular movement (arrow keys, typing)
 func (t *TextEditor) adjustScroll() {
 	// Scroll down if cursor is below the visible area
 	if t.row >= t.offsetY+t.viewH {

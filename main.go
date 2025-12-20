@@ -3,8 +3,12 @@ package main
 import (
 	"flag"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"tui/ui"
@@ -43,9 +47,11 @@ func main() {
 	}
 
 	app := ui.Default()
-	// app.SetFocusID("root", root)
 	app.Focus(root)
-	app.BindKey("Ctrl+P", root.showPalatte)
+	app.BindKey("Ctrl+P", root.showCmdPalatte)
+	app.BindKey("Ctrl+G", root.showLinePalette)
+	app.BindKey("Ctrl+O", root.showFilePalette)
+	app.BindKey("Ctrl+R", root.showSymbolPalette)
 	app.BindKey("Ctrl+S", root.saveFile)
 	app.BindKey("Ctrl+W", func() {
 		root.closeTab(root.active)
@@ -230,7 +236,7 @@ func (r *root) OnFocus()                     {}
 func (r *root) OnBlur()                      {}
 func (r *root) HandleKey(ev *tcell.EventKey) {}
 
-func (r *root) showPalatte() {
+func (r *root) showCmdPalatte() {
 	palette := NewPalette()
 	palette.Add("Color theme: Breaks", func() {
 		ui.Theme = ui.NewBreakersTheme()
@@ -246,7 +252,83 @@ func (r *root) showPalatte() {
 	ui.Default().Overlay(palette, "top")
 }
 
+func (r *root) showLinePalette() {
+	p := NewPalette()
+	p.SetText(":")
+	p.OnSubmit = func(text string) {
+		if !strings.HasPrefix(text, ":") {
+			return
+		}
+		lineStr := strings.TrimPrefix(text, ":")
+		var line int
+		fmt.Sscanf(lineStr, "%d", &line)
+
+		if tab := r.tabs[r.active]; tab != nil {
+			if editor, ok := tab.body.(*ui.TextEditor); ok {
+				editor.JumpTo(line-1, 0)
+			}
+		}
+	}
+	ui.Default().Overlay(p, "top")
+}
+
+func (r *root) showFilePalette() {
+	p := NewPalette()
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		log.Print(err)
+		return
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		p.Add(name, func() {
+			r.openFile(name)
+			ui.Default().Focus(r)
+		})
+	}
+
+	ui.Default().Overlay(p, "top")
+}
+
+func (r *root) showSymbolPalette() {
+	tab := r.tabs[r.active]
+	editor, ok := tab.body.(*ui.TextEditor)
+	if !ok {
+		return
+	}
+
+	p := NewPalette()
+	// p.SetText("@")
+
+	symbols := r.extractSymbols(tab.label, editor.String())
+	if len(symbols) == 0 {
+		r.status.Label = "No symbols found"
+		return
+	}
+
+	for _, s := range symbols {
+		p.Add(s.name, func() {
+			editor.JumpTo(s.line, 0)
+		})
+	}
+
+	ui.Default().Overlay(p, "top")
+}
+
 func (r *root) openFile(name string) error {
+	// tab existed, just switch
+	for i, tab := range r.tabs {
+		if tab.label == filepath.Base(name) {
+			r.active = i
+			return nil
+		}
+	}
+
 	bs, err := os.ReadFile(name)
 	if err != nil {
 		return err
@@ -385,8 +467,9 @@ type Palette struct {
 		Name   string
 		Action func()
 	}
-	input *ui.TextInput
-	list  *ui.ListView
+	input    *ui.TextInput
+	list     *ui.ListView
+	OnSubmit func(string) // directly handle Enter
 }
 
 func NewPalette() *Palette {
@@ -397,10 +480,27 @@ func NewPalette() *Palette {
 	p.list.Hovered = 0
 	p.input.OnChange(func() {
 		keyword := p.input.Text()
+		words := []string{keyword}
+		if strings.Contains(keyword, ".") {
+			words = strings.Split(keyword, ".")
+		} else if strings.Contains(keyword, " ") {
+			words = strings.Split(keyword, " ")
+		}
+
 		p.list.Clear()
 		p.list.Hovered = 0
 		for _, cmd := range p.cmds {
-			if keyword == "" || containIgnoreCase(cmd.Name, keyword) {
+			ok := true
+			for _, word := range words {
+				if word == "" {
+					continue
+				}
+				if !containIgnoreCase(cmd.Name, word) {
+					ok = false
+					break
+				}
+			}
+			if ok {
 				p.list.Append(cmd.Name, func() {
 					cmd.Action()
 					ui.Default().CloseOverlay()
@@ -409,6 +509,11 @@ func NewPalette() *Palette {
 		}
 	})
 	return p
+}
+
+func (p *Palette) SetText(text string) {
+	p.input.SetText(text)
+	p.input.OnFocus()
 }
 
 func (p *Palette) Add(name string, action func()) {
@@ -461,6 +566,9 @@ func (p *Palette) HandleKey(ev *tcell.EventKey) {
 			if item.Action != nil {
 				item.Action()
 			}
+		} else if p.OnSubmit != nil {
+			p.OnSubmit(p.input.Text())
+			ui.Default().CloseOverlay()
 		}
 	default:
 		p.input.HandleKey(ev)
@@ -551,3 +659,64 @@ func (m *SaveAs) FocusTarget() ui.Element {
 
 func (m *SaveAs) OnFocus() { m.input.OnFocus() }
 func (m *SaveAs) OnBlur()  {}
+
+type symbol struct {
+	name string
+	line int
+}
+
+func (r *root) extractSymbols(filename, content string) []symbol {
+	if path.Ext(filename) != ".go" || len(content) == 0 {
+		return nil
+	}
+	var symbols []symbol
+	fset := token.NewFileSet()
+
+	// 解析原始碼，這裡我們只需要解析宣告部分
+	f, err := parser.ParseFile(fset, filename, content, 0)
+	if err != nil {
+		log.Printf("parser: %v", err)
+		return nil
+	}
+
+	for _, decl := range f.Decls {
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			// 處理 Function 與 Method
+			name := d.Name.Name
+			if d.Recv != nil && len(d.Recv.List) > 0 {
+				// 取得 Receiver 名稱，例如 (r *root)
+				recv := ""
+				typeExpr := d.Recv.List[0].Type
+				switch t := typeExpr.(type) {
+				case *ast.Ident:
+					recv = t.Name
+				case *ast.StarExpr:
+					if id, ok := t.X.(*ast.Ident); ok {
+						recv = "*" + id.Name
+					}
+				}
+				name = fmt.Sprintf("(%s).%s", recv, name)
+			}
+
+			symbols = append(symbols, symbol{
+				name: name,
+				line: fset.Position(d.Pos()).Line - 1,
+			})
+
+		case *ast.GenDecl:
+			// 處理 type 宣告 (struct, interface 等)
+			if d.Tok == token.TYPE {
+				for _, spec := range d.Specs {
+					if ts, ok := spec.(*ast.TypeSpec); ok {
+						symbols = append(symbols, symbol{
+							name: "type " + ts.Name.Name,
+							line: fset.Position(ts.Pos()).Line - 1,
+						})
+					}
+				}
+			}
+		}
+	}
+	return symbols
+}
