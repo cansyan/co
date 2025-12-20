@@ -328,11 +328,12 @@ func (b *Button) Background(color string) *Button {
 // TextInput is a single-line editable text input field.
 type TextInput struct {
 	*Modifier
-	text     []rune
-	cursor   int
-	focused  bool
-	style    Style
-	onChange func()
+	text        []rune
+	cursor      int
+	focused     bool
+	style       Style
+	onChange    func()
+	placeHolder string
 }
 
 func NewTextInput() *TextInput {
@@ -355,6 +356,10 @@ func (t *TextInput) OnChange(fn func()) *TextInput {
 	return t
 }
 
+func (t *TextInput) SetPlaceholder(s string) {
+	t.placeHolder = s
+}
+
 func (t *TextInput) Foreground(c string) *TextInput {
 	t.style.FG = c
 	return t
@@ -364,7 +369,9 @@ func (t *TextInput) Background(c string) *TextInput {
 	return t
 }
 
-func (t *TextInput) MinSize() (int, int) { return 10, 1 }
+func (t *TextInput) MinSize() (int, int) {
+	return 10, 1
+}
 
 func (t *TextInput) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
@@ -374,12 +381,17 @@ func (t *TextInput) Layout(x, y, w, h int) *LayoutNode {
 }
 
 func (t *TextInput) Render(s Screen, rect Rect) {
-	st := t.style.Apply()
-	text := runewidth.FillRight(string(t.text), rect.W)
-	DrawString(s, rect.X, rect.Y, rect.W, text, st)
 	if t.focused && t.cursor < rect.W {
 		s.ShowCursor(rect.X+t.cursor, rect.Y)
 	}
+	if len(t.text) == 0 {
+		DrawString(s, rect.X, rect.Y, rect.W, t.placeHolder, Theme.Syntax.Comment.Apply())
+		return
+	}
+
+	st := t.style.Apply()
+	text := runewidth.FillRight(string(t.text), rect.W)
+	DrawString(s, rect.X, rect.Y, rect.W, text, st)
 }
 
 func (t *TextInput) FocusTarget() Element { return t }

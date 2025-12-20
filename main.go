@@ -52,6 +52,7 @@ func main() {
 	app.BindKey("Ctrl+G", root.showLinePalette)
 	app.BindKey("Ctrl+O", root.showFilePalette)
 	app.BindKey("Ctrl+R", root.showSymbolPalette)
+	app.BindKey("Ctrl+F", root.showSearchPalette)
 	app.BindKey("Ctrl+S", root.saveFile)
 	app.BindKey("Ctrl+W", func() {
 		root.closeTab(root.active)
@@ -320,6 +321,49 @@ func (r *root) showSymbolPalette() {
 	ui.Default().Overlay(p, "top")
 }
 
+func (r *root) showSearchPalette() {
+	tab := r.tabs[r.active]
+	editor, ok := tab.body.(*ui.TextEditor)
+	if !ok {
+		return
+	}
+
+	p := NewPalette()
+	p.input.SetPlaceholder("Search text...")
+
+	// Override default OnChange for live file searching
+	p.input.OnChange(func() {
+		query := strings.ToLower(p.input.Text())
+		p.list.Clear()
+		p.list.Hovered = 0
+		if query == "" {
+			return
+		}
+
+		// Iterate through lines to find matches
+		content := editor.String()
+		lines := strings.Split(content, "\n")
+		for i, line := range lines {
+			if idx := strings.Index(strings.ToLower(line), query); idx != -1 {
+				lineNum := i
+				colNum := idx
+				// Display line number and trimmed content
+				display := fmt.Sprintf("%d: %s", i+1, strings.TrimSpace(line))
+
+				p.list.Append(display, func() {
+					editor.JumpTo(lineNum, colNum)
+					ui.Default().Focus(r)
+				})
+				if len(p.list.Items) >= 10 {
+					break
+				}
+			}
+		}
+	})
+
+	ui.Default().Overlay(p, "top")
+}
+
 func (r *root) openFile(name string) error {
 	// tab existed, just switch
 	for i, tab := range r.tabs {
@@ -479,7 +523,7 @@ func NewPalette() *Palette {
 	}
 	p.list.Hovered = 0
 	p.input.OnChange(func() {
-		keyword := p.input.Text()
+		keyword := strings.ToLower(p.input.Text())
 		words := []string{keyword}
 		if strings.Contains(keyword, ".") {
 			words = strings.Split(keyword, ".")
@@ -495,7 +539,7 @@ func NewPalette() *Palette {
 				if word == "" {
 					continue
 				}
-				if !containIgnoreCase(cmd.Name, word) {
+				if !strings.Contains(strings.ToLower(cmd.Name), word) {
 					ok = false
 					break
 				}
@@ -529,9 +573,9 @@ func (p *Palette) Add(name string, action func()) {
 }
 
 func (p *Palette) MinSize() (int, int) {
-	w1, h1 := 30, 1 // input box size
-	w2, h2 := p.list.MinSize()
-	return max(w1, w2) + 2, h1 + h2 + 2 // +2 for the border
+	w1, h1 := 60, 1 // input box size
+	_, h2 := p.list.MinSize()
+	return w1 + 2, h1 + h2 + 2 // +2 for the border
 }
 
 func (p *Palette) Layout(x, y, w, h int) *ui.LayoutNode {
@@ -580,12 +624,6 @@ func (p *Palette) FocusTarget() ui.Element {
 }
 func (p *Palette) OnFocus() { p.input.OnFocus() }
 func (p *Palette) OnBlur()  {}
-
-func containIgnoreCase(s, substr string) bool {
-	s = strings.ToLower(s)
-	substr = strings.ToLower(substr)
-	return strings.Contains(s, substr)
-}
 
 type SaveAs struct {
 	child ui.Element
