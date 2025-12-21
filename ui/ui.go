@@ -1431,7 +1431,6 @@ var Spacer = Grow(Empty{})
 // layoutSpec is a decorator.
 // It can acts like marker, tells the layout algorithm the grow a element.
 // It can acts like wrapper, wraps element and changes it's rendering (padding, border, frame).
-// When chaining layoutSpec, the order matters.
 type layoutSpec struct {
 	Element
 	grow                   int // the weight to grow
@@ -1488,8 +1487,11 @@ func (s layoutSpec) Layout(x, y, w, h int) *LayoutNode {
 		ih = s.height
 	}
 
-	// 呼叫子組件的 Layout
-	return s.Element.Layout(ix, iy, iw, ih)
+	return &LayoutNode{
+		Element:  s,
+		Rect:     Rect{X: x, Y: y, W: w, H: h},
+		Children: []*LayoutNode{s.Element.Layout(ix, iy, iw, ih)},
+	}
 }
 
 // 實作 Render: 繪製裝飾（Border）
@@ -1509,38 +1511,34 @@ func getSpec(e Element) layoutSpec {
 	return layoutSpec{Element: e}
 }
 
-// Grow is a marker that tells layout algorithm to grow the element
-// TODO: accept argument weight
-func Grow(e Element) Element {
-	s := getSpec(e)
-	s.grow = 1
-	return s
-}
-
 // --- Functional Options ---
 
 // Pad is a wrapper that adds spaces around the element
 func Pad(e Element, amount int) Element {
-	return layoutSpec{
-		Element: e,
-		padL:    amount, padR: amount, padT: amount, padB: amount,
-	}
+	// Current implementation merges layoutSpec,
+	// does not distint inner/outer padding.
+	// If needed, allow nesting layoutSpec.
+	s := getSpec(e)
+	s.padT, s.padB, s.padL, s.padR = amount, amount, amount, amount
+	return s
 }
 
 func PadH(e Element, amount int) Element {
-	return layoutSpec{
-		Element: e,
-		padL:    amount,
-		padR:    amount,
-	}
+	s := getSpec(e)
+	s.padL, s.padR = amount, amount
+	return s
 }
 
 func PadV(e Element, amount int) Element {
-	return layoutSpec{
-		Element: e,
-		padT:    amount,
-		padB:    amount,
-	}
+	s := getSpec(e)
+	s.padT, s.padB = amount, amount
+	return s
+}
+
+func Grow(e Element) Element {
+	s := getSpec(e)
+	s.grow = 1
+	return s
 }
 
 func Frame(e Element, w, h int) Element {
@@ -1550,10 +1548,9 @@ func Frame(e Element, w, h int) Element {
 }
 
 func Border(e Element) Element {
-	return layoutSpec{
-		Element: e,
-		border:  true,
-	}
+	s := getSpec(e)
+	s.border = true
+	return s
 }
 
 // vstack is a vertical layout container.
@@ -1595,10 +1592,11 @@ func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
 	totalH := 0
 	totalGrow := 0
 	for _, child := range v.children {
-		_, ch := child.MinSize()
-		totalH += ch
 		if i, ok := child.(layoutSpec); ok {
 			totalGrow += i.grow
+		} else {
+			_, ch := child.MinSize()
+			totalH += ch
 		}
 	}
 
@@ -1621,7 +1619,7 @@ func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
 			if expand > spare {
 				expand = spare
 			}
-			ch += expand
+			ch = expand
 			spare -= expand
 		}
 		if used+ch > h {
@@ -1692,10 +1690,11 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 	totalWidth := 0
 	totalGrow := 0
 	for _, child := range hs.children {
-		cw, _ := child.MinSize()
-		totalWidth += cw
 		if s, ok := child.(layoutSpec); ok {
 			totalGrow += s.grow
+		} else {
+			cw, _ := child.MinSize()
+			totalWidth += cw
 		}
 	}
 
@@ -1715,7 +1714,7 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 		cw, _ := child.MinSize()
 		if s, ok := child.(layoutSpec); ok && s.grow > 0 {
 			expand := min(int(math.Ceil(float64(s.grow)*share)), remain)
-			cw += expand
+			cw = expand
 			remain -= expand
 		}
 		if used+cw > w {

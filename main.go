@@ -620,8 +620,8 @@ func NewSaveAs(action func(string)) *SaveAs {
 		ui.Default().CloseOverlay()
 	}).Background(ui.Theme.Selection)
 
-	view := ui.Border(ui.Frame(
-		ui.VStack(
+	view := ui.Frame(
+		ui.Border(ui.VStack(
 			ui.PadH(ui.HStack(
 				msg,
 				ui.Grow(input),
@@ -632,8 +632,8 @@ func NewSaveAs(action func(string)) *SaveAs {
 				ui.Spacer,
 				btnOK,
 			), 4),
-		).Spacing(1),
-		28, 0), // FIXME the height
+		).Spacing(1)),
+		28, 0,
 	)
 
 	return &SaveAs{
