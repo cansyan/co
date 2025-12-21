@@ -132,18 +132,18 @@ func (r *root) closeTab(i int) {
 	}
 
 	// Prompt to save changes.
-	view := ui.VStack(
-		ui.NewText("Save the changes before closing?").PaddingH(1),
-		ui.HStack(
+	view := ui.Border(ui.VStack(
+		ui.PadH(ui.NewText("Save the changes before closing?"), 1),
+		ui.PadH(ui.HStack(
 			ui.NewButton("Don't Save", func() {
 				r.deleteTab(i)
 				ui.Default().CloseOverlay()
 				ui.Default().Focus(r)
 			}),
 
-			ui.NewButton("Cancel", func() {
+			ui.PadH(ui.NewButton("Cancel", func() {
 				ui.Default().CloseOverlay()
-			}).PaddingH(2),
+			}), 2),
 
 			ui.NewButton("Save", func() {
 				if path := tab.label; path != "untitled" {
@@ -172,8 +172,8 @@ func (r *root) closeTab(i int) {
 				})
 				ui.Default().Overlay(sa, "center")
 			}).Background(ui.Theme.Selection),
-		).PaddingH(2),
-	).Spacing(1).Border()
+		), 2),
+	).Spacing(1))
 	ui.Default().Overlay(view, "top")
 }
 
@@ -209,22 +209,21 @@ func (r *root) MinSize() (int, int) {
 }
 
 func (r *root) Layout(x, y, w, h int) *ui.LayoutNode {
-	labelView := ui.HStack()
+	tabLabels := ui.HStack()
 	for i, tab := range r.tabs {
-		labelView.Append(tab)
+		tabLabels.Append(tab)
 		if i != len(r.tabs)-1 {
-			labelView.Append(ui.Divider())
+			tabLabels.Append(ui.Divider())
 		}
-	}
-	editorView := ui.VStack(
-		ui.HStack(labelView.Grow(), r.btnNew, r.btnSave, r.btnQuit),
-	)
-	if len(r.tabs) > 0 {
-		editorView.Append(ui.Grow(r.tabs[r.active].body))
 	}
 
 	mainStack := ui.VStack()
-	mainStack.Append(editorView.Grow())
+	mainStack.Append(
+		ui.HStack(ui.Grow(tabLabels), r.btnNew, r.btnSave, r.btnQuit),
+	)
+	if len(r.tabs) > 0 {
+		mainStack.Append(ui.Grow(r.tabs[r.active].body))
+	}
 	if r.showSearch {
 		mainStack.Append(ui.Divider(), r.searchBar)
 	}
@@ -560,10 +559,10 @@ func (p *Palette) Layout(x, y, w, h int) *ui.LayoutNode {
 		Element: p,
 		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
 	}
-	view := ui.VStack(
+	view := ui.Border(ui.VStack(
 		p.input,
 		p.list,
-	).Border()
+	))
 	n.Children = append(n.Children, view.Layout(x, y, w, h))
 	return n
 }
@@ -621,18 +620,21 @@ func NewSaveAs(action func(string)) *SaveAs {
 		ui.Default().CloseOverlay()
 	}).Background(ui.Theme.Selection)
 
-	view := ui.VStack(
-		ui.HStack(
-			msg,
-			input.Grow(),
-		).PaddingH(1),
+	view := ui.Border(ui.Frame(
+		ui.VStack(
+			ui.PadH(ui.HStack(
+				msg,
+				ui.Grow(input),
+			), 1),
 
-		ui.HStack(
-			btnCancel,
-			ui.Spacer,
-			btnOK,
-		).PaddingH(4),
-	).Spacing(1).Frame(28, 0).Border()
+			ui.PadH(ui.HStack(
+				btnCancel,
+				ui.Spacer,
+				btnOK,
+			), 4),
+		).Spacing(1),
+		28, 0), // FIXME the height
+	)
 
 	return &SaveAs{
 		child: view,
@@ -900,9 +902,9 @@ func (sb *SearchBar) Layout(x, y, w, h int) *ui.LayoutNode {
 	}
 
 	view := ui.HStack(
-		ui.NewText("Find: ").PaddingH(1),
+		ui.PadH(ui.NewText("Find: "), 1),
 		ui.Grow(sb.input),
-		ui.NewText(countStr).PaddingH(1),
+		ui.PadH(ui.NewText(countStr), 1),
 		sb.btnPrev,
 		sb.btnNext,
 	)
