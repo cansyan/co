@@ -743,7 +743,7 @@ type match struct {
 
 type SearchBar struct {
 	root        *root
-	input       *ui.TextInput
+	input       *proxyInput
 	btnPrev     *ui.Button
 	btnNext     *ui.Button
 	matches     []match
@@ -752,8 +752,10 @@ type SearchBar struct {
 
 func NewSearchBar(r *root) *SearchBar {
 	sb := &SearchBar{root: r, activeIndex: -1}
-	sb.input = ui.NewTextInput()
-
+	sb.input = &proxyInput{
+		TextInput: ui.NewTextInput(),
+		parent:    sb,
+	}
 	// Lazy Evaluation:
 	// 當文字改變時，僅標記狀態為「需要重新掃描」，但不立即掃描
 	// 真正的計算成本被推遲到了使用者按下 Enter、Next 或 Prev 的那一刻
@@ -899,7 +901,7 @@ func (sb *SearchBar) Layout(x, y, w, h int) *ui.LayoutNode {
 
 	view := ui.HStack(
 		ui.NewText("Find: ").PaddingH(1),
-		sb.input.Grow(),
+		ui.Grow(sb.input),
 		ui.NewText(countStr).PaddingH(1),
 		sb.btnPrev,
 		sb.btnNext,
@@ -934,5 +936,25 @@ func (sb *SearchBar) HandleKey(ev *tcell.EventKey) {
 }
 
 func (sb *SearchBar) FocusTarget() ui.Element { return sb }
-func (sb *SearchBar) OnFocus()                { sb.input.OnFocus() }
-func (sb *SearchBar) OnBlur()                 { sb.input.OnBlur() }
+func (sb *SearchBar) OnFocus() {
+	// make TextInput show cursor
+	sb.input.OnFocus()
+}
+func (sb *SearchBar) OnBlur() { sb.input.OnBlur() }
+
+// proxy TextInput, can redirect the focus to parent.
+type proxyInput struct {
+	*ui.TextInput
+	parent ui.Element
+}
+
+func (p *proxyInput) Layout(x, y, w, h int) *ui.LayoutNode {
+	return &ui.LayoutNode{
+		Element: p,
+		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
+	}
+}
+
+func (p *proxyInput) FocusTarget() ui.Element {
+	return p.parent
+}

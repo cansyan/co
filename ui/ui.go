@@ -22,6 +22,7 @@ type Screen = tcell.Screen
 type Element interface {
 	MinSize() (w, h int)
 	// Layout computes the layout node for this element given the position and size.
+	// Children elements that not in the LayoutNode, will not pass hittest nor get focus
 	Layout(x, y, w, h int) *LayoutNode
 	// Render draws the element onto the screen within the given rectangle.
 	Render(s Screen, rect Rect)
@@ -53,9 +54,8 @@ type Scrollable interface {
 
 // Focusable represents an element that can receive focus.
 type Focusable interface {
-	// FocusTarget determines which element should actually receive focus.
-	//   - To retain focus on the element itself, return the element (self).
-	//   - To delegate focus to a child element, return that child.
+	// FocusTarget determines whom should actually receive focus.
+	// Can be used to retain or delegate focus.
 	FocusTarget() Element
 	// OnFocus is called when the element receives focus.
 	OnFocus()
@@ -2095,7 +2095,6 @@ func hitTest(n *LayoutNode, p Point) (Element, Point) {
 // }
 
 func (a *App) Focus(e Element) {
-	log.Printf("focus: %T -> %T", a.focused, e)
 	if e == nil {
 		if a.focused != nil {
 			if f, ok := a.focused.(Focusable); ok {
