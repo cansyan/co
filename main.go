@@ -547,7 +547,11 @@ func (p *Palette) Add(name string, action func()) {
 
 func (p *Palette) MinSize() (int, int) {
 	w1, h1 := 60, 1 // input box size
+	// avoid full screen list items
 	_, h2 := p.list.MinSize()
+	if h2 > 15 {
+		h2 = 15
+	}
 	return w1 + 2, h1 + h2 + 2 // +2 for the border
 }
 
