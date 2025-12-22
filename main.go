@@ -49,6 +49,8 @@ func main() {
 
 	app := ui.Default()
 	app.Focus(root)
+	app.BindKey("Ctrl+D", root.selectWord)
+	app.BindKey("Ctrl+L", root.selectLine)
 	app.BindKey("Ctrl+P", root.showCmdPalatte)
 	app.BindKey("Ctrl+G", root.showLinePalette)
 	app.BindKey("Ctrl+O", root.showFilePalette)
@@ -278,7 +280,8 @@ func (r *root) showLinePalette() {
 
 		if tab := r.tabs[r.active]; tab != nil {
 			if editor, ok := tab.body.(*ui.TextEditor); ok {
-				editor.JumpTo(line-1, 0)
+				editor.SetCursor(line-1, 0)
+				editor.CenterRow(line - 1)
 			}
 		}
 	}
@@ -326,7 +329,8 @@ func (r *root) showSymbolPalette() {
 
 	for _, s := range symbols {
 		p.Add(s.name, func() {
-			editor.JumpTo(s.line, 0)
+			editor.SetCursor(s.line, 0)
+			editor.CenterRow(s.line)
 		})
 	}
 
@@ -883,7 +887,8 @@ func (sb *SearchBar) syncEditor() {
 	tab := sb.root.tabs[sb.root.active]
 	if editor, ok := tab.body.(*ui.TextEditor); ok {
 		queryLen := len(sb.input.Text())
-		editor.JumpTo(m.line, m.col+queryLen)
+		editor.SetCursor(m.line, m.col+queryLen)
+		editor.CenterRow(m.line)
 		editor.Select(m.line, m.col, m.line, m.col+queryLen)
 	}
 }
@@ -958,4 +963,32 @@ func (p *proxyInput) Layout(x, y, w, h int) *ui.LayoutNode {
 
 func (p *proxyInput) FocusTarget() ui.Element {
 	return p.parent
+}
+
+// if no selection, select the word under the cursor;
+// if has selection, jump to the next same word, like * in Vim.
+//
+// To keep things simple, this is not multiple selection (multi-cursor).
+func (r *root) selectWord() {
+	tab := r.tabs[r.active]
+	editor, ok := tab.body.(*ui.TextEditor)
+	if !ok {
+		return
+	}
+	_, _, _, _, ok = editor.Selection()
+	if !ok {
+		editor.SelectWord()
+	} else {
+		query := editor.GetSelectedText()
+		editor.FindNext(query)
+	}
+}
+
+func (r *root) selectLine() {
+	tab := r.tabs[r.active]
+	editor, ok := tab.body.(*ui.TextEditor)
+	if !ok {
+		return
+	}
+	editor.SelectLine()
 }

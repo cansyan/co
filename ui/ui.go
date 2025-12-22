@@ -558,6 +558,10 @@ func (t *TextEditor) Background(c string) *TextEditor {
 	return t
 }
 
+func (t *TextEditor) Len() int {
+	return len(t.content)
+}
+
 func (t *TextEditor) String() string {
 	var sb strings.Builder
 	for i, line := range t.content {
@@ -588,26 +592,53 @@ func (t *TextEditor) Cursor() (row, col int) {
 	return t.row, t.col
 }
 
-func (t *TextEditor) JumpTo(row, col int) {
+func (t *TextEditor) SetCursor(row, col int) {
 	if row < 0 || row >= len(t.content) || col < 0 {
 		return
 	}
 	t.row = row
 	t.col = col
 	t.adjustCol()
+}
 
-	// 1. Center the row
-	t.offsetY = row - (t.viewH / 2)
-
-	// 2. Limit the bottom (prevent scrolling into empty space)
-	// If file is shorter than viewH, maxOffsetY will be negative
-	maxOffsetY := len(t.content) - t.viewH
-	if t.offsetY > maxOffsetY {
-		t.offsetY = maxOffsetY
+// CenterRow 僅負責將特定行移動到螢幕中心，提供最大上下視野
+// mainly for jumping to search result, symbol
+func (t *TextEditor) CenterRow(row int) {
+	if t.viewH <= 0 {
+		return
 	}
 
-	// 3. Limit the top (the ultimate safety net)
-	// This fixes negative offsets from step 1 OR step 2
+	t.offsetY = row - (t.viewH / 2)
+	t.clampScroll() // 抽離出的邊界檢查邏輯
+}
+
+// ScrollTo adjusts offsetY to ensures the row is visible on the screen,
+// does minimal scrolling, and mainly for arrow key movement and typing.
+func (t *TextEditor) ScrollTo(row int) {
+	if t.viewH <= 0 {
+		return
+	}
+
+	const scrolloff = 1 // 預留 1 行邊距，體驗更好
+
+	// 處理下方出界
+	if t.row >= t.offsetY+t.viewH-scrolloff {
+		t.offsetY = t.row - t.viewH + 1 + scrolloff
+	}
+
+	// 處理上方出界
+	if t.row < t.offsetY+scrolloff {
+		t.offsetY = t.row - scrolloff
+	}
+
+	t.clampScroll()
+}
+
+func (t *TextEditor) clampScroll() {
+	maxOffset := max(0, len(t.content)-t.viewH)
+	if t.offsetY > maxOffset {
+		t.offsetY = maxOffset
+	}
 	if t.offsetY < 0 {
 		t.offsetY = 0
 	}
@@ -731,7 +762,7 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		return
 	}
 
-	selStartRow, selStartCol, selEndRow, selEndCol, selOK := t.selection()
+	selStartRow, selStartCol, selEndRow, selEndCol, selOK := t.Selection()
 	selected := func(row, col int) bool {
 		if !selOK {
 			return false
@@ -825,7 +856,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 
 	switch ev.Key() {
 	case tcell.KeyUp:
-		if _, _, _, _, ok := t.selection(); ok {
+		if _, _, _, _, ok := t.Selection(); ok {
 			t.unselect()
 		}
 		keepVisualCol = true
@@ -836,10 +867,10 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.row--
 			t.col = visualColToLine(t.content[t.row], t.desiredVisualCol)
 			t.adjustCol()
-			t.adjustScroll()
+			t.ScrollTo(t.row)
 		}
 	case tcell.KeyDown:
-		if _, _, _, _, ok := t.selection(); ok {
+		if _, _, _, _, ok := t.Selection(); ok {
 			t.unselect()
 		}
 		keepVisualCol = true
@@ -850,10 +881,10 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.row++
 			t.col = visualColToLine(t.content[t.row], t.desiredVisualCol)
 			t.adjustCol()
-			t.adjustScroll()
+			t.ScrollTo(t.row)
 		}
 	case tcell.KeyLeft:
-		if startRow, startCol, _, _, ok := t.selection(); ok {
+		if startRow, startCol, _, _, ok := t.Selection(); ok {
 			t.row, t.col = startRow, startCol
 			t.unselect()
 			return
@@ -863,10 +894,10 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		} else if t.row > 0 {
 			t.row--
 			t.col = len(t.content[t.row]) // End of previous line
-			t.adjustScroll()
+			t.ScrollTo(t.row)
 		}
 	case tcell.KeyRight:
-		if _, _, endRow, endCol, ok := t.selection(); ok {
+		if _, _, endRow, endCol, ok := t.Selection(); ok {
 			t.row, t.col = endRow, endCol
 			t.unselect()
 			return
@@ -876,10 +907,10 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		} else if t.row < len(t.content)-1 {
 			t.row++
 			t.col = 0 // Start of next line
-			t.adjustScroll()
+			t.ScrollTo(t.row)
 		}
 	case tcell.KeyEnter:
-		if startRow, startCol, endRow, endCol, ok := t.selection(); ok {
+		if startRow, startCol, endRow, endCol, ok := t.Selection(); ok {
 			t.DeleteRange(startRow, startCol, endRow, endCol)
 			t.unselect()
 		}
@@ -892,10 +923,10 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 
 		t.row++
 		t.col = 0
-		t.adjustScroll()
+		t.ScrollTo(t.row)
 		t.Dirty = true
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
-		if startRow, startCol, endRow, endCol, ok := t.selection(); ok {
+		if startRow, startCol, endRow, endCol, ok := t.Selection(); ok {
 			t.DeleteRange(startRow, startCol, endRow, endCol)
 			t.unselect()
 			return
@@ -910,11 +941,11 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 
 			t.content = slices.Delete(t.content, t.row, t.row+1)
 			t.row--
-			t.adjustScroll()
+			t.ScrollTo(t.row)
 		}
 		t.Dirty = true
 	case tcell.KeyDelete:
-		if startRow, startCol, endRow, endCol, ok := t.selection(); ok {
+		if startRow, startCol, endRow, endCol, ok := t.Selection(); ok {
 			t.DeleteRange(startRow, startCol, endRow, endCol)
 			t.unselect()
 			return
@@ -927,7 +958,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		}
 		t.Dirty = true
 	case tcell.KeyRune:
-		if startRow, startCol, endRow, endCol, ok := t.selection(); ok {
+		if startRow, startCol, endRow, endCol, ok := t.Selection(); ok {
 			t.DeleteRange(startRow, startCol, endRow, endCol)
 			t.unselect()
 		}
@@ -936,7 +967,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		t.col++
 		t.Dirty = true
 	case tcell.KeyTAB:
-		if startRow, startCol, endRow, endCol, ok := t.selection(); ok {
+		if startRow, startCol, endRow, endCol, ok := t.Selection(); ok {
 			t.DeleteRange(startRow, startCol, endRow, endCol)
 			t.unselect()
 		}
@@ -1037,9 +1068,9 @@ func (t *TextEditor) unselect() {
 	t.selectEnd.col = 0
 }
 
-// selection returns the current selection range, normalized.
-// If no selection, ok is false.
-func (t *TextEditor) selection() (startRow, startCol, endRow, endCol int, ok bool) {
+// Selection returns the current Selection range, normalized.
+// If no Selection, ok is false.
+func (t *TextEditor) Selection() (startRow, startCol, endRow, endCol int, ok bool) {
 	startRow = t.selectStart.row
 	startCol = t.selectStart.col
 	endRow = t.selectEnd.row
@@ -1057,6 +1088,144 @@ func (t *TextEditor) selection() (startRow, startCol, endRow, endCol int, ok boo
 	return
 }
 
+// SelectWord 擴展當前游標到單詞邊界
+func (t *TextEditor) SelectWord() {
+	if len(t.content) == 0 || t.row >= len(t.content) {
+		return
+	}
+	line := t.content[t.row]
+	if len(line) == 0 {
+		return
+	}
+
+	start, end := findWordBoundaries(line, t.col)
+	t.selectStart.row, t.selectStart.col = t.row, start
+	t.selectEnd.row, t.selectEnd.col = t.row, end
+	// 讓游標停在單詞末尾，方便下次搜尋從末尾開始
+	t.col = end
+}
+
+// SelectLine 擴展選中到整行
+func (t *TextEditor) SelectLine() {
+	if len(t.content) == 0 || t.row >= len(t.content) {
+		return
+	}
+	if t.row < len(t.content)-1 {
+		// 選中整行，並將游標移至下一行開頭（模仿主流編輯器行為）
+		t.Select(t.row, 0, t.row+1, 0)
+		t.row, t.col = t.row+1, 0
+	} else {
+		t.Select(t.row, 0, t.row, len(t.content[t.row]))
+		t.row, t.col = t.row+1, len(t.content[t.row])
+	}
+}
+
+// FindNext 尋找下一個匹配項並更新選區
+func (t *TextEditor) FindNext(query string) {
+	if query == "" {
+		return
+	}
+	qRunes := []rune(query)
+	qLen := len(qRunes)
+	lineCount := len(t.content)
+
+	// 從當前位置之後開始搜尋
+	startRow := t.row
+	startCol := t.col
+
+	for i := 0; i < lineCount; i++ {
+		// 使用取模實現 Wrap Around (循環搜尋)
+		currentRow := (startRow + i) % lineCount
+		line := t.content[currentRow]
+
+		// 如果是起始行，從當前列開始找；否則從行首開始找
+		searchFromCol := 0
+		if i == 0 {
+			searchFromCol = startCol
+		}
+
+		if searchFromCol >= len(line) && i == 0 {
+			continue
+		}
+
+		// 在當前行中尋找匹配
+		foundIdx := -1
+		remaining := line[searchFromCol:]
+		for j := 0; j <= len(remaining)-qLen; j++ {
+			match := true
+			for k := 0; k < qLen; k++ {
+				if remaining[j+k] != qRunes[k] {
+					match = false
+					break
+				}
+			}
+			if match {
+				foundIdx = j
+				break
+			}
+		}
+
+		if foundIdx != -1 {
+			// 找到匹配項後的座標計算
+			actualCol := searchFromCol + foundIdx
+
+			// 1. 更新選區：從匹配項開始到結束
+			t.selectStart.row, t.selectStart.col = currentRow, actualCol
+			t.selectEnd.row, t.selectEnd.col = currentRow, actualCol+qLen
+
+			// 2. 更新游標位置至匹配項末尾
+			t.row = currentRow
+			t.col = actualCol + qLen
+
+			// 3. 確保視覺調整
+			t.CenterRow(currentRow)
+			if t.onChange != nil {
+				t.onChange()
+			}
+			return
+		}
+	}
+}
+
+// GetSelectedText 回傳當前選區的字串內容（僅限單行）
+func (t *TextEditor) GetSelectedText() string {
+	sRow, sCol, eRow, eCol, ok := t.Selection()
+	if !ok || sRow != eRow {
+		return ""
+	}
+	return string(t.content[sRow][sCol:eCol])
+}
+
+func findWordBoundaries(line []rune, pos int) (start, end int) {
+	isWordChar := func(r rune) bool {
+		return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_'
+	}
+
+	if pos >= len(line) {
+		pos = len(line) - 1
+	}
+	if pos < 0 {
+		return 0, 0
+	}
+
+	// 向左找
+	start = pos
+	for start > 0 && isWordChar(line[start-1]) {
+		start--
+	}
+	// 向右找
+	end = pos
+	if end < len(line) && isWordChar(line[end]) {
+		for end < len(line) && isWordChar(line[end]) {
+			end++
+		}
+	} else if end < len(line) {
+		// 如果游標不在單詞上，至少選中當前字符
+		end++
+	}
+	return start, end
+}
+
 func (t *TextEditor) OnScroll(dy int) {
 	if len(t.content) <= t.viewH {
 		t.offsetY = 0
@@ -1069,23 +1238,10 @@ func (t *TextEditor) OnScroll(dy int) {
 	}
 }
 
-// adjustScroll ensures the cursor (t.row) is visible on the screen.
-// It is intended for regular movement (arrow keys, typing)
-func (t *TextEditor) adjustScroll() {
-	// Scroll down if cursor is below the visible area
-	if t.row >= t.offsetY+t.viewH {
-		t.offsetY = t.row - t.viewH + 1
-	}
-	// Scroll up if cursor is above the visible area
-	if t.row < t.offsetY {
-		t.offsetY = t.row
-	}
-}
-
 // Cursor returns the current content index
 func (t *TextEditor) Debug() string {
 	s := fmt.Sprintf("Line %d, Column %d", t.row+1, t.col+1)
-	if startRow, startCol, endRow, endCol, ok := t.selection(); ok {
+	if startRow, startCol, endRow, endCol, ok := t.Selection(); ok {
 		s += fmt.Sprintf(", Selecting from (%d, %d) to (%d, %d)",
 			startRow+1, startCol+1, endRow+1, endCol+1)
 	}
@@ -1097,7 +1253,10 @@ func (t *TextEditor) OnChange(fn func()) {
 	t.onChange = fn
 }
 
-// func (t *TextEditor) Grow(weight ...int) *grower { return Grow(t, weight...) }
+// Line return a line of text on the given row index.
+func (t *TextEditor) Line(i int) []rune {
+	return slices.Clone(t.content[i])
+}
 
 // InsertText simulates a paste operation: it inserts a string 's' at the current
 // cursor position (t.row, t.col), correctly handling any embedded newlines ('\n').
@@ -1150,7 +1309,7 @@ func (t *TextEditor) InsertText(s string) {
 		t.col = len(t.content[t.row]) - len(tail)
 	}
 
-	t.adjustScroll()
+	t.ScrollTo(t.row)
 	t.Dirty = true
 	if t.onChange != nil {
 		t.onChange()
@@ -1206,7 +1365,7 @@ func (t *TextEditor) DeleteRange(startRow, startCol, endRow, endCol int) {
 	t.col = len(head)
 
 	t.adjustCol()
-	t.adjustScroll()
+	t.ScrollTo(t.row)
 	t.Dirty = true
 	if t.onChange != nil {
 		t.onChange()
