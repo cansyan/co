@@ -229,11 +229,8 @@ func (r *root) Layout(x, y, w, h int) *ui.LayoutNode {
 	}
 	mainStack.Append(ui.Divider(), r.status)
 
-	n := &ui.LayoutNode{
-		Element: r,
-		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
-	}
-	n.Children = append(n.Children, mainStack.Layout(x, y, w, h))
+	n := ui.NewLayoutNode(r, x, y, w, h)
+	n.Children = []*ui.LayoutNode{mainStack.Layout(x, y, w, h)}
 	return n
 }
 
@@ -901,14 +898,16 @@ func (sb *SearchBar) Layout(x, y, w, h int) *ui.LayoutNode {
 		countStr = fmt.Sprintf(" %d/%d ", displayIdx, len(sb.matches))
 	}
 
+	node := ui.NewLayoutNode(sb, x, y, w, h)
 	view := ui.HStack(
-		ui.PadH(ui.NewText("Find: "), 1),
+		ui.PadH(ui.NewText("Find:"), 1),
 		ui.Grow(sb.input),
 		ui.PadH(ui.NewText(countStr), 1),
 		sb.btnPrev,
 		sb.btnNext,
 	)
-	return view.Layout(x, y, w, h)
+	node.Children = []*ui.LayoutNode{view.Layout(x, y, w, h)}
+	return node
 }
 
 func (sb *SearchBar) MinSize() (int, int) {

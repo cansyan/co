@@ -20,11 +20,25 @@ type Screen = tcell.Screen
 
 // Element is the interface implemented by all UI elements.
 type Element interface {
+	// MinSize returns the minimum width and height required by the element.
 	MinSize() (w, h int)
-	// Layout computes the layout node for this element given the position and size.
-	// Children elements that not in the LayoutNode, will not pass hittest nor get focus
+
+	// Layout computes the geometry and constructs the render tree for the element.
+	//
+	// Responsibilities:
+	// 1. Geometry Calculation: Determine the final position and size for itself and its children.
+	// 2. Render Tree Construction: Return a LayoutNode that maps the calculated Rect
+	//    to the Element for the rendering pipeline.
+	//
+	// Important:
+	// Decorators or Containers MUST set the 'Element' field of the returned LayoutNode
+	// to themselves (the decorator instance) rather than their child. Failing to do so
+	// will cause the rendering pipeline to skip the decorator's Render() method.
 	Layout(x, y, w, h int) *LayoutNode
-	// Render draws the element onto the screen within the given rectangle.
+
+	// Render draws the element's visual representation onto the screen.
+	// It is called by the framework during the paint phase, using the Rect
+	// calculated during the Layout phase.
 	Render(s Screen, rect Rect)
 }
 
@@ -66,21 +80,62 @@ type Focusable interface {
 
 type LayoutNode struct {
 	Element  Element
-	Rect     Rect // the rectangle where the element is drawn on
+	Rect     Rect
 	Children []*LayoutNode
 }
 
+func NewLayoutNode(e Element, x, y, w, h int) *LayoutNode {
+	return &LayoutNode{
+		Element: e,
+		Rect:    Rect{X: x, Y: y, W: w, H: h},
+	}
+}
+
+// Debug returns a string representation of the tree structure
 func (n *LayoutNode) Debug() string {
 	var sb strings.Builder
-	var dump func(node *LayoutNode, indent int)
-	dump = func(node *LayoutNode, indent int) {
-		sb.WriteString(strings.Repeat("\t", indent))
-		sb.WriteString(fmt.Sprintf("%T: %+v\n", node.Element, node.Rect))
-		for _, child := range node.Children {
-			dump(child, indent+1)
+	var dump func(node *LayoutNode, prefix string, isLast bool, isRoot bool)
+	dump = func(node *LayoutNode, prefix string, isLast bool, isRoot bool) {
+		if node == nil {
+			return
+		}
+
+		// Determine the connector symbol for the current line
+		var marker string
+		if isRoot {
+			marker = ""
+		} else if isLast {
+			marker = "└── "
+		} else {
+			marker = "├── "
+		}
+
+		typeName := fmt.Sprintf("%T", node.Element)
+		if idx := strings.LastIndex(typeName, "."); idx != -1 {
+			typeName = typeName[idx+1:]
+		}
+		fmt.Fprintf(&sb, "%s%s%s: %+v\n", prefix, marker, typeName, node.Rect)
+
+		// the indentation prefix for child nodes
+		var newPrefix string
+		if isRoot {
+			newPrefix = ""
+		} else {
+			if isLast {
+				// Last child, stop drawing vertical lines
+				newPrefix = prefix + "    "
+			} else {
+				// Middle child, continue drawing vertical guide lines
+				newPrefix = prefix + "│   "
+			}
+		}
+
+		for i, child := range node.Children {
+			isLastChild := i == len(node.Children)-1
+			dump(child, newPrefix, isLastChild, false)
 		}
 	}
-	dump(n, 0)
+	dump(n, "", false, true)
 	return sb.String()
 }
 
@@ -1487,11 +1542,9 @@ func (s layoutSpec) Layout(x, y, w, h int) *LayoutNode {
 		ih = s.height
 	}
 
-	return &LayoutNode{
-		Element:  s,
-		Rect:     Rect{X: x, Y: y, W: w, H: h},
-		Children: []*LayoutNode{s.Element.Layout(ix, iy, iw, ih)},
-	}
+	node := NewLayoutNode(s, x, y, w, h)
+	node.Children = []*LayoutNode{s.Element.Layout(ix, iy, iw, ih)}
+	return node
 }
 
 // 實作 Render: 繪製裝飾（Border）
@@ -1583,16 +1636,12 @@ func (v *vstack) MinSize() (int, int) {
 }
 
 func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
-	n := &LayoutNode{
-		Element: v,
-		Rect:    Rect{X: x, Y: y, W: w, H: h},
-	}
-
+	n := NewLayoutNode(v, x, y, w, h)
 	// First pass: measure children
 	totalH := 0
 	totalGrow := 0
 	for _, child := range v.children {
-		if i, ok := child.(layoutSpec); ok {
+		if i, ok := child.(layoutSpec); ok && i.grow > 0 {
 			totalGrow += i.grow
 		} else {
 			_, ch := child.MinSize()
@@ -1682,15 +1731,12 @@ func (hs *hstack) MinSize() (int, int) {
 }
 
 func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
-	n := &LayoutNode{
-		Element: hs,
-		Rect:    Rect{X: x, Y: y, W: w, H: h},
-	}
+	n := NewLayoutNode(hs, x, y, w, h)
 	// First pass: measure children
 	totalWidth := 0
 	totalGrow := 0
 	for _, child := range hs.children {
-		if s, ok := child.(layoutSpec); ok {
+		if s, ok := child.(layoutSpec); ok && s.grow > 0 {
 			totalGrow += s.grow
 		} else {
 			cw, _ := child.MinSize()
@@ -1813,16 +1859,11 @@ func (o *overlay) Layout(x, y, w, h int) *LayoutNode {
 		y = y + (h-mh)/2
 	}
 
-	return &LayoutNode{
-		Element: o,
-		Rect:    Rect{X: x, Y: y, W: mw, H: mh},
-		Children: []*LayoutNode{
-			o.child.Layout(x, y, mw, mh),
-		},
-	}
+	node := NewLayoutNode(o, x, y, mw, mh)
+	node.Children = []*LayoutNode{o.child.Layout(x, y, mw, mh)}
+	return node
 }
 
-// no-op
 func (o *overlay) Render(s Screen, rect Rect) {
 	ResetRect(s, rect, Style{})
 }
@@ -2096,7 +2137,6 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 
 	switch ev.Buttons() {
 	case tcell.ButtonPrimary:
-		// log.Print("\n", a.tree.Debug())
 		a.Focus(hit)
 		a.clickPoint = Point{X: x, Y: y}
 		// mouse down
