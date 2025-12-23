@@ -314,6 +314,8 @@ type TextInput struct {
 	style       Style
 	onChange    func()
 	placeHolder string
+	selStart    int  // 選取起點 (rune index)
+	pressed     bool // 標記滑鼠是否按下以進行拖拽
 }
 
 func NewTextInput() *TextInput {
@@ -363,14 +365,36 @@ func (t *TextInput) Render(s Screen, rect Rect) {
 	if t.focused && t.cursor < rect.W {
 		s.ShowCursor(rect.X+t.cursor, rect.Y)
 	}
+	// placeholder
 	if len(t.text) == 0 {
 		DrawString(s, rect.X, rect.Y, rect.W, t.placeHolder, Theme.Syntax.Comment.Apply())
 		return
 	}
 
-	st := t.style.Apply()
-	text := runewidth.FillRight(string(t.text), rect.W)
-	DrawString(s, rect.X, rect.Y, rect.W, text, st)
+	start, end, hasSel := t.selection()
+	// log.Print(start, end, hasSel)
+	baseStyle := t.style.Apply()
+	selStyle := t.style.Merge(Style{BG: Theme.Selection}).Apply()
+
+	xOffset := 0
+	for i, r := range t.text {
+		if xOffset >= rect.W {
+			break
+		}
+
+		st := baseStyle
+		if hasSel && i >= start && i < end {
+			st = selStyle
+		}
+
+		s.SetContent(rect.X+xOffset, rect.Y, r, nil, st)
+		xOffset += runewidth.RuneWidth(r)
+	}
+
+	// 如果文字不夠長，補足剩餘背景
+	for x := xOffset; x < rect.W; x++ {
+		s.SetContent(rect.X+x, rect.Y, ' ', nil, baseStyle)
+	}
 }
 
 func (t *TextInput) FocusTarget() Element { return t }
@@ -381,6 +405,10 @@ func (t *TextInput) HandleKey(ev *tcell.EventKey) {
 	if !t.focused {
 		return
 	}
+
+	// 簡單邏輯：按下任何非 Shift 的移動鍵就重置選取起點
+	resetSelection := true
+
 	switch ev.Key() {
 	case tcell.KeyLeft:
 		if t.cursor > 0 {
@@ -391,27 +419,33 @@ func (t *TextInput) HandleKey(ev *tcell.EventKey) {
 			t.cursor++
 		}
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
-		if t.cursor > 0 {
+		start, end, ok := t.selection()
+		if ok {
+			t.text = slices.Delete(t.text, start, end)
+			t.cursor = start
+		} else if t.cursor > 0 {
 			t.text = slices.Delete(t.text, t.cursor-1, t.cursor)
 			t.cursor--
-			if t.onChange != nil {
-				t.onChange()
-			}
 		}
-	case tcell.KeyDelete:
-		if t.cursor < len(t.text) {
-			t.text = slices.Delete(t.text, t.cursor, t.cursor+1)
-			if t.onChange != nil {
-				t.onChange()
-			}
+		if t.onChange != nil {
+			t.onChange()
 		}
 	case tcell.KeyRune:
+		start, end, ok := t.selection()
+		if ok {
+			t.text = slices.Delete(t.text, start, end)
+			t.cursor = start
+		}
 		r := ev.Rune()
 		t.text = slices.Insert(t.text, t.cursor, r)
 		t.cursor++
 		if t.onChange != nil {
 			t.onChange()
 		}
+	}
+
+	if resetSelection && !t.pressed {
+		t.selStart = t.cursor
 	}
 }
 
@@ -423,6 +457,50 @@ func (t *TextInput) OnMouseDown(x, y int) {
 		x = len(t.text)
 	}
 	t.cursor = x
+	if !t.pressed {
+		t.pressed = true
+		t.selStart = x
+	}
+}
+
+func (t *TextInput) OnMouseMove(x, y int) {
+	if t.pressed {
+		t.cursor = t.clampCursor(x)
+		if t.onChange != nil {
+			t.onChange()
+		}
+	}
+}
+
+func (t *TextInput) OnMouseUp(x, y int) {
+	t.pressed = false
+}
+
+func (t *TextInput) clampCursor(x int) int {
+	if x < 0 {
+		return 0
+	}
+	if x > len(t.text) {
+		return len(t.text)
+	}
+	return x
+}
+
+func (t *TextInput) Select(start, end int) {
+	t.selStart = start
+	t.cursor = end
+}
+
+// 取得正規化後的選取範圍 (start <= end)
+func (t *TextInput) selection() (int, int, bool) {
+	if t.selStart == t.cursor {
+		return 0, 0, false
+	}
+	start, end := t.selStart, t.cursor
+	if start > end {
+		start, end = end, start
+	}
+	return start, end, true
 }
 
 // TextViewer is a non-editable text viewer,
@@ -538,6 +616,7 @@ type TextEditor struct {
 		row int
 		col int
 	}
+
 	// desired visual column for cursor alignment during vertical (up/down) navigation
 	desiredVisualCol int
 }
@@ -855,9 +934,13 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 	}()
 
 	switch ev.Key() {
+	case tcell.KeyESC:
+		if _, _, _, _, ok := t.Selection(); ok {
+			t.Unselect()
+		}
 	case tcell.KeyUp:
 		if _, _, _, _, ok := t.Selection(); ok {
-			t.unselect()
+			t.Unselect()
 		}
 		keepVisualCol = true
 		if t.desiredVisualCol == 0 {
@@ -871,7 +954,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		}
 	case tcell.KeyDown:
 		if _, _, _, _, ok := t.Selection(); ok {
-			t.unselect()
+			t.Unselect()
 		}
 		keepVisualCol = true
 		if t.desiredVisualCol == 0 {
@@ -886,7 +969,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 	case tcell.KeyLeft:
 		if startRow, startCol, _, _, ok := t.Selection(); ok {
 			t.row, t.col = startRow, startCol
-			t.unselect()
+			t.Unselect()
 			return
 		}
 		if t.col > 0 {
@@ -899,7 +982,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 	case tcell.KeyRight:
 		if _, _, endRow, endCol, ok := t.Selection(); ok {
 			t.row, t.col = endRow, endCol
-			t.unselect()
+			t.Unselect()
 			return
 		}
 		if t.col < len(currentLine) {
@@ -912,7 +995,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 	case tcell.KeyEnter:
 		if startRow, startCol, endRow, endCol, ok := t.Selection(); ok {
 			t.DeleteRange(startRow, startCol, endRow, endCol)
-			t.unselect()
+			t.Unselect()
 		}
 		head := currentLine[:t.col]
 		tail := currentLine[t.col:]
@@ -928,7 +1011,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
 		if startRow, startCol, endRow, endCol, ok := t.Selection(); ok {
 			t.DeleteRange(startRow, startCol, endRow, endCol)
-			t.unselect()
+			t.Unselect()
 			return
 		}
 		if t.col > 0 {
@@ -947,7 +1030,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 	case tcell.KeyDelete:
 		if startRow, startCol, endRow, endCol, ok := t.Selection(); ok {
 			t.DeleteRange(startRow, startCol, endRow, endCol)
-			t.unselect()
+			t.Unselect()
 			return
 		}
 		if t.col < len(currentLine) {
@@ -960,7 +1043,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 	case tcell.KeyRune:
 		if startRow, startCol, endRow, endCol, ok := t.Selection(); ok {
 			t.DeleteRange(startRow, startCol, endRow, endCol)
-			t.unselect()
+			t.Unselect()
 		}
 		r := ev.Rune()
 		t.content[t.row] = slices.Insert(currentLine, t.col, r)
@@ -969,7 +1052,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 	case tcell.KeyTAB:
 		if startRow, startCol, endRow, endCol, ok := t.Selection(); ok {
 			t.DeleteRange(startRow, startCol, endRow, endCol)
-			t.unselect()
+			t.Unselect()
 		}
 		t.content[t.row] = slices.Insert(currentLine, t.col, '\t')
 		t.col++
@@ -1020,6 +1103,11 @@ func (t *TextEditor) OnMouseDown(x, y int) {
 
 	// Initialize selection
 	if !t.pressed {
+		// cancel selection
+		if _, _, _, _, ok := t.Selection(); ok {
+			t.Unselect()
+			return
+		}
 		t.pressed = true
 		t.selectStart.row = t.row
 		t.selectStart.col = t.col
@@ -1061,7 +1149,7 @@ func (t *TextEditor) Select(startRow, startCol, endRow, endCol int) {
 	t.selectEnd.col = endCol
 }
 
-func (t *TextEditor) unselect() {
+func (t *TextEditor) Unselect() {
 	t.selectStart.row = 0
 	t.selectStart.col = 0
 	t.selectEnd.row = 0
@@ -2139,17 +2227,22 @@ func hitTest(n *LayoutNode, p Point) (Element, Point) {
 
 // Focus sets focus to the element identified by the given string.
 // It is intended to be used with MarkFocus, to decouple elements.
-// func (a *App) FocusID(s string) {
-// 	if s == "" {
-// 		return
-// 	}
-// 	e, ok := a.focusID[s]
-// 	if !ok {
-// 		log.Printf("focus id %q not found", s)
-// 		return
-// 	}
-// 	a.Focus(e)
-// }
+//
+//	func (a *App) FocusID(s string) {
+//		if s == "" {
+//			return
+//		}
+//		e, ok := a.focusID[s]
+//		if !ok {
+//			log.Printf("focus id %q not found", s)
+//			return
+//		}
+//		a.Focus(e)
+//	}
+
+func (a *App) Focused() Element {
+	return a.focused
+}
 
 func (a *App) Focus(e Element) {
 	if e == nil {

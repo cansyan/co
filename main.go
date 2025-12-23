@@ -60,6 +60,8 @@ func main() {
 		// 重置狀態，確保切換文件或重新開啟時會重新掃描
 		root.searchBar.matches = nil
 		root.searchBar.activeIndex = -1
+		query := root.searchBar.input.Text()
+		root.searchBar.input.Select(0, len([]rune(query)))
 		ui.Default().Focus(root.searchBar)
 	})
 	app.BindKey("Ctrl+S", root.saveFile)
@@ -71,11 +73,20 @@ func main() {
 		ui.Default().Focus(root)
 	})
 	app.BindKey("Esc", func() {
+		focused := ui.Default().Focused()
+		if editor, ok := focused.(*ui.TextEditor); ok {
+			if _, _, _, _, ok := editor.Selection(); ok {
+				editor.Unselect()
+				return
+			}
+		}
+
 		if root.showSearch {
 			root.showSearch = false
 			ui.Default().Focus(root)
 			return
 		}
+
 		app.CloseOverlay()
 	})
 	if err := app.Serve(root); err != nil {
