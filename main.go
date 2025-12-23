@@ -76,7 +76,7 @@ func main() {
 		focused := ui.Default().Focused()
 		if editor, ok := focused.(*ui.TextEditor); ok {
 			if _, _, _, _, ok := editor.Selection(); ok {
-				editor.Unselect()
+				editor.CancelSelection()
 				return
 			}
 		}
@@ -990,7 +990,7 @@ func (r *root) selectWord() {
 	if !ok {
 		editor.SelectWord()
 	} else {
-		query := editor.GetSelectedText()
+		query := editor.SelectedText()
 		editor.FindNext(query)
 	}
 }

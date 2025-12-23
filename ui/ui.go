@@ -597,8 +597,7 @@ func (tv *TextViewer) OnChange(f func()) { tv.onChange = f }
 // TextEditor is a multi-line editable text area.
 type TextEditor struct {
 	content  [][]rune // simple 2D slice of runes, avoid over-engineering
-	row      int      // Current line index
-	col      int      // Cursor column index (rune index)
+	row, col int      // 既是游標，也是選取的「動端」(Head)
 	offsetY  int      // Vertical scroll offset
 	focused  bool
 	style    Style
@@ -607,15 +606,10 @@ type TextEditor struct {
 	onChange func()
 	Dirty    bool
 
-	pressed     bool
-	selectStart struct {
-		row int
-		col int
-	}
-	selectEnd struct {
-		row int
-		col int
-	}
+	anchorRow int  // 選取的「靜端」(Anchor) 起點行
+	anchorCol int  // 選取的「靜端」(Anchor) 起點列
+	selecting bool // 是否處於選取狀態
+	pressed   bool // mouse pressed
 
 	// desired visual column for cursor alignment during vertical (up/down) navigation
 	desiredVisualCol int
@@ -841,23 +835,6 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		return
 	}
 
-	selStartRow, selStartCol, selEndRow, selEndCol, selOK := t.Selection()
-	selected := func(row, col int) bool {
-		if !selOK {
-			return false
-		}
-		if row < selStartRow || row > selEndRow {
-			return false
-		}
-		if row == selStartRow && col < selStartCol {
-			return false
-		}
-		if row == selEndRow && col >= selEndCol {
-			return false
-		}
-		return true
-	}
-
 	var cursorX, cursorY int
 	cursorFound := false
 	// Loop over visible rows
@@ -881,15 +858,6 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		numStr := fmt.Sprintf("%*d  ", lineNumWidth-1, lineNum)
 		DrawString(s, rect.X, rect.Y+i, lineNumWidth, numStr, lnStyle.Apply())
 
-		// draw empty line indicator, if selected
-		if len(line) == 0 {
-			if selected(row, 0) {
-				chStyle := t.style.Merge(Style{BG: Theme.Selection}).Apply()
-				s.SetContent(contentX, rect.Y+i, ' ', nil, chStyle)
-			}
-			continue
-		}
-
 		// draw line content
 		spans := highlightGo(line)
 		styles := expandStyles(spans, t.style, len(line))
@@ -897,11 +865,17 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		y := rect.Y + i
 		for col, r := range line {
 			charStyle := styles[col]
-			if selected(row, col) {
+			if t.isSelected(row, col) {
 				charStyle.BG = Theme.Selection
 			}
 			cells := t.drawRune(s, contentX+visualCol, y, contentW-visualCol, r, visualCol, charStyle)
 			visualCol += cells
+		}
+
+		// draw line end indicator while selected
+		if t.isSelected(row, len(line)) {
+			charStyle := t.style.Merge(Style{BG: Theme.Selection})
+			t.drawRune(s, contentX+visualCol, y, contentW-visualCol, ' ', visualCol, charStyle)
 		}
 	}
 
@@ -935,13 +909,9 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 
 	switch ev.Key() {
 	case tcell.KeyESC:
-		if _, _, _, _, ok := t.Selection(); ok {
-			t.Unselect()
-		}
+		t.CancelSelection()
 	case tcell.KeyUp:
-		if _, _, _, _, ok := t.Selection(); ok {
-			t.Unselect()
-		}
+		t.CancelSelection()
 		keepVisualCol = true
 		if t.desiredVisualCol == 0 {
 			t.desiredVisualCol = visualColFromLine(currentLine, t.col)
@@ -953,9 +923,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.ScrollTo(t.row)
 		}
 	case tcell.KeyDown:
-		if _, _, _, _, ok := t.Selection(); ok {
-			t.Unselect()
-		}
+		t.CancelSelection()
 		keepVisualCol = true
 		if t.desiredVisualCol == 0 {
 			t.desiredVisualCol = visualColFromLine(currentLine, t.col)
@@ -967,9 +935,9 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.ScrollTo(t.row)
 		}
 	case tcell.KeyLeft:
-		if startRow, startCol, _, _, ok := t.Selection(); ok {
-			t.row, t.col = startRow, startCol
-			t.Unselect()
+		if r1, c1, _, _, ok := t.Selection(); ok {
+			t.row, t.col = r1, c1
+			t.CancelSelection()
 			return
 		}
 		if t.col > 0 {
@@ -980,9 +948,9 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.ScrollTo(t.row)
 		}
 	case tcell.KeyRight:
-		if _, _, endRow, endCol, ok := t.Selection(); ok {
-			t.row, t.col = endRow, endCol
-			t.Unselect()
+		if _, _, r2, c2, ok := t.Selection(); ok {
+			t.row, t.col = r2, c2
+			t.CancelSelection()
 			return
 		}
 		if t.col < len(currentLine) {
@@ -993,9 +961,9 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.ScrollTo(t.row)
 		}
 	case tcell.KeyEnter:
-		if startRow, startCol, endRow, endCol, ok := t.Selection(); ok {
-			t.DeleteRange(startRow, startCol, endRow, endCol)
-			t.Unselect()
+		if r1, c1, r2, c2, ok := t.Selection(); ok {
+			t.DeleteRange(r1, c1, r2, c2)
+			t.CancelSelection()
 		}
 		head := currentLine[:t.col]
 		tail := currentLine[t.col:]
@@ -1009,9 +977,9 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		t.ScrollTo(t.row)
 		t.Dirty = true
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
-		if startRow, startCol, endRow, endCol, ok := t.Selection(); ok {
-			t.DeleteRange(startRow, startCol, endRow, endCol)
-			t.Unselect()
+		if r1, c1, r2, c2, ok := t.Selection(); ok {
+			t.DeleteRange(r1, c1, r2, c2)
+			t.CancelSelection()
 			return
 		}
 		if t.col > 0 {
@@ -1027,32 +995,20 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.ScrollTo(t.row)
 		}
 		t.Dirty = true
-	case tcell.KeyDelete:
-		if startRow, startCol, endRow, endCol, ok := t.Selection(); ok {
-			t.DeleteRange(startRow, startCol, endRow, endCol)
-			t.Unselect()
-			return
-		}
-		if t.col < len(currentLine) {
-			t.content[t.row] = slices.Delete(currentLine, t.col, t.col+1)
-		} else if t.row < len(t.content)-1 {
-			t.content[t.row] = append(currentLine, t.content[t.row+1]...)
-			t.content = slices.Delete(t.content, t.row+1, t.row+2)
-		}
-		t.Dirty = true
 	case tcell.KeyRune:
-		if startRow, startCol, endRow, endCol, ok := t.Selection(); ok {
-			t.DeleteRange(startRow, startCol, endRow, endCol)
-			t.Unselect()
+		// 如果有選取，先刪除選取範圍，再插入字元
+		if r1, c1, r2, c2, ok := t.Selection(); ok {
+			t.DeleteRange(r1, c1, r2, c2)
+			t.CancelSelection()
 		}
 		r := ev.Rune()
 		t.content[t.row] = slices.Insert(currentLine, t.col, r)
 		t.col++
 		t.Dirty = true
 	case tcell.KeyTAB:
-		if startRow, startCol, endRow, endCol, ok := t.Selection(); ok {
-			t.DeleteRange(startRow, startCol, endRow, endCol)
-			t.Unselect()
+		if r1, c1, r2, c2, ok := t.Selection(); ok {
+			t.DeleteRange(r1, c1, r2, c2)
+			t.CancelSelection()
 		}
 		t.content[t.row] = slices.Insert(currentLine, t.col, '\t')
 		t.col++
@@ -1066,14 +1022,8 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 
 func (t *TextEditor) OnMouseUp(x, y int) {
 	t.pressed = false
-	// correct the selection range
-	if t.selectStart.row > t.selectEnd.row ||
-		(t.selectStart.row == t.selectEnd.row && t.selectStart.col > t.selectEnd.col) {
-		t.selectStart.row, t.selectEnd.row = t.selectEnd.row, t.selectStart.row
-		t.selectStart.col, t.selectEnd.col = t.selectEnd.col, t.selectStart.col
-		if t.onChange != nil {
-			t.onChange()
-		}
+	if t.row == t.anchorRow && t.col == t.anchorCol {
+		t.selecting = false
 	}
 }
 
@@ -1101,79 +1051,86 @@ func (t *TextEditor) OnMouseDown(x, y int) {
 	visualCol := max(x-t.contentX, 0)
 	t.col = visualColToLine(t.content[t.row], visualCol)
 
-	// Initialize selection
 	if !t.pressed {
-		// cancel selection
-		if _, _, _, _, ok := t.Selection(); ok {
-			t.Unselect()
-			return
-		}
+		// 點擊瞬間，錨點與游標重合
+		t.anchorRow, t.anchorCol = t.row, t.col
+		t.selecting = true
 		t.pressed = true
-		t.selectStart.row = t.row
-		t.selectStart.col = t.col
-		t.selectEnd.row = t.row
-		t.selectEnd.col = t.col
 	}
 }
 
 func (t *TextEditor) OnMouseEnter() {}
 func (t *TextEditor) OnMouseLeave() {}
 func (t *TextEditor) OnMouseMove(lx, ly int) {
-	if !t.pressed {
-		return
-	}
-	if t.onChange != nil {
-		defer t.onChange()
-	}
+	if t.pressed {
+		if t.onChange != nil {
+			defer t.onChange()
+		}
 
-	// Drag to select
-	targetRow := ly + t.offsetY
-	if targetRow < 0 {
-		targetRow = 0
-	} else if targetRow >= len(t.content) {
-		targetRow = len(t.content) - 1
-	}
-	currentLine := t.content[targetRow]
-	clickedX := max(lx-t.contentX, 0)
-	targetCol := visualColToLine(currentLine, clickedX)
+		// Drag to select
+		targetRow := ly + t.offsetY
+		if targetRow < 0 {
+			targetRow = 0
+		} else if targetRow >= len(t.content) {
+			targetRow = len(t.content) - 1
+		}
+		currentLine := t.content[targetRow]
+		clickedX := max(lx-t.contentX, 0)
+		targetCol := visualColToLine(currentLine, clickedX)
 
-	t.selectEnd.row = targetRow
-	t.selectEnd.col = targetCol
-	t.adjustCol()
+		t.row = targetRow
+		t.col = targetCol
+	}
 }
 
 func (t *TextEditor) Select(startRow, startCol, endRow, endCol int) {
-	t.selectStart.row = startRow
-	t.selectStart.col = startCol
-	t.selectEnd.row = endRow
-	t.selectEnd.col = endCol
+	t.anchorRow, t.anchorCol = startRow, startCol
+	t.row, t.col = endRow, endCol
 }
 
-func (t *TextEditor) Unselect() {
-	t.selectStart.row = 0
-	t.selectStart.col = 0
-	t.selectEnd.row = 0
-	t.selectEnd.col = 0
+// Selection 返回 (起始行, 起始列, 結束行, 結束列, 是否有選取)
+func (e *TextEditor) Selection() (r1, c1, r2, c2 int, ok bool) {
+	if !e.selecting || (e.row == e.anchorRow && e.col == e.anchorCol) {
+		return 0, 0, 0, 0, false
+	}
+
+	r1, c1 = e.anchorRow, e.anchorCol
+	r2, c2 = e.row, e.col
+
+	// 確保 (r1, c1) 在 (r2, c2) 之前
+	if r1 > r2 || (r1 == r2 && c1 > c2) {
+		r1, r2 = r2, r1
+		c1, c2 = c2, c1
+	}
+	return r1, c1, r2, c2, true
 }
 
-// Selection returns the current Selection range, normalized.
-// If no Selection, ok is false.
-func (t *TextEditor) Selection() (startRow, startCol, endRow, endCol int, ok bool) {
-	startRow = t.selectStart.row
-	startCol = t.selectStart.col
-	endRow = t.selectEnd.row
-	endCol = t.selectEnd.col
-	if startRow == endRow && startCol == endCol {
-		ok = false
-		return
+func (e *TextEditor) CancelSelection() {
+	e.selecting = false
+}
+
+func (e *TextEditor) isSelected(r, c int) bool {
+	r1, c1, r2, c2, ok := e.Selection()
+	if !ok {
+		return false
 	}
-	// normalize
-	if startRow > endRow || (startRow == endRow && startCol > endCol) {
-		startRow, endRow = endRow, startRow
-		startCol, endCol = endCol, startCol
+
+	if r < r1 || r > r2 {
+		return false
 	}
-	ok = true
-	return
+	if r > r1 && r < r2 {
+		return true
+	}
+	if r1 == r2 {
+		return c >= c1 && c < c2
+	}
+	if r == r1 {
+		return c >= c1
+	}
+	if r == r2 {
+		return c < c2
+	}
+	return false
 }
 
 // SelectWord 擴展當前游標到單詞邊界
@@ -1187,10 +1144,10 @@ func (t *TextEditor) SelectWord() {
 	}
 
 	start, end := findWordBoundaries(line, t.col)
-	t.selectStart.row, t.selectStart.col = t.row, start
-	t.selectEnd.row, t.selectEnd.col = t.row, end
+	t.anchorRow, t.anchorCol = t.row, start
 	// 讓游標停在單詞末尾，方便下次搜尋從末尾開始
 	t.col = end
+	t.selecting = true
 }
 
 // SelectLine 擴展選中到整行
@@ -1258,12 +1215,10 @@ func (t *TextEditor) FindNext(query string) {
 			actualCol := searchFromCol + foundIdx
 
 			// 1. 更新選區：從匹配項開始到結束
-			t.selectStart.row, t.selectStart.col = currentRow, actualCol
-			t.selectEnd.row, t.selectEnd.col = currentRow, actualCol+qLen
-
-			// 2. 更新游標位置至匹配項末尾
+			t.anchorRow, t.anchorCol = currentRow, actualCol
 			t.row = currentRow
 			t.col = actualCol + qLen
+			t.selecting = true
 
 			// 3. 確保視覺調整
 			t.CenterRow(currentRow)
@@ -1275,8 +1230,8 @@ func (t *TextEditor) FindNext(query string) {
 	}
 }
 
-// GetSelectedText 回傳當前選區的字串內容（僅限單行）
-func (t *TextEditor) GetSelectedText() string {
+// SelectedText 回傳當前選區的字串內容（僅限單行）
+func (t *TextEditor) SelectedText() string {
 	sRow, sCol, eRow, eCol, ok := t.Selection()
 	if !ok || sRow != eRow {
 		return ""
