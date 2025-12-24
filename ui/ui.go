@@ -956,7 +956,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.CancelSelection()
 			firstNonSpace := 0
 			for i, ch := range t.content[t.row] {
-				if !isWhitespace(ch) {
+				if !unicode.IsSpace(ch) {
 					firstNonSpace = i
 					break
 				}
@@ -1178,7 +1178,7 @@ func (t *TextEditor) SelectWord() {
 		return
 	}
 
-	start, end := findWordBoundaries(line, t.col)
+	start, end := findWordBoundary(line, t.col)
 	// 讓游標停在單詞末尾，方便下次搜尋從末尾開始
 	t.Select(t.row, start, t.row, end)
 }
@@ -1270,7 +1270,7 @@ func (t *TextEditor) SelectedText() string {
 	return string(t.content[sRow][sCol:eCol])
 }
 
-func findWordBoundaries(line []rune, pos int) (start, end int) {
+func findWordBoundary(line []rune, pos int) (start, end int) {
 	isWordChar := func(r rune) bool {
 		return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_'
 	}
@@ -2672,5 +2672,3 @@ func expandStyles(spans []StyleSpan, base Style, n int) []Style {
 	}
 	return styles
 }
-
-func isWhitespace(ch rune) bool { return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' }

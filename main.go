@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"tui/ui"
+	"unicode"
 	"unicode/utf8"
 
 	"slices"
@@ -49,6 +50,7 @@ func main() {
 
 	app := ui.Default()
 	app.Focus(root)
+	app.BindKey("Ctrl+N", root.complete)
 	app.BindKey("Ctrl+D", root.selectWord)
 	app.BindKey("Ctrl+L", root.selectLine)
 	app.BindKey("Ctrl+P", root.showCmdPalatte)
@@ -1001,4 +1003,43 @@ func (r *root) selectLine() {
 		return
 	}
 	editor.SelectLine()
+}
+
+func (r *root) complete() {
+	tab := r.tabs[r.active]
+	editor, ok := tab.body.(*ui.TextEditor)
+	if !ok {
+		return
+	}
+
+	row, col := editor.Cursor()
+	line := editor.Line(row)
+
+	// word boundary
+	isWordChar := func(r rune) bool {
+		return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+	}
+	start := col
+	for start > 0 && isWordChar(line[start-1]) {
+		start--
+	}
+	end := col
+	if end < len(line) && isWordChar(line[end]) {
+		for end < len(line) && isWordChar(line[end]) {
+			end++
+		}
+	}
+	if start == end {
+		return
+	}
+
+	word := strings.ToLower(string(line[start:end]))
+	symbols := r.extractSymbols(tab.label, editor.String())
+	for _, symbol := range symbols {
+		if strings.HasPrefix(strings.ToLower(symbol.name), word) {
+			editor.DeleteRange(row, start, row, end)
+			editor.InsertText(symbol.name)
+			break
+		}
+	}
 }
