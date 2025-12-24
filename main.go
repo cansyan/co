@@ -897,8 +897,7 @@ func (sb *SearchBar) syncEditor() {
 	m := sb.matches[sb.activeIndex]
 	tab := sb.root.tabs[sb.root.active]
 	if editor, ok := tab.body.(*ui.TextEditor); ok {
-		queryLen := len(sb.input.Text())
-		editor.SetCursor(m.line, m.col+queryLen)
+		queryLen := utf8.RuneCountInString(sb.input.Text())
 		editor.CenterRow(m.line)
 		editor.Select(m.line, m.col, m.line, m.col+queryLen)
 	}

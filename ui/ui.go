@@ -665,6 +665,8 @@ func (t *TextEditor) Cursor() (row, col int) {
 	return t.row, t.col
 }
 
+// SetCursor set the content cursor to the given row(line index)
+// and col(rune index in the line)
 func (t *TextEditor) SetCursor(row, col int) {
 	if row < 0 || row >= len(t.content) || col < 0 {
 		return
@@ -905,6 +907,9 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		if !keepVisualCol {
 			t.desiredVisualCol = 0
 		}
+		if t.onChange != nil {
+			t.onChange()
+		}
 	}()
 
 	switch ev.Key() {
@@ -912,6 +917,12 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		t.CancelSelection()
 	case tcell.KeyUp:
 		t.CancelSelection()
+		if ev.Modifiers() == tcell.ModMeta {
+			t.row, t.col = 0, 0
+			t.ScrollTo(t.row)
+			return
+		}
+
 		keepVisualCol = true
 		if t.desiredVisualCol == 0 {
 			t.desiredVisualCol = visualColFromLine(currentLine, t.col)
@@ -924,6 +935,12 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		}
 	case tcell.KeyDown:
 		t.CancelSelection()
+		if ev.Modifiers() == tcell.ModMeta {
+			t.row, t.col = len(t.content)-1, 0
+			t.ScrollTo(t.row)
+			return
+		}
+
 		keepVisualCol = true
 		if t.desiredVisualCol == 0 {
 			t.desiredVisualCol = visualColFromLine(currentLine, t.col)
@@ -935,11 +952,24 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.ScrollTo(t.row)
 		}
 	case tcell.KeyLeft:
+		if ev.Modifiers() == tcell.ModMeta {
+			t.CancelSelection()
+			firstNonSpace := 0
+			for i, ch := range t.content[t.row] {
+				if !isWhitespace(ch) {
+					firstNonSpace = i
+					break
+				}
+			}
+			t.col = firstNonSpace
+			return
+		}
 		if r1, c1, _, _, ok := t.Selection(); ok {
 			t.row, t.col = r1, c1
 			t.CancelSelection()
 			return
 		}
+
 		if t.col > 0 {
 			t.col--
 		} else if t.row > 0 {
@@ -948,6 +978,11 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.ScrollTo(t.row)
 		}
 	case tcell.KeyRight:
+		if ev.Modifiers() == tcell.ModMeta {
+			t.CancelSelection()
+			t.col = len(t.content[t.row])
+			return
+		}
 		if _, _, r2, c2, ok := t.Selection(); ok {
 			t.row, t.col = r2, c2
 			t.CancelSelection()
@@ -1015,9 +1050,6 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		t.Dirty = true
 	}
 
-	if t.onChange != nil {
-		t.onChange()
-	}
 }
 
 func (t *TextEditor) OnMouseUp(x, y int) {
@@ -1083,9 +1115,12 @@ func (t *TextEditor) OnMouseMove(lx, ly int) {
 	}
 }
 
+// Select sets the selection anchor to startRow and startCol,
+// sets content cursor to endRow and endCol.
 func (t *TextEditor) Select(startRow, startCol, endRow, endCol int) {
 	t.anchorRow, t.anchorCol = startRow, startCol
 	t.row, t.col = endRow, endCol
+	t.selecting = true
 }
 
 // Selection 返回 (起始行, 起始列, 結束行, 結束列, 是否有選取)
@@ -1144,10 +1179,8 @@ func (t *TextEditor) SelectWord() {
 	}
 
 	start, end := findWordBoundaries(line, t.col)
-	t.anchorRow, t.anchorCol = t.row, start
 	// 讓游標停在單詞末尾，方便下次搜尋從末尾開始
-	t.col = end
-	t.selecting = true
+	t.Select(t.row, start, t.row, end)
 }
 
 // SelectLine 擴展選中到整行
@@ -1158,10 +1191,8 @@ func (t *TextEditor) SelectLine() {
 	if t.row < len(t.content)-1 {
 		// 選中整行，並將游標移至下一行開頭（模仿主流編輯器行為）
 		t.Select(t.row, 0, t.row+1, 0)
-		t.row, t.col = t.row+1, 0
 	} else {
 		t.Select(t.row, 0, t.row, len(t.content[t.row]))
-		t.row, t.col = t.row+1, len(t.content[t.row])
 	}
 }
 
@@ -2641,3 +2672,5 @@ func expandStyles(spans []StyleSpan, base Style, n int) []Style {
 	}
 	return styles
 }
+
+func isWhitespace(ch rune) bool { return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' }
