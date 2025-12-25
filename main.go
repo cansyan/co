@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 	"tui/ui"
 	"unicode"
 	"unicode/utf8"
@@ -77,10 +78,22 @@ func main() {
 	app.BindKey("Ctrl+A", root.selectAll)
 
 	// command palette
-	app.BindKey("Ctrl+P", root.showCmdPalatte)
-	app.BindKey("Ctrl+G", root.showLinePalette)
-	app.BindKey("Ctrl+O", root.showFilePalette)
-	app.BindKey("Ctrl+R", root.showSymbolPalette)
+	app.BindKey("Ctrl+K", func() {
+		root.activateLeader()
+	})
+	app.BindKey("Ctrl+P", func() {
+		if root.leaderKeyActive {
+			root.leaderKeyActive = false
+			if root.leaderTimer != nil {
+				root.leaderTimer.Stop()
+			}
+			root.showPalette(">") // Ctrl+K Ctrl+P 進入指令模式
+		} else {
+			root.showPalette("") // 預設模式：檔案搜尋
+		}
+	})
+	app.BindKey("Ctrl+G", func() { root.showPalette(":") }) // 轉到行
+	app.BindKey("Ctrl+R", func() { root.showPalette("@") }) // 轉到符號
 
 	app.BindKey("Ctrl+N", root.complete)
 	app.BindKey("Ctrl+D", root.selectWord)
@@ -103,10 +116,6 @@ func main() {
 		app.CloseOverlay()
 	})
 
-	app.DebugKey(func(key string) {
-		root.debugKey.Label = key
-	})
-
 	if err := app.Serve(root); err != nil {
 		log.Print(err)
 		return
@@ -120,20 +129,19 @@ type root struct {
 	btnNew  *ui.Button
 	btnSave *ui.Button
 	btnQuit *ui.Button
-
-	// status bar
-	status   *ui.Text
-	debugKey *ui.Text
+	status  *ui.Text
 
 	searchBar  *SearchBar
 	showSearch bool
 	copyStr    string
+
+	leaderKeyActive bool
+	leaderTimer     *time.Timer
 }
 
 func newRoot() *root {
 	r := &root{
-		status:   ui.NewText("Ready"),
-		debugKey: ui.NewText(""),
+		status: ui.NewText("Ready"),
 	}
 	r.btnNew = ui.NewButton("New", func() {
 		r.newTab("untitled", "")
@@ -264,9 +272,15 @@ func (r *root) Layout(x, y, w, h int) *ui.LayoutNode {
 	if r.showSearch {
 		mainStack.Append(ui.Divider(), r.searchBar)
 	}
+
+	statusBar := ui.HStack(r.status)
+	if r.leaderKeyActive {
+		indicator := ui.NewText("^K...")
+		statusBar.Append(ui.Spacer, indicator)
+	}
 	mainStack.Append(
 		ui.Divider(),
-		ui.HStack(r.status, ui.Spacer, r.debugKey),
+		statusBar,
 	)
 
 	n := ui.NewLayoutNode(r, x, y, w, h)
@@ -289,89 +303,120 @@ func (r *root) OnFocus()                     {}
 func (r *root) OnBlur()                      {}
 func (r *root) HandleKey(ev *tcell.EventKey) {}
 
-func (r *root) showCmdPalatte() {
-	palette := NewPalette()
-	palette.Add("Color theme: Breaks", func() {
-		ui.Theme = ui.NewBreakersTheme()
-	})
-	palette.Add("Color theme: Mariana", func() {
-		ui.Theme = ui.NewMarianaTheme()
-	})
-	palette.Add("New File", func() {
-		r.newTab("untitled", "")
-		ui.Default().Focus(r)
-	})
-	palette.Add("Quit", ui.Default().Close)
-	ui.Default().Overlay(palette, "top")
-}
-
-func (r *root) showLinePalette() {
+func (r *root) showPalette(prefix string) {
 	p := NewPalette()
-	p.SetText(":")
-	p.OnSubmit = func(text string) {
-		if !strings.HasPrefix(text, ":") {
-			return
-		}
-		lineStr := strings.TrimPrefix(text, ":")
-		var line int
-		fmt.Sscanf(lineStr, "%d", &line)
+	p.input.OnChange(func() {
+		text := p.input.Text()
+		p.list.Clear()
+		p.list.Hovered = 0
 
-		if tab := r.tabs[r.active]; tab != nil {
-			if editor, ok := tab.body.(*ui.TextEditor); ok {
-				editor.SetCursor(line-1, 0)
-				editor.CenterRow(line - 1)
+		switch {
+		case strings.HasPrefix(text, ":"):
+			// 1. Go to Line
+			lineStr := strings.TrimPrefix(text, ":")
+			line := 1
+			fmt.Sscanf(lineStr, "%d", &line)
+			p.list.Append(fmt.Sprintf("Go to Line %d", line), func() {
+				if tab := r.tabs[r.active]; tab != nil {
+					if editor, ok := tab.body.(*ui.TextEditor); ok {
+						editor.SetCursor(line-1, 0)
+						editor.CenterRow(line - 1)
+						ui.Default().Focus(r)
+					}
+				}
+			})
+
+		case strings.HasPrefix(text, "@"):
+			// 2. Go to Symbol
+			query := strings.ToLower(strings.TrimPrefix(text, "@"))
+			words := []string{query}
+			if strings.Contains(query, ".") {
+				words = strings.Split(query, ".")
+			} else if strings.Contains(query, " ") {
+				words = strings.Split(query, " ")
+			}
+			tab := r.tabs[r.active]
+			editor, ok := tab.body.(*ui.TextEditor)
+			if !ok {
+				return
+			}
+
+			symbols := r.extractSymbols(tab.label, editor.String())
+			for _, s := range symbols {
+				ok := true
+				for _, word := range words {
+					if word == "" {
+						continue
+					}
+					if !strings.Contains(strings.ToLower(s.name), word) {
+						ok = false
+						break
+					}
+				}
+				if ok {
+					p.list.Append(s.name, func() {
+						editor.SetCursor(s.line, 0)
+						editor.CenterRow(s.line)
+						ui.Default().Focus(r)
+					})
+				}
+			}
+
+		case strings.HasPrefix(text, ">"):
+			// 3. Command Mode
+			query := strings.ToLower(strings.TrimPrefix(text, ">"))
+			words := []string{query}
+			if strings.Contains(query, " ") {
+				words = strings.Split(query, " ")
+			}
+			commands := []struct {
+				name   string
+				action func()
+			}{
+				{"Color theme: Breaks", func() { ui.Theme = ui.NewBreakersTheme() }},
+				{"Color theme: Mariana", func() { ui.Theme = ui.NewMarianaTheme() }},
+				{"New File", func() { r.newTab("untitled", ""); ui.Default().Focus(r) }},
+				{"Quit", ui.Default().Close},
+			}
+			for _, cmd := range commands {
+				ok := true
+				for _, word := range words {
+					if word == "" {
+						continue
+					}
+					if !strings.Contains(strings.ToLower(cmd.name), word) {
+						ok = false
+						break
+					}
+				}
+				if ok {
+					p.list.Append(cmd.name, func() {
+						cmd.action()
+						ui.Default().Focus(r)
+					})
+				}
+			}
+
+		default:
+			// 4. File Search Mode (Default)
+			query := strings.ToLower(text)
+			entries, _ := os.ReadDir(".")
+			for _, entry := range entries {
+				if entry.IsDir() {
+					continue
+				}
+				name := entry.Name()
+				if query == "" || strings.Contains(strings.ToLower(name), query) {
+					p.list.Append(name, func() {
+						r.openFile(name)
+						ui.Default().Focus(r)
+					})
+				}
 			}
 		}
-	}
-	ui.Default().Overlay(p, "top")
-}
+	})
 
-func (r *root) showFilePalette() {
-	p := NewPalette()
-
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		p.Add(name, func() {
-			r.openFile(name)
-			ui.Default().Focus(r)
-		})
-	}
-
-	ui.Default().Overlay(p, "top")
-}
-
-func (r *root) showSymbolPalette() {
-	tab := r.tabs[r.active]
-	editor, ok := tab.body.(*ui.TextEditor)
-	if !ok {
-		return
-	}
-
-	p := NewPalette()
-	// p.SetText("@")
-
-	symbols := r.extractSymbols(tab.label, editor.String())
-	if len(symbols) == 0 {
-		r.status.Label = "No symbols found"
-		return
-	}
-
-	for _, s := range symbols {
-		p.Add(s.name, func() {
-			editor.SetCursor(s.line, 0)
-			editor.CenterRow(s.line)
-		})
-	}
-
+	p.input.SetText(prefix)
 	ui.Default().Overlay(p, "top")
 }
 
@@ -522,9 +567,8 @@ type Palette struct {
 		Name   string
 		Action func()
 	}
-	input    *ui.TextInput
-	list     *ui.ListView
-	OnSubmit func(string) // directly handle Enter
+	input *ui.TextInput
+	list  *ui.ListView
 }
 
 func NewPalette() *Palette {
@@ -533,36 +577,6 @@ func NewPalette() *Palette {
 		list:  ui.NewListView(),
 	}
 	p.list.Hovered = 0
-	p.input.OnChange(func() {
-		keyword := strings.ToLower(p.input.Text())
-		words := []string{keyword}
-		if strings.Contains(keyword, ".") {
-			words = strings.Split(keyword, ".")
-		} else if strings.Contains(keyword, " ") {
-			words = strings.Split(keyword, " ")
-		}
-
-		p.list.Clear()
-		p.list.Hovered = 0
-		for _, cmd := range p.cmds {
-			ok := true
-			for _, word := range words {
-				if word == "" {
-					continue
-				}
-				if !strings.Contains(strings.ToLower(cmd.Name), word) {
-					ok = false
-					break
-				}
-			}
-			if ok {
-				p.list.Append(cmd.Name, func() {
-					cmd.Action()
-					ui.Default().CloseOverlay()
-				})
-			}
-		}
-	})
 	return p
 }
 
@@ -625,20 +639,15 @@ func (p *Palette) HandleKey(ev *tcell.EventKey) {
 			if item.Action != nil {
 				item.Action()
 			}
-		} else if p.OnSubmit != nil {
-			p.OnSubmit(p.input.Text())
-			ui.Default().CloseOverlay()
 		}
 	default:
 		p.input.HandleKey(ev)
 	}
 }
 
-func (p *Palette) FocusTarget() ui.Element {
-	return p
-}
-func (p *Palette) OnFocus() { p.input.OnFocus() }
-func (p *Palette) OnBlur()  {}
+func (p *Palette) FocusTarget() ui.Element { return p }
+func (p *Palette) OnFocus()                { p.input.OnFocus() }
+func (p *Palette) OnBlur()                 {}
 
 type SaveAs struct {
 	child ui.Element
@@ -1111,4 +1120,15 @@ func (r *root) paste() {
 	}
 
 	editor.InsertText(r.copyStr)
+}
+
+func (r *root) activateLeader() {
+	r.leaderKeyActive = true
+	if r.leaderTimer != nil {
+		r.leaderTimer.Stop()
+	}
+	// 1 秒後自動重置狀態
+	r.leaderTimer = time.AfterFunc(1*time.Second, func() {
+		r.leaderKeyActive = false
+	})
 }

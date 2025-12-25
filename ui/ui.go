@@ -330,6 +330,10 @@ func (t *TextInput) Text() string {
 func (t *TextInput) SetText(s string) {
 	t.text = []rune(s)
 	t.cursor = len(t.text)
+	t.selStart = t.cursor
+	if t.onChange != nil {
+		t.onChange()
+	}
 }
 
 func (t *TextInput) OnChange(fn func()) *TextInput {
@@ -671,6 +675,7 @@ func (t *TextEditor) SetCursor(row, col int) {
 	if row < 0 || row >= len(t.content) || col < 0 {
 		return
 	}
+	t.CancelSelection()
 	t.row = row
 	t.col = col
 	t.adjustCol()
@@ -2129,10 +2134,8 @@ type App struct {
 	done  chan struct{}
 
 	clickPoint Point
-	keymap     map[string]func()
+	bindings   map[string]func()
 	overlay    *overlay // for temporary display
-
-	debugKeyFunc func(string)
 }
 
 var app *App
@@ -2146,20 +2149,16 @@ func Default() *App {
 
 func NewApp(root Element) *App {
 	a := &App{
-		Root:   root,
-		done:   make(chan struct{}),
-		keymap: make(map[string]func()),
+		Root:     root,
+		done:     make(chan struct{}),
+		bindings: make(map[string]func()),
 	}
-	a.keymap["Ctrl+C"] = a.Close
+	a.bindings["Ctrl+C"] = a.Close
 	return a
 }
 
 func (a *App) Screen() Screen {
 	return a.screen
-}
-
-func (a *App) BindKey(key string, action func()) {
-	a.keymap[key] = action
 }
 
 func drawTree(node *LayoutNode, s Screen) {
@@ -2316,10 +2315,6 @@ func (a *App) resolveFocus(e Element) Element {
 	}
 }
 
-func (a *App) DebugKey(f func(key string)) {
-	a.debugKeyFunc = f
-}
-
 // Serve starts the main event loop.
 func (a *App) Serve(root Element) error {
 	if root != nil {
@@ -2361,23 +2356,25 @@ func (a *App) Serve(root Element) error {
 			screen.Sync()
 		case *tcell.EventKey:
 			a.handleKey(ev)
-			if a.debugKeyFunc != nil {
-				a.debugKeyFunc(ev.Name())
-			}
 		case *tcell.EventMouse:
 			a.handleMouse(ev)
 		}
 	}
 }
 
-func (a *App) handleKey(ev *tcell.EventKey) {
-	if f, ok := a.keymap[ev.Name()]; ok {
-		if f != nil {
-			f()
-		}
+func (a *App) BindKey(key string, action func()) {
+	if key == "" || action == nil {
 		return
 	}
+	a.bindings[key] = action
+}
 
+func (a *App) handleKey(ev *tcell.EventKey) {
+	log.Printf("key %s", ev.Name())
+	if action, ok := a.bindings[ev.Name()]; ok {
+		action()
+		return
+	}
 	if a.focused == nil {
 		return
 	}
