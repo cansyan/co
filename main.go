@@ -45,18 +45,22 @@ func main() {
 			return
 		}
 	} else {
-		root.appendTab("untitled", "")
+		root.newTab("untitled", "")
 	}
 
 	app := ui.Default()
 	app.Focus(root)
-	app.BindKey("Ctrl+N", root.complete)
-	app.BindKey("Ctrl+D", root.selectWord)
-	app.BindKey("Ctrl+L", root.selectLine)
-	app.BindKey("Ctrl+P", root.showCmdPalatte)
-	app.BindKey("Ctrl+G", root.showLinePalette)
-	app.BindKey("Ctrl+O", root.showFilePalette)
-	app.BindKey("Ctrl+R", root.showSymbolPalette)
+
+	// common
+	app.BindKey("Ctrl+Q", app.Close)
+	app.BindKey("Ctrl+S", root.saveFile)
+	app.BindKey("Ctrl+W", func() {
+		root.closeTab(root.active)
+	})
+	app.BindKey("Ctrl+T", func() {
+		root.newTab("untitled", "")
+		ui.Default().Focus(root)
+	})
 	app.BindKey("Ctrl+F", func() {
 		root.showSearch = true
 		// 重置狀態，確保切換文件或重新開啟時會重新掃描
@@ -66,14 +70,21 @@ func main() {
 		root.searchBar.input.Select(0, len([]rune(query)))
 		ui.Default().Focus(root.searchBar)
 	})
-	app.BindKey("Ctrl+S", root.saveFile)
-	app.BindKey("Ctrl+W", func() {
-		root.closeTab(root.active)
-	})
-	app.BindKey("Ctrl+T", func() {
-		root.appendTab("untitled", "")
-		ui.Default().Focus(root)
-	})
+	app.BindKey("Ctrl+C", root.copy)
+	app.BindKey("Ctrl+V", root.paste)
+	app.BindKey("Ctrl+Z", nil) // undo
+	app.BindKey("Ctrl+Y", nil) // redo
+	app.BindKey("Ctrl+A", root.selectAll)
+
+	// command palette
+	app.BindKey("Ctrl+P", root.showCmdPalatte)
+	app.BindKey("Ctrl+G", root.showLinePalette)
+	app.BindKey("Ctrl+O", root.showFilePalette)
+	app.BindKey("Ctrl+R", root.showSymbolPalette)
+
+	app.BindKey("Ctrl+N", root.complete)
+	app.BindKey("Ctrl+D", root.selectWord)
+	app.BindKey("Ctrl+L", root.selectLine)
 	app.BindKey("Esc", func() {
 		focused := ui.Default().Focused()
 		if editor, ok := focused.(*ui.TextEditor); ok {
@@ -91,6 +102,7 @@ func main() {
 
 		app.CloseOverlay()
 	})
+
 	if err := app.Serve(root); err != nil {
 		log.Print(err)
 		return
@@ -107,6 +119,7 @@ type root struct {
 	status     *ui.Text
 	searchBar  *SearchBar
 	showSearch bool
+	copyStr    string
 }
 
 func newRoot() *root {
@@ -114,7 +127,7 @@ func newRoot() *root {
 		status: ui.NewText("Ready"),
 	}
 	r.btnNew = ui.NewButton("New", func() {
-		r.appendTab("untitled", "")
+		r.newTab("untitled", "")
 		ui.Default().Focus(r)
 	})
 	r.btnSave = ui.NewButton("Save", r.saveFile)
@@ -123,7 +136,7 @@ func newRoot() *root {
 	return r
 }
 
-func (r *root) appendTab(label string, content string) {
+func (r *root) newTab(label string, content string) {
 	editor := ui.NewTextEditor()
 	editor.SetText(content)
 	editor.OnChange(func() {
@@ -273,7 +286,7 @@ func (r *root) showCmdPalatte() {
 		ui.Theme = ui.NewMarianaTheme()
 	})
 	palette.Add("New File", func() {
-		r.appendTab("untitled", "")
+		r.newTab("untitled", "")
 		ui.Default().Focus(r)
 	})
 	palette.Add("Quit", ui.Default().Close)
@@ -364,7 +377,7 @@ func (r *root) openFile(name string) error {
 		return err
 	}
 
-	r.appendTab(filepath.Base(name), string(bs))
+	r.newTab(filepath.Base(name), string(bs))
 	return nil
 }
 
@@ -987,11 +1000,11 @@ func (r *root) selectWord() {
 	if !ok {
 		return
 	}
-	_, _, _, _, ok = editor.Selection()
+	r1, c1, r2, c2, ok := editor.Selection()
 	if !ok {
 		editor.SelectWord()
-	} else {
-		query := editor.SelectedText()
+	} else if r1 == r2 {
+		query := string(editor.Line(r1)[c1:c2])
 		editor.FindNext(query)
 	}
 }
@@ -1003,6 +1016,17 @@ func (r *root) selectLine() {
 		return
 	}
 	editor.SelectLine()
+}
+
+func (r *root) selectAll() {
+	tab := r.tabs[r.active]
+	editor, ok := tab.body.(*ui.TextEditor)
+	if !ok {
+		return
+	}
+
+	line := editor.Line(editor.Len() - 1)
+	editor.Select(0, 0, editor.Len()-1, len(line))
 }
 
 func (r *root) complete() {
@@ -1042,4 +1066,37 @@ func (r *root) complete() {
 			break
 		}
 	}
+}
+
+// copy stores copied text to app's buffer, not OS pasteboard
+func (r *root) copy() {
+	tab := r.tabs[r.active]
+	editor, ok := tab.body.(*ui.TextEditor)
+	if !ok {
+		return
+	}
+
+	s := editor.SelectedText()
+	if s == "" {
+		// copy current line by default
+		row, _ := editor.Cursor()
+		r.copyStr = string(editor.Line(row))
+		return
+	}
+
+	r.copyStr = s
+}
+
+func (r *root) paste() {
+	if r.copyStr == "" {
+		return
+	}
+
+	tab := r.tabs[r.active]
+	editor, ok := tab.body.(*ui.TextEditor)
+	if !ok {
+		return
+	}
+
+	editor.InsertText(r.copyStr)
 }

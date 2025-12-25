@@ -1261,13 +1261,26 @@ func (t *TextEditor) FindNext(query string) {
 	}
 }
 
-// SelectedText 回傳當前選區的字串內容（僅限單行）
+// SelectedText 回傳當前選區的字串內容
 func (t *TextEditor) SelectedText() string {
 	sRow, sCol, eRow, eCol, ok := t.Selection()
-	if !ok || sRow != eRow {
+	if !ok {
 		return ""
 	}
-	return string(t.content[sRow][sCol:eCol])
+
+	if sRow == eRow {
+		return string(t.content[sRow][sCol:eCol])
+	}
+
+	var sb strings.Builder
+	sb.WriteString(string(t.content[sRow][sCol:]))
+	sb.WriteByte('\n')
+	for i := sRow + 1; i < eRow; i++ {
+		sb.WriteString(string(t.content[i]))
+		sb.WriteByte('\n')
+	}
+	sb.WriteString(string(t.content[eRow][:eCol]))
+	return sb.String()
 }
 
 func findWordBoundary(line []rune, pos int) (start, end int) {
@@ -1337,6 +1350,11 @@ func (t *TextEditor) Line(i int) []rune {
 func (t *TextEditor) InsertText(s string) {
 	if s == "" {
 		return
+	}
+	// 如果有選取，先刪除選取範圍
+	if r1, c1, r2, c2, ok := t.Selection(); ok {
+		t.DeleteRange(r1, c1, r2, c2)
+		t.CancelSelection()
 	}
 
 	lines := strings.Split(s, "\n")
