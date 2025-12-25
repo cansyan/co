@@ -103,6 +103,10 @@ func main() {
 		app.CloseOverlay()
 	})
 
+	app.DebugKey(func(key string) {
+		root.debugKey.Label = key
+	})
+
 	if err := app.Serve(root); err != nil {
 		log.Print(err)
 		return
@@ -111,12 +115,16 @@ func main() {
 
 // root implements ui.Element
 type root struct {
-	tabs       []*tab
-	active     int
-	btnNew     *ui.Button
-	btnSave    *ui.Button
-	btnQuit    *ui.Button
-	status     *ui.Text
+	tabs    []*tab
+	active  int
+	btnNew  *ui.Button
+	btnSave *ui.Button
+	btnQuit *ui.Button
+
+	// status bar
+	status   *ui.Text
+	debugKey *ui.Text
+
 	searchBar  *SearchBar
 	showSearch bool
 	copyStr    string
@@ -124,7 +132,8 @@ type root struct {
 
 func newRoot() *root {
 	r := &root{
-		status: ui.NewText("Ready"),
+		status:   ui.NewText("Ready"),
+		debugKey: ui.NewText(""),
 	}
 	r.btnNew = ui.NewButton("New", func() {
 		r.newTab("untitled", "")
@@ -255,7 +264,10 @@ func (r *root) Layout(x, y, w, h int) *ui.LayoutNode {
 	if r.showSearch {
 		mainStack.Append(ui.Divider(), r.searchBar)
 	}
-	mainStack.Append(ui.Divider(), r.status)
+	mainStack.Append(
+		ui.Divider(),
+		ui.HStack(r.status, ui.Spacer, r.debugKey),
+	)
 
 	n := ui.NewLayoutNode(r, x, y, w, h)
 	n.Children = []*ui.LayoutNode{mainStack.Layout(x, y, w, h)}

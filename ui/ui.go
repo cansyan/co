@@ -896,10 +896,6 @@ func (t *TextEditor) OnFocus()             { t.focused = true }
 func (t *TextEditor) OnBlur()              { t.focused = false }
 
 func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
-	if !t.focused {
-		return
-	}
-
 	currentLine := t.content[t.row]
 
 	keepVisualCol := false
@@ -917,7 +913,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		t.CancelSelection()
 	case tcell.KeyUp:
 		t.CancelSelection()
-		if ev.Modifiers() == tcell.ModMeta {
+		if ev.Modifiers()&tcell.ModMeta != 0 {
 			t.row, t.col = 0, 0
 			t.ScrollTo(t.row)
 			return
@@ -935,7 +931,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 		}
 	case tcell.KeyDown:
 		t.CancelSelection()
-		if ev.Modifiers() == tcell.ModMeta {
+		if ev.Modifiers()&tcell.ModMeta != 0 {
 			t.row, t.col = len(t.content)-1, 0
 			t.ScrollTo(t.row)
 			return
@@ -952,7 +948,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.ScrollTo(t.row)
 		}
 	case tcell.KeyLeft:
-		if ev.Modifiers() == tcell.ModMeta {
+		if ev.Modifiers()&tcell.ModMeta != 0 {
 			t.CancelSelection()
 			firstNonSpace := 0
 			for i, ch := range t.content[t.row] {
@@ -978,7 +974,7 @@ func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
 			t.ScrollTo(t.row)
 		}
 	case tcell.KeyRight:
-		if ev.Modifiers() == tcell.ModMeta {
+		if ev.Modifiers()&tcell.ModMeta != 0 {
 			t.CancelSelection()
 			t.col = len(t.content[t.row])
 			return
@@ -2135,6 +2131,8 @@ type App struct {
 	clickPoint Point
 	keymap     map[string]func()
 	overlay    *overlay // for temporary display
+
+	debugKeyFunc func(string)
 }
 
 var app *App
@@ -2318,6 +2316,10 @@ func (a *App) resolveFocus(e Element) Element {
 	}
 }
 
+func (a *App) DebugKey(f func(key string)) {
+	a.debugKeyFunc = f
+}
+
 // Serve starts the main event loop.
 func (a *App) Serve(root Element) error {
 	if root != nil {
@@ -2359,6 +2361,9 @@ func (a *App) Serve(root Element) error {
 			screen.Sync()
 		case *tcell.EventKey:
 			a.handleKey(ev)
+			if a.debugKeyFunc != nil {
+				a.debugKeyFunc(ev.Name())
+			}
 		case *tcell.EventMouse:
 			a.handleMouse(ev)
 		}
@@ -2366,9 +2371,10 @@ func (a *App) Serve(root Element) error {
 }
 
 func (a *App) handleKey(ev *tcell.EventKey) {
-	log.Printf("key: %s", ev.Name())
 	if f, ok := a.keymap[ev.Name()]; ok {
-		f()
+		if f != nil {
+			f()
+		}
 		return
 	}
 
