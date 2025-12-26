@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 	"tui/ui"
-	"unicode"
 	"unicode/utf8"
 
 	"slices"
@@ -89,9 +88,9 @@ func main() {
 			root.showPalette("") // 預設模式：檔案搜尋
 		}
 	})
-	app.BindKey("Ctrl+G", func() { root.showPalette(":") }) // 轉到行
-	app.BindKey("Ctrl+R", func() { root.showPalette("@") }) // 轉到符號
-
+	app.BindKey("Ctrl+R", func() { root.showPalette("@") }) // go to symbol
+	app.BindKey("ctrl+g", root.goToDefinition)              // (ctrl+g is usually for going to line)
+	app.BindKey("F12", root.goToDefinition)
 	app.BindKey("Ctrl+N", root.autoComplete)
 	app.BindKey("Ctrl+D", root.selectWord)
 	app.BindKey("Ctrl+L", root.selectLine)
@@ -310,9 +309,11 @@ func (r *root) showPalette(prefix string) {
 		switch {
 		case strings.HasPrefix(text, ":"):
 			// 1. Go to Line
-			lineStr := strings.TrimPrefix(text, ":")
+			lineStr := text[1:]
 			line := 1
-			fmt.Sscanf(lineStr, "%d", &line)
+			if _, err := fmt.Sscanf(lineStr, "%d", &line); err != nil || line < 1 {
+				return
+			}
 			p.list.Append(fmt.Sprintf("Go to Line %d", line), func() {
 				if tab := r.tabs[r.active]; tab != nil {
 					if editor, ok := tab.body.(*ui.TextEditor); ok {
@@ -325,13 +326,11 @@ func (r *root) showPalette(prefix string) {
 
 		case strings.HasPrefix(text, "@"):
 			// 2. Go to Symbol
-			query := strings.ToLower(strings.TrimPrefix(text, "@"))
-			words := []string{query}
-			if strings.Contains(query, ".") {
-				words = strings.Split(query, ".")
-			} else if strings.Contains(query, " ") {
-				words = strings.Split(query, " ")
-			}
+			query := strings.ToLower(text[1:])
+			// Split by spaces or dots
+			words := strings.FieldsFunc(query, func(r rune) bool {
+				return r == ' ' || r == '.'
+			})
 			tab := r.tabs[r.active]
 			editor, ok := tab.body.(*ui.TextEditor)
 			if !ok {
@@ -361,39 +360,7 @@ func (r *root) showPalette(prefix string) {
 
 		case strings.HasPrefix(text, ">"):
 			// 3. Command Mode
-			query := strings.ToLower(strings.TrimPrefix(text, ">"))
-			words := []string{query}
-			if strings.Contains(query, " ") {
-				words = strings.Split(query, " ")
-			}
-			commands := []struct {
-				name   string
-				action func()
-			}{
-				{"Color theme: Breaks", func() { ui.Theme = ui.NewBreakersTheme() }},
-				{"Color theme: Mariana", func() { ui.Theme = ui.NewMarianaTheme() }},
-				{"New File", func() { r.newTab("untitled", ""); ui.Default().Focus(r) }},
-				{"Quit", ui.Default().Close},
-			}
-			for _, cmd := range commands {
-				ok := true
-				for _, word := range words {
-					if word == "" {
-						continue
-					}
-					if !strings.Contains(strings.ToLower(cmd.name), word) {
-						ok = false
-						break
-					}
-				}
-				if ok {
-					p.list.Append(cmd.name, func() {
-						cmd.action()
-						ui.Default().Focus(r)
-					})
-				}
-			}
-
+			r.fillCommandMode(p, text[1:])
 		default:
 			// 4. File Search Mode (Default)
 			query := strings.ToLower(text)
@@ -409,12 +376,49 @@ func (r *root) showPalette(prefix string) {
 						ui.Default().Focus(r)
 					})
 				}
+				// 10 results is fine
+				if len(p.list.Items) >= 10 {
+					return
+				}
 			}
 		}
 	})
 
 	p.input.SetText(prefix)
 	ui.Default().Overlay(p, "top")
+}
+
+func (r *root) fillCommandMode(p *Palette, query string) {
+	words := strings.Fields(query)
+	commands := []struct {
+		name   string
+		action func()
+	}{
+		{"Color theme: Breaks", func() { ui.Theme = ui.NewBreakersTheme() }},
+		{"Color theme: Mariana", func() { ui.Theme = ui.NewMarianaTheme() }},
+		{"Go to definition", func() { r.goToDefinition() }},
+		{"Go to symbol", func() { r.showPalette("@") }},
+		{"New File", func() { r.newTab("untitled", ""); ui.Default().Focus(r) }},
+		{"Quit", ui.Default().Close},
+	}
+	for _, cmd := range commands {
+		ok := true
+		for _, word := range words {
+			if word == "" {
+				continue
+			}
+			if !strings.Contains(strings.ToLower(cmd.name), word) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			p.list.Append(cmd.name, func() {
+				cmd.action()
+				ui.Default().Focus(r)
+			})
+		}
+	}
 }
 
 func (r *root) openFile(name string) error {
@@ -1024,36 +1028,12 @@ func (r *root) autoComplete() {
 		return
 	}
 
-	row, col := editor.Cursor()
-	line := editor.Line(row)
-
-	// word boundary
-	isWordChar := func(r rune) bool {
-		return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
-	}
-	start := col
-	for start > 0 && isWordChar(line[start-1]) {
-		start--
-	}
-	end := col
-	if end < len(line) && isWordChar(line[end]) {
-		for end < len(line) && isWordChar(line[end]) {
-			end++
-		}
-	}
-	if start == end {
-		return
-	}
-
-	// 取得當前單字的原始字串（非轉小寫），用於比對
-	word := string(line[start:end])
+	row, _ := editor.Cursor()
+	word, start, end := editor.WordUnderCursor()
 	symbols := r.extractSymbols(editor.String())
-
 	for _, s := range symbols {
-		// 使用 Name 進行匹配
 		if strings.HasPrefix(strings.ToLower(s.Name), word) {
 			// 如果補全建議跟現在長得一模一樣，跳過，嘗試下一個
-			// 這能讓你在有多個候選者時，未來有機會實作「再次按下切換下一個」
 			if s.Name == word {
 				continue
 			}
@@ -1107,4 +1087,27 @@ func (r *root) activateLeader() {
 	r.leaderTimer = time.AfterFunc(1*time.Second, func() {
 		r.leaderKeyActive = false
 	})
+}
+
+func (r *root) goToDefinition() {
+	tab := r.tabs[r.active]
+	editor, ok := tab.body.(*ui.TextEditor)
+	if !ok {
+		return
+	}
+
+	word, _, _ := editor.WordUnderCursor()
+	if word == "" {
+		return
+	}
+
+	symbols := r.extractSymbols(editor.String())
+	for _, s := range symbols {
+		if s.Name == word {
+			// Move the cursor to the symbol's definition
+			editor.SetCursor(s.Line, 0)
+			editor.CenterRow(s.Line)
+			return
+		}
+	}
 }

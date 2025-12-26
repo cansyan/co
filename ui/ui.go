@@ -1125,13 +1125,13 @@ func (t *TextEditor) Select(startRow, startCol, endRow, endCol int) {
 }
 
 // Selection 返回 (起始行, 起始列, 結束行, 結束列, 是否有選取)
-func (e *TextEditor) Selection() (r1, c1, r2, c2 int, ok bool) {
-	if !e.selecting || (e.row == e.anchorRow && e.col == e.anchorCol) {
+func (t *TextEditor) Selection() (r1, c1, r2, c2 int, ok bool) {
+	if !t.selecting || (t.row == t.anchorRow && t.col == t.anchorCol) {
 		return 0, 0, 0, 0, false
 	}
 
-	r1, c1 = e.anchorRow, e.anchorCol
-	r2, c2 = e.row, e.col
+	r1, c1 = t.anchorRow, t.anchorCol
+	r2, c2 = t.row, t.col
 
 	// 確保 (r1, c1) 在 (r2, c2) 之前
 	if r1 > r2 || (r1 == r2 && c1 > c2) {
@@ -1141,12 +1141,12 @@ func (e *TextEditor) Selection() (r1, c1, r2, c2 int, ok bool) {
 	return r1, c1, r2, c2, true
 }
 
-func (e *TextEditor) CancelSelection() {
-	e.selecting = false
+func (t *TextEditor) CancelSelection() {
+	t.selecting = false
 }
 
-func (e *TextEditor) isSelected(r, c int) bool {
-	r1, c1, r2, c2, ok := e.Selection()
+func (t *TextEditor) isSelected(r, c int) bool {
+	r1, c1, r2, c2, ok := t.Selection()
 	if !ok {
 		return false
 	}
@@ -1169,6 +1169,35 @@ func (e *TextEditor) isSelected(r, c int) bool {
 	return false
 }
 
+func (t *TextEditor) WordUnderCursor() (string, int, int) {
+	line := t.content[t.row]
+
+	// Define what constitutes a word character
+	isWordChar := func(r rune) bool {
+		return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+	}
+
+	// Find the start of the word
+	start := t.col
+	for start > 0 && isWordChar(line[start-1]) {
+		start--
+	}
+
+	// Find the end of the word
+	end := t.col
+	for end < len(line) && isWordChar(line[end]) {
+		end++
+	}
+
+	// If no word is found, return an empty string
+	if start == end {
+		return "", start, end
+	}
+
+	// Return the word and its boundaries
+	return string(line[start:end]), start, end
+}
+
 // SelectWord 擴展當前游標到單詞邊界
 func (t *TextEditor) SelectWord() {
 	if len(t.content) == 0 || t.row >= len(t.content) {
@@ -1179,7 +1208,7 @@ func (t *TextEditor) SelectWord() {
 		return
 	}
 
-	start, end := findWordBoundary(line, t.col)
+	_, start, end := t.WordUnderCursor()
 	// 讓游標停在單詞末尾，方便下次搜尋從末尾開始
 	t.Select(t.row, start, t.row, end)
 }
@@ -1282,36 +1311,6 @@ func (t *TextEditor) SelectedText() string {
 	}
 	sb.WriteString(string(t.content[eRow][:eCol]))
 	return sb.String()
-}
-
-func findWordBoundary(line []rune, pos int) (start, end int) {
-	isWordChar := func(r rune) bool {
-		return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_'
-	}
-
-	if pos >= len(line) {
-		pos = len(line) - 1
-	}
-	if pos < 0 {
-		return 0, 0
-	}
-
-	// 向左找
-	start = pos
-	for start > 0 && isWordChar(line[start-1]) {
-		start--
-	}
-	// 向右找
-	end = pos
-	if end < len(line) && isWordChar(line[end]) {
-		for end < len(line) && isWordChar(line[end]) {
-			end++
-		}
-	} else if end < len(line) {
-		// 如果游標不在單詞上，至少選中當前字符
-		end++
-	}
-	return start, end
 }
 
 func (t *TextEditor) OnScroll(dy int) {
@@ -2362,16 +2361,20 @@ func (a *App) Serve(root Element) error {
 	}
 }
 
+// BindKey bind the key to the action globally,
+// key should be form of "ctrl+c".
 func (a *App) BindKey(key string, action func()) {
 	if key == "" || action == nil {
 		return
 	}
+	key = strings.ToLower(key)
 	a.bindings[key] = action
 }
 
 func (a *App) handleKey(ev *tcell.EventKey) {
 	log.Printf("key %s", ev.Name())
-	if action, ok := a.bindings[ev.Name()]; ok {
+	key := strings.ToLower(ev.Name())
+	if action, ok := a.bindings[key]; ok {
 		action()
 		return
 	}
