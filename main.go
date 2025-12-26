@@ -94,6 +94,7 @@ func main() {
 	app.BindKey("Ctrl+N", root.autoComplete)
 	app.BindKey("Ctrl+D", root.selectWord)
 	app.BindKey("Ctrl+L", root.selectLine)
+	app.BindKey("ctrl+b", root.selectBracket)
 	app.BindKey("Esc", func() {
 		focused := ui.Default().Focused()
 		if editor, ok := focused.(*ui.TextEditor); ok {
@@ -271,7 +272,7 @@ func (r *root) Layout(x, y, w, h int) *ui.LayoutNode {
 
 	statusBar := ui.HStack(r.status)
 	if r.leaderKeyActive {
-		indicator := ui.NewText("^K...")
+		indicator := ui.NewText("^K")
 		statusBar.Append(ui.Spacer, indicator)
 	}
 	mainStack.Append(
@@ -461,6 +462,7 @@ func (r *root) saveFile() {
 			return
 		}
 		editor.Dirty = false
+		r.status.Label = "Saved changes"
 		ui.Default().Focus(r)
 		return
 	}
@@ -713,6 +715,7 @@ type symbol struct {
 	Name      string // 原始識別碼 (e.g., "saveFile"), 用於程式碼補全
 	Signature string // 完整定義 (e.g., "(*root).saveFile"), 用於 Palette 顯示
 	Line      int    // 行號
+	Kind      string
 }
 
 func (r *root) extractSymbols(content string) []symbol {
@@ -740,6 +743,7 @@ func (r *root) extractSymbols(content string) []symbol {
 				Name:      name,
 				Signature: sign,
 				Line:      i,
+				Kind:      "func",
 			})
 			continue
 		}
@@ -1021,6 +1025,69 @@ func (r *root) selectAll() {
 	editor.Select(0, 0, editor.Len()-1, len(line))
 }
 
+// selectBracket selects the text range enclosed by the nearest matching
+// bracket pair on the current line, relative to the cursor position.
+func (r *root) selectBracket() {
+	tab := r.tabs[r.active]
+	editor, ok := tab.body.(*ui.TextEditor)
+	if !ok {
+		return
+	}
+
+	row, col := editor.Cursor()
+	line := editor.Line(row)
+	if len(line) == 0 {
+		return
+	}
+
+	openBracket := map[rune]bool{'(': true, '[': true, '{': true}
+	closeBracket := map[rune]bool{')': true, ']': true, '}': true}
+	var stack []rune
+	var foundL, foundR bool
+	start := col
+	for start > 0 {
+		char := line[start-1]
+		if openBracket[char] {
+			if len(stack) == 0 {
+				foundL = true
+				break
+			} else {
+				stack = stack[:len(stack)-1]
+			}
+		} else if closeBracket[char] {
+			stack = append(stack, char)
+		}
+		start--
+	}
+	if !foundL {
+		return
+	}
+
+	stack = stack[:0]
+	end := col
+	for end < len(line) {
+		char := line[end]
+		if closeBracket[char] {
+			if len(stack) == 0 {
+				// here does not verify whether the closing bracket actually pairs with
+				// the opening bracket found above, but it is sufficient for now.
+				foundR = true
+				break
+			} else {
+				stack = stack[:len(stack)-1]
+			}
+		} else if openBracket[char] {
+			stack = append(stack, char)
+		}
+		end++
+	}
+	if !foundR {
+		return
+	}
+
+	editor.Select(row, start, row, end)
+}
+
 func (r *root) autoComplete() {
 	tab := r.tabs[r.active]
 	editor, ok := tab.body.(*ui.TextEditor)
@@ -1040,6 +1107,11 @@ func (r *root) autoComplete() {
 
 			editor.DeleteRange(row, start, row, end)
 			editor.InsertText(s.Name)
+			if s.Kind == "func" {
+				editor.InsertText("()")
+				row, col := editor.Cursor()
+				editor.SetCursor(row, col-1)
+			}
 			return
 		}
 	}

@@ -1328,10 +1328,6 @@ func (t *TextEditor) OnScroll(dy int) {
 // Cursor returns the current content index
 func (t *TextEditor) Debug() string {
 	s := fmt.Sprintf("Line %d, Column %d", t.row+1, t.col+1)
-	if startRow, startCol, endRow, endCol, ok := t.Selection(); ok {
-		s += fmt.Sprintf(", Selecting from (%d, %d) to (%d, %d)",
-			startRow+1, startCol+1, endRow+1, endCol+1)
-	}
 	return s
 }
 
