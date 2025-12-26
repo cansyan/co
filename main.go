@@ -562,11 +562,6 @@ func (t *tab) OnMouseLeave() {
 func (t *tab) OnMouseMove(rx, ry int) {}
 
 type Palette struct {
-	ui.Style
-	cmds []*struct {
-		Name   string
-		Action func()
-	}
 	input *ui.TextInput
 	list  *ui.ListView
 }
@@ -583,18 +578,6 @@ func NewPalette() *Palette {
 func (p *Palette) SetText(text string) {
 	p.input.SetText(text)
 	p.input.OnFocus()
-}
-
-func (p *Palette) Add(name string, action func()) {
-	p.cmds = append(p.cmds, &struct {
-		Name   string
-		Action func()
-	}{Name: name, Action: action})
-	f := func() {
-		action()
-		ui.Default().CloseOverlay()
-	}
-	p.list.Append(name, f)
 }
 
 func (p *Palette) MinSize() (int, int) {
@@ -647,7 +630,7 @@ func (p *Palette) HandleKey(ev *tcell.EventKey) {
 
 func (p *Palette) FocusTarget() ui.Element { return p }
 func (p *Palette) OnFocus()                { p.input.OnFocus() }
-func (p *Palette) OnBlur()                 {}
+func (p *Palette) OnBlur()                 { p.input.OnBlur() }
 
 type SaveAs struct {
 	child ui.Element
