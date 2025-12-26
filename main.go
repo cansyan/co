@@ -1011,6 +1011,19 @@ func (r *root) selectLine() {
 	if !ok {
 		return
 	}
+
+	// if has selection, expands it
+	r1, _, r2, _, ok := editor.Selection()
+	if ok {
+		if r2 < editor.Len()-1 {
+			editor.Select(r1, 0, r2+1, 0)
+		} else {
+			line := editor.Line(r2)
+			editor.Select(r1, 0, r2, len(line))
+		}
+		return
+	}
+
 	editor.SelectLine()
 }
 
