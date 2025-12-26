@@ -3,13 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"log"
 	"os"
-	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 	"tui/ui"
@@ -95,7 +92,7 @@ func main() {
 	app.BindKey("Ctrl+G", func() { root.showPalette(":") }) // 轉到行
 	app.BindKey("Ctrl+R", func() { root.showPalette("@") }) // 轉到符號
 
-	app.BindKey("Ctrl+N", root.complete)
+	app.BindKey("Ctrl+N", root.autoComplete)
 	app.BindKey("Ctrl+D", root.selectWord)
 	app.BindKey("Ctrl+L", root.selectLine)
 	app.BindKey("Esc", func() {
@@ -341,22 +338,22 @@ func (r *root) showPalette(prefix string) {
 				return
 			}
 
-			symbols := r.extractSymbols(tab.label, editor.String())
+			symbols := r.extractSymbols(editor.String())
 			for _, s := range symbols {
 				ok := true
 				for _, word := range words {
 					if word == "" {
 						continue
 					}
-					if !strings.Contains(strings.ToLower(s.name), word) {
+					if !strings.Contains(strings.ToLower(s.Signature), word) {
 						ok = false
 						break
 					}
 				}
 				if ok {
-					p.list.Append(s.name, func() {
-						editor.SetCursor(s.line, 0)
-						editor.CenterRow(s.line)
+					p.list.Append(s.Signature, func() {
+						editor.SetCursor(s.Line, 0)
+						editor.CenterRow(s.Line)
 						ui.Default().Focus(r)
 					})
 				}
@@ -709,61 +706,48 @@ func (m *SaveAs) OnFocus() { m.input.OnFocus() }
 func (m *SaveAs) OnBlur()  {}
 
 type symbol struct {
-	name string
-	line int
+	Name      string // 原始識別碼 (e.g., "saveFile"), 用於程式碼補全
+	Signature string // 完整定義 (e.g., "(*root).saveFile"), 用於 Palette 顯示
+	Line      int    // 行號
 }
 
-func (r *root) extractSymbols(filename, content string) []symbol {
-	if path.Ext(filename) != ".go" || len(content) == 0 {
-		return nil
-	}
+func (r *root) extractSymbols(content string) []symbol {
 	var symbols []symbol
-	fset := token.NewFileSet()
+	// Group 1: Receiver (optional), Group 2: Name
+	funcRegex := regexp.MustCompile(`(?m)^func\s+(?:\(([^)]+)\)\s+)?([a-zA-Z_]\w*)`)
+	typeRegex := regexp.MustCompile(`(?m)^type\s+([a-zA-Z_]\w*)`)
 
-	// 解析原始碼，這裡我們只需要解析宣告部分
-	f, err := parser.ParseFile(fset, filename, content, 0)
-	if err != nil {
-		log.Printf("parser: %v", err)
-		return nil
-	}
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		// 1. 處理函式與方法
+		if matches := funcRegex.FindStringSubmatch(line); len(matches) > 0 {
+			rawRecv := matches[1]
+			name := matches[2]
 
-	for _, decl := range f.Decls {
-		switch d := decl.(type) {
-		case *ast.FuncDecl:
-			// 處理 Function 與 Method
-			name := d.Name.Name
-			if d.Recv != nil && len(d.Recv.List) > 0 {
-				// 取得 Receiver 名稱，例如 (r *root)
-				recv := ""
-				typeExpr := d.Recv.List[0].Type
-				switch t := typeExpr.(type) {
-				case *ast.Ident:
-					recv = t.Name
-				case *ast.StarExpr:
-					if id, ok := t.X.(*ast.Ident); ok {
-						recv = "*" + id.Name
-					}
-				}
-				name = fmt.Sprintf("(%s).%s", recv, name)
+			sign := name
+			if rawRecv != "" {
+				// 提取 Receiver 型別並組合成 (*root).Method 格式
+				parts := strings.Fields(rawRecv)
+				recvType := parts[len(parts)-1]
+				sign = fmt.Sprintf("(%s).%s", recvType, name)
 			}
 
 			symbols = append(symbols, symbol{
-				name: name,
-				line: fset.Position(d.Pos()).Line - 1,
+				Name:      name,
+				Signature: sign,
+				Line:      i,
 			})
+			continue
+		}
 
-		case *ast.GenDecl:
-			// 處理 type 宣告 (struct, interface 等)
-			if d.Tok == token.TYPE {
-				for _, spec := range d.Specs {
-					if ts, ok := spec.(*ast.TypeSpec); ok {
-						symbols = append(symbols, symbol{
-							name: "type " + ts.Name.Name,
-							line: fset.Position(ts.Pos()).Line - 1,
-						})
-					}
-				}
-			}
+		// 2. 處理型別定義
+		if matches := typeRegex.FindStringSubmatch(line); len(matches) > 1 {
+			name := matches[1]
+			symbols = append(symbols, symbol{
+				Name:      name,
+				Signature: "type " + name,
+				Line:      i,
+			})
 		}
 	}
 	return symbols
@@ -1033,7 +1017,7 @@ func (r *root) selectAll() {
 	editor.Select(0, 0, editor.Len()-1, len(line))
 }
 
-func (r *root) complete() {
+func (r *root) autoComplete() {
 	tab := r.tabs[r.active]
 	editor, ok := tab.body.(*ui.TextEditor)
 	if !ok {
@@ -1061,13 +1045,22 @@ func (r *root) complete() {
 		return
 	}
 
-	word := strings.ToLower(string(line[start:end]))
-	symbols := r.extractSymbols(tab.label, editor.String())
-	for _, symbol := range symbols {
-		if strings.HasPrefix(strings.ToLower(symbol.name), word) {
+	// 取得當前單字的原始字串（非轉小寫），用於比對
+	word := string(line[start:end])
+	symbols := r.extractSymbols(editor.String())
+
+	for _, s := range symbols {
+		// 使用 Name 進行匹配
+		if strings.HasPrefix(strings.ToLower(s.Name), word) {
+			// 如果補全建議跟現在長得一模一樣，跳過，嘗試下一個
+			// 這能讓你在有多個候選者時，未來有機會實作「再次按下切換下一個」
+			if s.Name == word {
+				continue
+			}
+
 			editor.DeleteRange(row, start, row, end)
-			editor.InsertText(symbol.name)
-			break
+			editor.InsertText(s.Name)
+			return
 		}
 	}
 }
