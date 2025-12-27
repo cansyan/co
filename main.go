@@ -94,7 +94,7 @@ func main() {
 	app.BindKey("Ctrl+N", root.autoComplete)
 	app.BindKey("Ctrl+D", root.selectWord)
 	app.BindKey("Ctrl+L", root.selectLine)
-	app.BindKey("ctrl+b", root.selectBracket)
+	app.BindKey("ctrl+b", root.selectBrackets)
 	app.BindKey("Esc", func() {
 		focused := ui.Default().Focused()
 		if editor, ok := focused.(*ui.TextEditor); ok {
@@ -1038,9 +1038,25 @@ func (r *root) selectAll() {
 	editor.Select(0, 0, editor.Len()-1, len(line))
 }
 
-// selectBracket selects the text range enclosed by the nearest matching
-// bracket pair on the current line, relative to the cursor position.
-func (r *root) selectBracket() {
+var openToClose = map[rune]rune{
+	'(': ')',
+	'[': ']',
+	'{': '}',
+}
+
+var closeToOpen = map[rune]rune{
+	')': '(',
+	']': '[',
+	'}': '{',
+}
+
+// selectBrackets expands selection to brackets.
+// Given the cursor inside a bracketed block:
+//
+//	call once, selects inside the nearest matching pair;
+//	call again, expands to include the brackets themselves;
+//	repeated calls may expand further depending on context;
+func (r *root) selectBrackets() {
 	tab := r.tabs[r.active]
 	editor, ok := tab.body.(*ui.TextEditor)
 	if !ok {
@@ -1048,57 +1064,90 @@ func (r *root) selectBracket() {
 	}
 
 	row, col := editor.Cursor()
-	line := editor.Line(row)
-	if len(line) == 0 {
+	buf := editor.Line(row)
+	if len(buf) == 0 {
 		return
 	}
-
-	openBracket := map[rune]bool{'(': true, '[': true, '{': true}
-	closeBracket := map[rune]bool{')': true, ']': true, '}': true}
-	var stack []rune
-	var foundL, foundR bool
-	start := col
-	for start > 0 {
-		char := line[start-1]
-		if openBracket[char] {
-			if len(stack) == 0 {
-				foundL = true
-				break
-			} else {
-				stack = stack[:len(stack)-1]
-			}
-		} else if closeBracket[char] {
-			stack = append(stack, char)
+	if r1, c1, r2, c2, ok := editor.Selection(); ok && r1 == r2 {
+		if c2 == len(buf) {
+			return //end of line
 		}
-		start--
-	}
-	if !foundL {
-		return
+
+		// second call
+		_, okOpen := openToClose[buf[c1-1]]
+		_, okClose := closeToOpen[buf[c2]]
+		if okOpen && okClose {
+			editor.Select(r1, c1-1, r2, c2+1)
+			return
+		}
 	}
 
-	stack = stack[:0]
-	end := col
-	for end < len(line) {
-		char := line[end]
-		if closeBracket[char] {
-			if len(stack) == 0 {
-				// here does not verify whether the closing bracket actually pairs with
-				// the opening bracket found above, but it is sufficient for now.
-				foundR = true
-				break
-			} else {
-				stack = stack[:len(stack)-1]
-			}
-		} else if openBracket[char] {
-			stack = append(stack, char)
-		}
-		end++
-	}
-	if !foundR {
+	start, end, ok := expandSelectionToBrackets(buf, col)
+	if !ok {
 		return
 	}
 
 	editor.Select(row, start, row, end)
+}
+
+func expandSelectionToBrackets(buf []rune, pos int) (start, end int, ok bool) {
+	openPos, openCh := findOpeningBracket(buf, pos)
+	if openPos == -1 {
+		return -1, -1, false
+	}
+
+	closePos := findClosingBracket(buf, openPos, openCh)
+	if closePos == -1 {
+		return -1, -1, false
+	}
+
+	// select *inside* the brackets
+	return openPos + 1, closePos, true
+}
+
+func findOpeningBracket(buf []rune, pos int) (int, rune) {
+	var stack []rune
+
+	for i := pos - 1; i >= 0; i-- {
+		ch := buf[i]
+
+		if open, ok := closeToOpen[ch]; ok {
+			stack = append(stack, open)
+			continue
+		}
+
+		if _, ok := openToClose[ch]; ok {
+			if len(stack) == 0 {
+				return i, ch
+			}
+			// pop
+			stack = stack[:len(stack)-1]
+		}
+	}
+
+	return -1, 0
+}
+
+func findClosingBracket(buf []rune, openPos int, openCh rune) int {
+	closeCh := openToClose[openCh]
+	depth := 0
+
+	for i := openPos + 1; i < len(buf); i++ {
+		ch := buf[i]
+
+		if ch == openCh {
+			depth++
+			continue
+		}
+		if ch == closeCh {
+			if depth == 0 {
+				return i
+			}
+			depth--
+		}
+	}
+
+	return -1
 }
 
 func (r *root) autoComplete() {
@@ -1196,3 +1245,5 @@ func (r *root) goToDefinition() {
 		}
 	}
 }
+
+// TODO: use tree-sitter for symbols, selection, highlight

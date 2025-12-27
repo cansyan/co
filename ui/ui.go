@@ -1119,9 +1119,14 @@ func (t *TextEditor) OnMouseMove(lx, ly int) {
 // Select sets the selection anchor to startRow and startCol,
 // sets content cursor to endRow and endCol.
 func (t *TextEditor) Select(startRow, startCol, endRow, endCol int) {
+	length := t.Len()
+	if startRow < 0 || startRow > length-1 || endRow < 0 || endRow > length-1 {
+		return
+	}
 	t.anchorRow, t.anchorCol = startRow, startCol
 	t.row, t.col = endRow, endCol
 	t.selecting = true
+	t.adjustCol()
 }
 
 // Selection 返回 (起始行, 起始列, 結束行, 結束列, 是否有選取)
