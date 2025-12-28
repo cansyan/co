@@ -620,127 +620,127 @@ type TextEditor struct {
 }
 
 func NewTextEditor() *TextEditor {
-	t := &TextEditor{
+	e := &TextEditor{
 		content: [][]rune{{}}, // Start with one empty line of runes
 	}
-	return t
+	return e
 }
 
-func (t *TextEditor) Foreground(c string) *TextEditor {
-	t.style.FG = c
-	return t
+func (e *TextEditor) Foreground(c string) *TextEditor {
+	e.style.FG = c
+	return e
 }
-func (t *TextEditor) Background(c string) *TextEditor {
-	t.style.BG = c
-	return t
-}
-
-func (t *TextEditor) Len() int {
-	return len(t.content)
+func (e *TextEditor) Background(c string) *TextEditor {
+	e.style.BG = c
+	return e
 }
 
-func (t *TextEditor) String() string {
+func (e *TextEditor) Len() int {
+	return len(e.content)
+}
+
+func (e *TextEditor) String() string {
 	var sb strings.Builder
-	for i, line := range t.content {
+	for i, line := range e.content {
 		sb.WriteString(string(line))
-		if i != len(t.content)-1 {
+		if i != len(e.content)-1 {
 			sb.WriteByte('\n')
 		}
 	}
 	// append final newline
-	if len(t.content) > 0 && len(t.content[len(t.content)-1]) != 0 {
+	if len(e.content) > 0 && len(e.content[len(e.content)-1]) != 0 {
 		sb.WriteByte('\n')
 	}
 	return sb.String()
 }
 
-func (t *TextEditor) SetText(s string) {
+func (e *TextEditor) SetText(s string) {
 	lines := strings.Split(s, "\n")
-	t.content = make([][]rune, len(lines))
+	e.content = make([][]rune, len(lines))
 	for i, line := range lines {
-		t.content[i] = []rune(line)
+		e.content[i] = []rune(line)
 	}
-	t.row = 0
-	t.col = 0
-	t.adjustCol()
+	e.row = 0
+	e.col = 0
+	e.adjustCol()
 }
 
-func (t *TextEditor) Cursor() (row, col int) {
-	return t.row, t.col
+func (e *TextEditor) Cursor() (row, col int) {
+	return e.row, e.col
 }
 
 // SetCursor set the content cursor to the given row(line index)
 // and col(rune index in the line)
-func (t *TextEditor) SetCursor(row, col int) {
-	if row < 0 || row >= len(t.content) || col < 0 {
+func (e *TextEditor) SetCursor(row, col int) {
+	if row < 0 || row >= len(e.content) || col < 0 {
 		return
 	}
-	t.CancelSelection()
-	t.row = row
-	t.col = col
-	t.adjustCol()
+	e.CancelSelection()
+	e.row = row
+	e.col = col
+	e.adjustCol()
 }
 
 // CenterRow 僅負責將特定行移動到螢幕中心，提供最大上下視野
 // mainly for jumping to search result, symbol
-func (t *TextEditor) CenterRow(row int) {
-	if t.viewH <= 0 {
+func (e *TextEditor) CenterRow(row int) {
+	if e.viewH <= 0 {
 		return
 	}
 
-	t.offsetY = row - (t.viewH / 2)
-	t.clampScroll() // 抽離出的邊界檢查邏輯
+	e.offsetY = row - (e.viewH / 2)
+	e.clampScroll() // 抽離出的邊界檢查邏輯
 }
 
 // ScrollTo adjusts offsetY to ensures the row is visible on the screen,
 // does minimal scrolling, and mainly for arrow key movement and typing.
-func (t *TextEditor) ScrollTo(row int) {
-	if t.viewH <= 0 {
+func (e *TextEditor) ScrollTo(row int) {
+	if e.viewH <= 0 {
 		return
 	}
 
 	const scrolloff = 1 // 預留 1 行邊距，體驗更好
 
 	// 處理下方出界
-	if t.row >= t.offsetY+t.viewH-scrolloff {
-		t.offsetY = t.row - t.viewH + 1 + scrolloff
+	if e.row >= e.offsetY+e.viewH-scrolloff {
+		e.offsetY = e.row - e.viewH + 1 + scrolloff
 	}
 
 	// 處理上方出界
-	if t.row < t.offsetY+scrolloff {
-		t.offsetY = t.row - scrolloff
+	if e.row < e.offsetY+scrolloff {
+		e.offsetY = e.row - scrolloff
 	}
 
-	t.clampScroll()
+	e.clampScroll()
 }
 
-func (t *TextEditor) clampScroll() {
-	maxOffset := max(0, len(t.content)-t.viewH)
-	if t.offsetY > maxOffset {
-		t.offsetY = maxOffset
+func (e *TextEditor) clampScroll() {
+	maxOffset := max(0, len(e.content)-e.viewH)
+	if e.offsetY > maxOffset {
+		e.offsetY = maxOffset
 	}
-	if t.offsetY < 0 {
-		t.offsetY = 0
+	if e.offsetY < 0 {
+		e.offsetY = 0
 	}
 }
 
-func (t *TextEditor) adjustCol() {
-	if t.row < len(t.content) {
-		lineLen := len(t.content[t.row])
-		if t.col > lineLen {
-			t.col = lineLen
+func (e *TextEditor) adjustCol() {
+	if e.row < len(e.content) {
+		lineLen := len(e.content[e.row])
+		if e.col > lineLen {
+			e.col = lineLen
 		}
 	}
 }
 
-func (t *TextEditor) MinSize() (int, int) {
+func (e *TextEditor) MinSize() (int, int) {
 	// Fixed width: 5 columns for line numbers + 20 for content
 	return 25, 5
 }
 
-func (t *TextEditor) Layout(x, y, w, h int) *LayoutNode {
+func (e *TextEditor) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
-		Element: t,
+		Element: e,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 }
@@ -794,7 +794,7 @@ func visualColToLine(line []rune, col int) int {
 	return len(line)
 }
 
-func (t *TextEditor) drawRune(s tcell.Screen, x, y int, maxWidth int, r rune, visualCol int, style Style) int {
+func (e *TextEditor) drawRune(s tcell.Screen, x, y int, maxWidth int, r rune, visualCol int, style Style) int {
 	if maxWidth <= 0 {
 		return 0
 	}
@@ -823,11 +823,11 @@ func (t *TextEditor) drawRune(s tcell.Screen, x, y int, maxWidth int, r rune, vi
 	return w
 }
 
-func (t *TextEditor) Render(s Screen, rect Rect) {
-	t.viewH = rect.H
+func (e *TextEditor) Render(s Screen, rect Rect) {
+	e.viewH = rect.H
 
 	// Dynamic width calculation (for proper right-justification)
-	numLines := len(t.content)
+	numLines := len(e.content)
 	if numLines == 0 {
 		numLines = 1
 	}
@@ -836,7 +836,7 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 	lineNumStyle := Style{FG: "silver"}
 
 	contentX := rect.X + lineNumWidth + 1
-	t.contentX = contentX
+	e.contentX = contentX
 	contentW := rect.W - lineNumWidth
 	if contentW <= 0 {
 		return
@@ -846,16 +846,16 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 	cursorFound := false
 	// Loop over visible rows
 	for i := range rect.H {
-		row := i + t.offsetY
-		if row >= len(t.content) {
+		row := i + e.offsetY
+		if row >= len(e.content) {
 			break
 		}
 
-		line := t.content[row]
+		line := e.content[row]
 		lnStyle := lineNumStyle
-		if row == t.row {
+		if row == e.row {
 			cursorFound = true
-			cursorX = contentX + visualColFromLine(line, t.col)
+			cursorX = contentX + visualColFromLine(line, e.col)
 			cursorY = rect.Y + i
 			lnStyle.BG = Theme.Selection
 		}
@@ -867,27 +867,27 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 
 		// draw line content
 		spans := highlightGo(line)
-		styles := expandStyles(spans, t.style, len(line))
+		styles := expandStyles(spans, e.style, len(line))
 		visualCol := 0
 		y := rect.Y + i
 		for col, r := range line {
 			charStyle := styles[col]
-			if t.isSelected(row, col) {
+			if e.isSelected(row, col) {
 				charStyle.BG = Theme.Selection
 			}
-			cells := t.drawRune(s, contentX+visualCol, y, contentW-visualCol, r, visualCol, charStyle)
+			cells := e.drawRune(s, contentX+visualCol, y, contentW-visualCol, r, visualCol, charStyle)
 			visualCol += cells
 		}
 
 		// draw line end indicator while selected
-		if t.isSelected(row, len(line)) {
-			charStyle := t.style.Merge(Style{BG: Theme.Selection})
-			t.drawRune(s, contentX+visualCol, y, contentW-visualCol, ' ', visualCol, charStyle)
+		if e.isSelected(row, len(line)) {
+			charStyle := e.style.Merge(Style{BG: Theme.Selection})
+			e.drawRune(s, contentX+visualCol, y, contentW-visualCol, ' ', visualCol, charStyle)
 		}
 	}
 
 	// Place the cursor
-	if t.focused {
+	if e.focused {
 		if cursorFound {
 			s.ShowCursor(cursorX, cursorY)
 		} else {
@@ -896,247 +896,247 @@ func (t *TextEditor) Render(s Screen, rect Rect) {
 		}
 	}
 }
-func (t *TextEditor) FocusTarget() Element { return t }
-func (t *TextEditor) OnFocus()             { t.focused = true }
-func (t *TextEditor) OnBlur()              { t.focused = false }
+func (e *TextEditor) FocusTarget() Element { return e }
+func (e *TextEditor) OnFocus()             { e.focused = true }
+func (e *TextEditor) OnBlur()              { e.focused = false }
 
-func (t *TextEditor) HandleKey(ev *tcell.EventKey) {
-	currentLine := t.content[t.row]
+func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
+	currentLine := e.content[e.row]
 
 	keepVisualCol := false
 	defer func() {
 		if !keepVisualCol {
-			t.desiredVisualCol = 0
+			e.desiredVisualCol = 0
 		}
-		if t.onChange != nil {
-			t.onChange()
+		if e.onChange != nil {
+			e.onChange()
 		}
 	}()
 
 	switch ev.Key() {
 	case tcell.KeyESC:
-		t.CancelSelection()
+		e.CancelSelection()
 	case tcell.KeyUp:
-		t.CancelSelection()
+		e.CancelSelection()
 		if ev.Modifiers()&tcell.ModMeta != 0 {
-			t.row, t.col = 0, 0
-			t.ScrollTo(t.row)
+			e.row, e.col = 0, 0
+			e.ScrollTo(e.row)
 			return
 		}
 
 		keepVisualCol = true
-		if t.desiredVisualCol == 0 {
-			t.desiredVisualCol = visualColFromLine(currentLine, t.col)
+		if e.desiredVisualCol == 0 {
+			e.desiredVisualCol = visualColFromLine(currentLine, e.col)
 		}
-		if t.row > 0 {
-			t.row--
-			t.col = visualColToLine(t.content[t.row], t.desiredVisualCol)
-			t.adjustCol()
-			t.ScrollTo(t.row)
+		if e.row > 0 {
+			e.row--
+			e.col = visualColToLine(e.content[e.row], e.desiredVisualCol)
+			e.adjustCol()
+			e.ScrollTo(e.row)
 		}
 	case tcell.KeyDown:
-		t.CancelSelection()
+		e.CancelSelection()
 		if ev.Modifiers()&tcell.ModMeta != 0 {
-			t.row, t.col = len(t.content)-1, 0
-			t.ScrollTo(t.row)
+			e.row, e.col = len(e.content)-1, 0
+			e.ScrollTo(e.row)
 			return
 		}
 
 		keepVisualCol = true
-		if t.desiredVisualCol == 0 {
-			t.desiredVisualCol = visualColFromLine(currentLine, t.col)
+		if e.desiredVisualCol == 0 {
+			e.desiredVisualCol = visualColFromLine(currentLine, e.col)
 		}
-		if t.row < len(t.content)-1 {
-			t.row++
-			t.col = visualColToLine(t.content[t.row], t.desiredVisualCol)
-			t.adjustCol()
-			t.ScrollTo(t.row)
+		if e.row < len(e.content)-1 {
+			e.row++
+			e.col = visualColToLine(e.content[e.row], e.desiredVisualCol)
+			e.adjustCol()
+			e.ScrollTo(e.row)
 		}
 	case tcell.KeyLeft:
 		if ev.Modifiers()&tcell.ModMeta != 0 {
-			t.CancelSelection()
+			e.CancelSelection()
 			firstNonSpace := 0
-			for i, ch := range t.content[t.row] {
+			for i, ch := range e.content[e.row] {
 				if !unicode.IsSpace(ch) {
 					firstNonSpace = i
 					break
 				}
 			}
-			t.col = firstNonSpace
+			e.col = firstNonSpace
 			return
 		}
-		if r1, c1, _, _, ok := t.Selection(); ok {
-			t.row, t.col = r1, c1
-			t.CancelSelection()
+		if r1, c1, _, _, ok := e.Selection(); ok {
+			e.row, e.col = r1, c1
+			e.CancelSelection()
 			return
 		}
 
-		if t.col > 0 {
-			t.col--
-		} else if t.row > 0 {
-			t.row--
-			t.col = len(t.content[t.row]) // End of previous line
-			t.ScrollTo(t.row)
+		if e.col > 0 {
+			e.col--
+		} else if e.row > 0 {
+			e.row--
+			e.col = len(e.content[e.row]) // End of previous line
+			e.ScrollTo(e.row)
 		}
 	case tcell.KeyRight:
 		if ev.Modifiers()&tcell.ModMeta != 0 {
-			t.CancelSelection()
-			t.col = len(t.content[t.row])
+			e.CancelSelection()
+			e.col = len(e.content[e.row])
 			return
 		}
-		if _, _, r2, c2, ok := t.Selection(); ok {
-			t.row, t.col = r2, c2
-			t.CancelSelection()
+		if _, _, r2, c2, ok := e.Selection(); ok {
+			e.row, e.col = r2, c2
+			e.CancelSelection()
 			return
 		}
-		if t.col < len(currentLine) {
-			t.col++
-		} else if t.row < len(t.content)-1 {
-			t.row++
-			t.col = 0 // Start of next line
-			t.ScrollTo(t.row)
+		if e.col < len(currentLine) {
+			e.col++
+		} else if e.row < len(e.content)-1 {
+			e.row++
+			e.col = 0 // Start of next line
+			e.ScrollTo(e.row)
 		}
 	case tcell.KeyEnter:
-		if r1, c1, r2, c2, ok := t.Selection(); ok {
-			t.DeleteRange(r1, c1, r2, c2)
-			t.CancelSelection()
+		if r1, c1, r2, c2, ok := e.Selection(); ok {
+			e.DeleteRange(r1, c1, r2, c2)
+			e.CancelSelection()
 		}
-		head := currentLine[:t.col]
-		tail := currentLine[t.col:]
+		head := currentLine[:e.col]
+		tail := currentLine[e.col:]
 
-		t.content[t.row] = head
+		e.content[e.row] = head
 		newLine := slices.Clone(tail)
-		t.content = slices.Insert(t.content, t.row+1, newLine)
+		e.content = slices.Insert(e.content, e.row+1, newLine)
 
-		t.row++
-		t.col = 0
-		t.ScrollTo(t.row)
-		t.Dirty = true
+		e.row++
+		e.col = 0
+		e.ScrollTo(e.row)
+		e.Dirty = true
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
-		if r1, c1, r2, c2, ok := t.Selection(); ok {
-			t.DeleteRange(r1, c1, r2, c2)
-			t.CancelSelection()
+		if r1, c1, r2, c2, ok := e.Selection(); ok {
+			e.DeleteRange(r1, c1, r2, c2)
+			e.CancelSelection()
 			return
 		}
-		if t.col > 0 {
-			t.content[t.row] = slices.Delete(currentLine, t.col-1, t.col)
-			t.col--
-		} else if t.row > 0 {
-			prevLine := t.content[t.row-1]
-			t.col = len(prevLine)
-			t.content[t.row-1] = append(prevLine, currentLine...)
+		if e.col > 0 {
+			e.content[e.row] = slices.Delete(currentLine, e.col-1, e.col)
+			e.col--
+		} else if e.row > 0 {
+			prevLine := e.content[e.row-1]
+			e.col = len(prevLine)
+			e.content[e.row-1] = append(prevLine, currentLine...)
 
-			t.content = slices.Delete(t.content, t.row, t.row+1)
-			t.row--
-			t.ScrollTo(t.row)
+			e.content = slices.Delete(e.content, e.row, e.row+1)
+			e.row--
+			e.ScrollTo(e.row)
 		}
-		t.Dirty = true
+		e.Dirty = true
 	case tcell.KeyRune:
 		// 如果有選取，先刪除選取範圍，再插入字元
-		if r1, c1, r2, c2, ok := t.Selection(); ok {
-			t.DeleteRange(r1, c1, r2, c2)
-			t.CancelSelection()
+		if r1, c1, r2, c2, ok := e.Selection(); ok {
+			e.DeleteRange(r1, c1, r2, c2)
+			e.CancelSelection()
 		}
 		r := ev.Rune()
-		t.content[t.row] = slices.Insert(currentLine, t.col, r)
-		t.col++
-		t.Dirty = true
+		e.content[e.row] = slices.Insert(currentLine, e.col, r)
+		e.col++
+		e.Dirty = true
 	case tcell.KeyTAB:
-		if r1, c1, r2, c2, ok := t.Selection(); ok {
-			t.DeleteRange(r1, c1, r2, c2)
-			t.CancelSelection()
+		if r1, c1, r2, c2, ok := e.Selection(); ok {
+			e.DeleteRange(r1, c1, r2, c2)
+			e.CancelSelection()
 		}
-		t.content[t.row] = slices.Insert(currentLine, t.col, '\t')
-		t.col++
-		t.Dirty = true
+		e.content[e.row] = slices.Insert(currentLine, e.col, '\t')
+		e.col++
+		e.Dirty = true
 	}
 
 }
 
-func (t *TextEditor) OnMouseUp(x, y int) {
-	t.pressed = false
-	if t.row == t.anchorRow && t.col == t.anchorCol {
-		t.selecting = false
+func (e *TextEditor) OnMouseUp(x, y int) {
+	e.pressed = false
+	if e.row == e.anchorRow && e.col == e.anchorCol {
+		e.selecting = false
 	}
 }
 
-func (t *TextEditor) OnMouseDown(x, y int) {
+func (e *TextEditor) OnMouseDown(x, y int) {
 	// Calculate the target row (relative to content)
-	targetRow := y + t.offsetY
+	targetRow := y + e.offsetY
 
 	// Clamp the target row
 	if targetRow < 0 {
-		t.row = 0
-	} else if targetRow >= len(t.content) {
-		t.row = len(t.content) - 1
+		e.row = 0
+	} else if targetRow >= len(e.content) {
+		e.row = len(e.content) - 1
 	} else {
-		t.row = targetRow
+		e.row = targetRow
 	}
 
-	if t.row < 0 {
+	if e.row < 0 {
 		return
 	}
-	if t.onChange != nil {
-		defer t.onChange()
+	if e.onChange != nil {
+		defer e.onChange()
 	}
 
 	// Calculate the target column (rune index)
-	visualCol := max(x-t.contentX, 0)
-	t.col = visualColToLine(t.content[t.row], visualCol)
+	visualCol := max(x-e.contentX, 0)
+	e.col = visualColToLine(e.content[e.row], visualCol)
 
-	if !t.pressed {
+	if !e.pressed {
 		// 點擊瞬間，錨點與游標重合
-		t.anchorRow, t.anchorCol = t.row, t.col
-		t.selecting = true
-		t.pressed = true
+		e.anchorRow, e.anchorCol = e.row, e.col
+		e.selecting = true
+		e.pressed = true
 	}
 }
 
-func (t *TextEditor) OnMouseEnter() {}
-func (t *TextEditor) OnMouseLeave() {}
-func (t *TextEditor) OnMouseMove(lx, ly int) {
-	if t.pressed {
-		if t.onChange != nil {
-			defer t.onChange()
+func (e *TextEditor) OnMouseEnter() {}
+func (e *TextEditor) OnMouseLeave() {}
+func (e *TextEditor) OnMouseMove(lx, ly int) {
+	if e.pressed {
+		if e.onChange != nil {
+			defer e.onChange()
 		}
 
 		// Drag to select
-		targetRow := ly + t.offsetY
+		targetRow := ly + e.offsetY
 		if targetRow < 0 {
 			targetRow = 0
-		} else if targetRow >= len(t.content) {
-			targetRow = len(t.content) - 1
+		} else if targetRow >= len(e.content) {
+			targetRow = len(e.content) - 1
 		}
-		currentLine := t.content[targetRow]
-		clickedX := max(lx-t.contentX, 0)
+		currentLine := e.content[targetRow]
+		clickedX := max(lx-e.contentX, 0)
 		targetCol := visualColToLine(currentLine, clickedX)
 
-		t.row = targetRow
-		t.col = targetCol
+		e.row = targetRow
+		e.col = targetCol
 	}
 }
 
 // Select sets the selection anchor to startRow and startCol,
 // sets content cursor to endRow and endCol.
-func (t *TextEditor) Select(startRow, startCol, endRow, endCol int) {
-	length := t.Len()
+func (e *TextEditor) Select(startRow, startCol, endRow, endCol int) {
+	length := e.Len()
 	if startRow < 0 || startRow > length-1 || endRow < 0 || endRow > length-1 {
 		return
 	}
-	t.anchorRow, t.anchorCol = startRow, startCol
-	t.row, t.col = endRow, endCol
-	t.selecting = true
-	t.adjustCol()
+	e.anchorRow, e.anchorCol = startRow, startCol
+	e.row, e.col = endRow, endCol
+	e.selecting = true
+	e.adjustCol()
 }
 
 // Selection 返回 (起始行, 起始列, 結束行, 結束列, 是否有選取)
-func (t *TextEditor) Selection() (r1, c1, r2, c2 int, ok bool) {
-	if !t.selecting || (t.row == t.anchorRow && t.col == t.anchorCol) {
+func (e *TextEditor) Selection() (r1, c1, r2, c2 int, ok bool) {
+	if !e.selecting || (e.row == e.anchorRow && e.col == e.anchorCol) {
 		return 0, 0, 0, 0, false
 	}
 
-	r1, c1 = t.anchorRow, t.anchorCol
-	r2, c2 = t.row, t.col
+	r1, c1 = e.anchorRow, e.anchorCol
+	r2, c2 = e.row, e.col
 
 	// 確保 (r1, c1) 在 (r2, c2) 之前
 	if r1 > r2 || (r1 == r2 && c1 > c2) {
@@ -1146,12 +1146,12 @@ func (t *TextEditor) Selection() (r1, c1, r2, c2 int, ok bool) {
 	return r1, c1, r2, c2, true
 }
 
-func (t *TextEditor) CancelSelection() {
-	t.selecting = false
+func (e *TextEditor) CancelSelection() {
+	e.selecting = false
 }
 
-func (t *TextEditor) isSelected(r, c int) bool {
-	r1, c1, r2, c2, ok := t.Selection()
+func (e *TextEditor) isSelected(r, c int) bool {
+	r1, c1, r2, c2, ok := e.Selection()
 	if !ok {
 		return false
 	}
@@ -1174,8 +1174,8 @@ func (t *TextEditor) isSelected(r, c int) bool {
 	return false
 }
 
-func (t *TextEditor) WordUnderCursor() (string, int, int) {
-	line := t.content[t.row]
+func (e *TextEditor) WordUnderCursor() (string, int, int) {
+	line := e.content[e.row]
 
 	// Define what constitutes a word character
 	isWordChar := func(r rune) bool {
@@ -1183,13 +1183,13 @@ func (t *TextEditor) WordUnderCursor() (string, int, int) {
 	}
 
 	// Find the start of the word
-	start := t.col
+	start := e.col
 	for start > 0 && isWordChar(line[start-1]) {
 		start--
 	}
 
 	// Find the end of the word
-	end := t.col
+	end := e.col
 	for end < len(line) && isWordChar(line[end]) {
 		end++
 	}
@@ -1204,50 +1204,50 @@ func (t *TextEditor) WordUnderCursor() (string, int, int) {
 }
 
 // SelectWord 擴展當前游標到單詞邊界
-func (t *TextEditor) SelectWord() {
-	if len(t.content) == 0 || t.row >= len(t.content) {
+func (e *TextEditor) SelectWord() {
+	if len(e.content) == 0 || e.row >= len(e.content) {
 		return
 	}
-	line := t.content[t.row]
+	line := e.content[e.row]
 	if len(line) == 0 {
 		return
 	}
 
-	_, start, end := t.WordUnderCursor()
+	_, start, end := e.WordUnderCursor()
 	// 讓游標停在單詞末尾，方便下次搜尋從末尾開始
-	t.Select(t.row, start, t.row, end)
+	e.Select(e.row, start, e.row, end)
 }
 
 // SelectLine 擴展選中到整行
-func (t *TextEditor) SelectLine() {
-	if len(t.content) == 0 || t.row >= len(t.content) {
+func (e *TextEditor) SelectLine() {
+	if len(e.content) == 0 || e.row >= len(e.content) {
 		return
 	}
-	if t.row < len(t.content)-1 {
+	if e.row < len(e.content)-1 {
 		// 選中整行，並將游標移至下一行開頭（模仿主流編輯器行為）
-		t.Select(t.row, 0, t.row+1, 0)
+		e.Select(e.row, 0, e.row+1, 0)
 	} else {
-		t.Select(t.row, 0, t.row, len(t.content[t.row]))
+		e.Select(e.row, 0, e.row, len(e.content[e.row]))
 	}
 }
 
 // FindNext 尋找下一個匹配項並更新選區
-func (t *TextEditor) FindNext(query string) {
+func (e *TextEditor) FindNext(query string) {
 	if query == "" {
 		return
 	}
 	qRunes := []rune(query)
 	qLen := len(qRunes)
-	lineCount := len(t.content)
+	lineCount := len(e.content)
 
 	// 從當前位置之後開始搜尋
-	startRow := t.row
-	startCol := t.col
+	startRow := e.row
+	startCol := e.col
 
 	for i := 0; i < lineCount; i++ {
 		// 使用取模實現 Wrap Around (循環搜尋)
 		currentRow := (startRow + i) % lineCount
-		line := t.content[currentRow]
+		line := e.content[currentRow]
 
 		// 如果是起始行，從當前列開始找；否則從行首開始找
 		searchFromCol := 0
@@ -1281,15 +1281,15 @@ func (t *TextEditor) FindNext(query string) {
 			actualCol := searchFromCol + foundIdx
 
 			// 1. 更新選區：從匹配項開始到結束
-			t.anchorRow, t.anchorCol = currentRow, actualCol
-			t.row = currentRow
-			t.col = actualCol + qLen
-			t.selecting = true
+			e.anchorRow, e.anchorCol = currentRow, actualCol
+			e.row = currentRow
+			e.col = actualCol + qLen
+			e.selecting = true
 
 			// 3. 確保視覺調整
-			t.CenterRow(currentRow)
-			if t.onChange != nil {
-				t.onChange()
+			e.CenterRow(currentRow)
+			if e.onChange != nil {
+				e.onChange()
 			}
 			return
 		}
@@ -1297,65 +1297,65 @@ func (t *TextEditor) FindNext(query string) {
 }
 
 // SelectedText 回傳當前選區的字串內容
-func (t *TextEditor) SelectedText() string {
-	sRow, sCol, eRow, eCol, ok := t.Selection()
+func (e *TextEditor) SelectedText() string {
+	sRow, sCol, eRow, eCol, ok := e.Selection()
 	if !ok {
 		return ""
 	}
 
 	if sRow == eRow {
-		return string(t.content[sRow][sCol:eCol])
+		return string(e.content[sRow][sCol:eCol])
 	}
 
 	var sb strings.Builder
-	sb.WriteString(string(t.content[sRow][sCol:]))
+	sb.WriteString(string(e.content[sRow][sCol:]))
 	sb.WriteByte('\n')
 	for i := sRow + 1; i < eRow; i++ {
-		sb.WriteString(string(t.content[i]))
+		sb.WriteString(string(e.content[i]))
 		sb.WriteByte('\n')
 	}
-	sb.WriteString(string(t.content[eRow][:eCol]))
+	sb.WriteString(string(e.content[eRow][:eCol]))
 	return sb.String()
 }
 
-func (t *TextEditor) OnScroll(dy int) {
-	if len(t.content) <= t.viewH {
-		t.offsetY = 0
+func (e *TextEditor) OnScroll(dy int) {
+	if len(e.content) <= e.viewH {
+		e.offsetY = 0
 	} else if dy < 0 {
 		// scroll down
-		t.offsetY = max(t.offsetY+dy, 0)
+		e.offsetY = max(e.offsetY+dy, 0)
 	} else {
 		// scroll up
-		t.offsetY = min(t.offsetY+dy, len(t.content)-t.viewH)
+		e.offsetY = min(e.offsetY+dy, len(e.content)-e.viewH)
 	}
 }
 
 // Cursor returns the current content index
-func (t *TextEditor) Debug() string {
-	s := fmt.Sprintf("Line %d, Column %d", t.row+1, t.col+1)
+func (e *TextEditor) Debug() string {
+	s := fmt.Sprintf("Line %d, Column %d", e.row+1, e.col+1)
 	return s
 }
 
 // OnChange sets a callback function that is called whenever the text content changes.
-func (t *TextEditor) OnChange(fn func()) {
-	t.onChange = fn
+func (e *TextEditor) OnChange(fn func()) {
+	e.onChange = fn
 }
 
 // Line return a line of text on the given row index.
-func (t *TextEditor) Line(i int) []rune {
-	return slices.Clone(t.content[i])
+func (e *TextEditor) Line(i int) []rune {
+	return slices.Clone(e.content[i])
 }
 
 // InsertText simulates a paste operation: it inserts a string 's' at the current
 // cursor position (t.row, t.col), correctly handling any embedded newlines ('\n').
-func (t *TextEditor) InsertText(s string) {
+func (e *TextEditor) InsertText(s string) {
 	if s == "" {
 		return
 	}
 	// 如果有選取，先刪除選取範圍
-	if r1, c1, r2, c2, ok := t.Selection(); ok {
-		t.DeleteRange(r1, c1, r2, c2)
-		t.CancelSelection()
+	if r1, c1, r2, c2, ok := e.Selection(); ok {
+		e.DeleteRange(r1, c1, r2, c2)
+		e.CancelSelection()
 	}
 
 	lines := strings.Split(s, "\n")
@@ -1368,50 +1368,50 @@ func (t *TextEditor) InsertText(s string) {
 		newContent[i] = []rune(line)
 	}
 
-	if t.row >= len(t.content) || t.row < 0 {
-		t.row = len(t.content) - 1
-		if t.row < 0 {
-			t.content = [][]rune{{}}
-			t.row = 0
-			t.col = 0
+	if e.row >= len(e.content) || e.row < 0 {
+		e.row = len(e.content) - 1
+		if e.row < 0 {
+			e.content = [][]rune{{}}
+			e.row = 0
+			e.col = 0
 		}
 	}
 
-	currentLine := t.content[t.row]
-	cursorCol := min(t.col, len(currentLine))
+	currentLine := e.content[e.row]
+	cursorCol := min(e.col, len(currentLine))
 
 	head := currentLine[:cursorCol]
 	tail := slices.Clone(currentLine[cursorCol:])
 
 	if len(newContent) == 1 {
 		// Single-line insert
-		t.content[t.row] = append(append(head, newContent[0]...), tail...)
-		t.col += len(newContent[0])
+		e.content[e.row] = append(append(head, newContent[0]...), tail...)
+		e.col += len(newContent[0])
 	} else {
 		// Multi-line insert
 		firstLine := newContent[0]
-		t.content[t.row] = append(head, firstLine...)
+		e.content[e.row] = append(head, firstLine...)
 
 		lastLineIndex := len(newContent) - 1
 		newContent[lastLineIndex] = append(newContent[lastLineIndex], tail...)
 
 		middleAndLastLines := newContent[1:]
-		t.content = slices.Insert(t.content, t.row+1, middleAndLastLines...)
+		e.content = slices.Insert(e.content, e.row+1, middleAndLastLines...)
 
-		t.row += len(newContent) - 1
-		t.col = len(t.content[t.row]) - len(tail)
+		e.row += len(newContent) - 1
+		e.col = len(e.content[e.row]) - len(tail)
 	}
 
-	t.ScrollTo(t.row)
-	t.Dirty = true
-	if t.onChange != nil {
-		t.onChange()
+	e.ScrollTo(e.row)
+	e.Dirty = true
+	if e.onChange != nil {
+		e.onChange()
 	}
 }
 
 // DeleteRange deletes a range of text defined by two cursor positions (start, end).
 // the positions are inclusive of start and exclusive of end.
-func (t *TextEditor) DeleteRange(startRow, startCol, endRow, endCol int) {
+func (e *TextEditor) DeleteRange(startRow, startCol, endRow, endCol int) {
 	// 1. Normalize and clamp the selection range
 	if startRow > endRow || (startRow == endRow && startCol > endCol) {
 		startRow, endRow = endRow, startRow
@@ -1421,15 +1421,15 @@ func (t *TextEditor) DeleteRange(startRow, startCol, endRow, endCol int) {
 	if startRow < 0 {
 		startRow = 0
 	}
-	if endRow >= len(t.content) {
-		endRow = len(t.content) - 1
+	if endRow >= len(e.content) {
+		endRow = len(e.content) - 1
 	}
 	if startRow > endRow {
 		return
 	}
 
-	startLine := t.content[startRow]
-	endLine := t.content[endRow]
+	startLine := e.content[startRow]
+	endLine := e.content[endRow]
 
 	startCol = min(startCol, len(startLine))
 	endCol = min(endCol, len(endLine))
@@ -1442,26 +1442,26 @@ func (t *TextEditor) DeleteRange(startRow, startCol, endRow, endCol int) {
 	mergedLine := append(head, tail...)
 
 	// a) Replace the starting line with the merged content
-	t.content[startRow] = mergedLine
+	e.content[startRow] = mergedLine
 
 	// b) Delete intermediate lines
 	if startRow < endRow {
-		t.content = slices.Delete(t.content, startRow+1, endRow+1)
+		e.content = slices.Delete(e.content, startRow+1, endRow+1)
 	}
 
-	if len(t.content) == 0 {
-		t.content = [][]rune{{}}
+	if len(e.content) == 0 {
+		e.content = [][]rune{{}}
 	}
 
 	// 4. Update Cursor State
-	t.row = startRow
-	t.col = len(head)
+	e.row = startRow
+	e.col = len(head)
 
-	t.adjustCol()
-	t.ScrollTo(t.row)
-	t.Dirty = true
-	if t.onChange != nil {
-		t.onChange()
+	e.adjustCol()
+	e.ScrollTo(e.row)
+	e.Dirty = true
+	if e.onChange != nil {
+		e.onChange()
 	}
 }
 

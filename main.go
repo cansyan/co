@@ -299,7 +299,17 @@ func (r *root) FocusTarget() ui.Element {
 func (r *root) OnFocus()                     {}
 func (r *root) OnBlur()                      {}
 func (r *root) HandleKey(ev *tcell.EventKey) {}
-
+func (r *root) getEditor() *ui.TextEditor {
+	tab := r.tabs[r.active]
+	if tab == nil || tab.body == nil {
+		return nil
+	}
+	editor, ok := tab.body.(*ui.TextEditor)
+	if !ok {
+		return nil
+	}
+	return editor
+}
 func (r *root) showPalette(prefix string) {
 	p := NewPalette()
 	p.input.OnChange(func() {
@@ -309,20 +319,23 @@ func (r *root) showPalette(prefix string) {
 
 		switch {
 		case strings.HasPrefix(text, ":"):
+			editor := r.getEditor()
+			if editor == nil {
+				return
+			}
+
 			// 1. Go to Line
 			lineStr := text[1:]
 			line := 1
 			if _, err := fmt.Sscanf(lineStr, "%d", &line); err != nil || line < 1 {
+				p.list.Append(fmt.Sprintf("type line number between 1 and %d", editor.Len()), nil)
 				return
 			}
+
 			p.list.Append(fmt.Sprintf("Go to Line %d", line), func() {
-				if tab := r.tabs[r.active]; tab != nil {
-					if editor, ok := tab.body.(*ui.TextEditor); ok {
-						editor.SetCursor(line-1, 0)
-						editor.CenterRow(line - 1)
-						ui.Default().Focus(r)
-					}
-				}
+				editor.SetCursor(line-1, 0)
+				editor.CenterRow(line - 1)
+				ui.Default().Focus(r)
 			})
 
 		case strings.HasPrefix(text, "@"):
@@ -332,9 +345,8 @@ func (r *root) showPalette(prefix string) {
 			words := strings.FieldsFunc(query, func(r rune) bool {
 				return r == ' ' || r == '.'
 			})
-			tab := r.tabs[r.active]
-			editor, ok := tab.body.(*ui.TextEditor)
-			if !ok {
+			editor := r.getEditor()
+			if editor == nil {
 				return
 			}
 
@@ -397,6 +409,28 @@ func (r *root) fillCommandMode(p *Palette, query string) {
 	}{
 		{"Color theme: Breaks", func() { ui.Theme = ui.NewBreakersTheme() }},
 		{"Color theme: Mariana", func() { ui.Theme = ui.NewMarianaTheme() }},
+		{"Go to beginning", func() {
+			editor := r.getEditor()
+			if editor == nil {
+				return
+			}
+			editor.SetCursor(0, 0)
+			editor.CenterRow(0)
+			ui.Default().Focus(r)
+		}},
+		{"Go to end", func() {
+			editor := r.getEditor()
+			if editor == nil {
+				return
+			}
+			length := editor.Len()
+			if length == 0 {
+				return
+			}
+			editor.SetCursor(length-1, len(editor.Line(length-1)))
+			editor.CenterRow(length - 1)
+			ui.Default().Focus(r)
+		}},
 		{"Go to definition", func() { r.goToDefinition() }},
 		{"Go to symbol", func() { r.showPalette("@") }},
 		{"New File", func() { r.newTab("untitled", ""); ui.Default().Focus(r) }},
@@ -803,9 +837,8 @@ func (sb *SearchBar) updateMatches() {
 		return
 	}
 
-	tab := sb.root.tabs[sb.root.active]
-	editor, ok := tab.body.(*ui.TextEditor)
-	if !ok {
+	editor := sb.root.getEditor()
+	if editor == nil {
 		return
 	}
 
@@ -906,12 +939,13 @@ func (sb *SearchBar) navigate(forward bool) {
 
 func (sb *SearchBar) syncEditor() {
 	m := sb.matches[sb.activeIndex]
-	tab := sb.root.tabs[sb.root.active]
-	if editor, ok := tab.body.(*ui.TextEditor); ok {
-		queryLen := utf8.RuneCountInString(sb.input.Text())
-		editor.CenterRow(m.line)
-		editor.Select(m.line, m.col, m.line, m.col+queryLen)
+	editor := sb.root.getEditor()
+	if editor == nil {
+		return
 	}
+	queryLen := utf8.RuneCountInString(sb.input.Text())
+	editor.CenterRow(m.line)
+	editor.Select(m.line, m.col, m.line, m.col+queryLen)
 }
 
 func (sb *SearchBar) Layout(x, y, w, h int) *ui.LayoutNode {
@@ -1006,9 +1040,8 @@ func (r *root) selectWord() {
 }
 
 func (r *root) selectLine() {
-	tab := r.tabs[r.active]
-	editor, ok := tab.body.(*ui.TextEditor)
-	if !ok {
+	editor := r.getEditor()
+	if editor == nil {
 		return
 	}
 
@@ -1028,9 +1061,8 @@ func (r *root) selectLine() {
 }
 
 func (r *root) selectAll() {
-	tab := r.tabs[r.active]
-	editor, ok := tab.body.(*ui.TextEditor)
-	if !ok {
+	editor := r.getEditor()
+	if editor == nil {
 		return
 	}
 
@@ -1057,9 +1089,8 @@ var closeToOpen = map[rune]rune{
 //	call again, expands to include the brackets themselves;
 //	repeated calls may expand further depending on context;
 func (r *root) selectBrackets() {
-	tab := r.tabs[r.active]
-	editor, ok := tab.body.(*ui.TextEditor)
-	if !ok {
+	editor := r.getEditor()
+	if editor == nil {
 		return
 	}
 
@@ -1151,9 +1182,8 @@ func findClosingBracket(buf []rune, openPos int, openCh rune) int {
 }
 
 func (r *root) autoComplete() {
-	tab := r.tabs[r.active]
-	editor, ok := tab.body.(*ui.TextEditor)
-	if !ok {
+	editor := r.getEditor()
+	if editor == nil {
 		return
 	}
 
@@ -1181,9 +1211,8 @@ func (r *root) autoComplete() {
 
 // copy stores copied text to app's buffer, not OS pasteboard
 func (r *root) copy() {
-	tab := r.tabs[r.active]
-	editor, ok := tab.body.(*ui.TextEditor)
-	if !ok {
+	editor := r.getEditor()
+	if editor == nil {
 		return
 	}
 
@@ -1203,12 +1232,10 @@ func (r *root) paste() {
 		return
 	}
 
-	tab := r.tabs[r.active]
-	editor, ok := tab.body.(*ui.TextEditor)
-	if !ok {
+	editor := r.getEditor()
+	if editor == nil {
 		return
 	}
-
 	editor.InsertText(r.copyStr)
 }
 
@@ -1224,9 +1251,8 @@ func (r *root) activateLeader() {
 }
 
 func (r *root) goToDefinition() {
-	tab := r.tabs[r.active]
-	editor, ok := tab.body.(*ui.TextEditor)
-	if !ok {
+	editor := r.getEditor()
+	if editor == nil {
 		return
 	}
 
