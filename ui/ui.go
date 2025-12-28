@@ -323,7 +323,7 @@ func NewTextInput() *TextInput {
 	return t
 }
 
-func (t *TextInput) Text() string {
+func (t *TextInput) String() string {
 	return string(t.text)
 }
 

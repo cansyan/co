@@ -63,7 +63,7 @@ func main() {
 		// 重置狀態，確保切換文件或重新開啟時會重新掃描
 		root.searchBar.matches = nil
 		root.searchBar.activeIndex = -1
-		query := root.searchBar.input.Text()
+		query := root.searchBar.input.String()
 		root.searchBar.input.Select(0, len([]rune(query)))
 		ui.Default().Focus(root.searchBar)
 	})
@@ -314,7 +314,7 @@ func (r *root) getEditor() *ui.TextEditor {
 func (r *root) showPalette(prefix string) {
 	p := NewPalette()
 	p.input.OnChange(func() {
-		text := p.input.Text()
+		text := p.input.String()
 		p.list.Clear()
 		p.list.Hovered = 0
 
@@ -684,7 +684,7 @@ func NewSaveAs(action func(string)) *SaveAs {
 	})
 	btnOK := ui.NewButton("OK", func() {
 		if action != nil {
-			action(input.Text())
+			action(input.String())
 		}
 		ui.Default().CloseOverlay()
 	}).Background(ui.Theme.Selection)
@@ -750,7 +750,7 @@ type symbol struct {
 	Name      string // 原始識別碼 (e.g., "saveFile"), 用於程式碼補全
 	Signature string // 完整定義 (e.g., "(*root).saveFile"), 用於 Palette 顯示
 	Line      int    // 行號
-	Kind      string
+	Kind      string // func, type
 }
 
 func (r *root) extractSymbols(content string) []symbol {
@@ -790,6 +790,7 @@ func (r *root) extractSymbols(content string) []symbol {
 				Name:      name,
 				Signature: "type " + name,
 				Line:      i,
+				Kind:      "type",
 			})
 		}
 	}
@@ -833,7 +834,7 @@ func (sb *SearchBar) updateMatches() {
 	sb.matches = nil
 	sb.activeIndex = -1
 
-	query := strings.ToLower(sb.input.Text())
+	query := strings.ToLower(sb.input.String())
 	if query == "" {
 		return
 	}
@@ -944,7 +945,7 @@ func (sb *SearchBar) syncEditor() {
 	if editor == nil {
 		return
 	}
-	queryLen := utf8.RuneCountInString(sb.input.Text())
+	queryLen := utf8.RuneCountInString(sb.input.String())
 	editor.CenterRow(m.line)
 	editor.Select(m.line, m.col, m.line, m.col+queryLen)
 }
@@ -1139,10 +1140,8 @@ func expandSelectionToBrackets(buf []rune, pos int) (start, end int, ok bool) {
 
 func findOpeningBracket(buf []rune, pos int) (int, rune) {
 	var stack []rune
-
 	for i := pos - 1; i >= 0; i-- {
 		ch := buf[i]
-
 		if open, ok := closeToOpen[ch]; ok {
 			stack = append(stack, open)
 			continue
@@ -1156,21 +1155,19 @@ func findOpeningBracket(buf []rune, pos int) (int, rune) {
 			stack = stack[:len(stack)-1]
 		}
 	}
-
 	return -1, 0
 }
 
 func findClosingBracket(buf []rune, openPos int, openCh rune) int {
 	closeCh := openToClose[openCh]
 	depth := 0
-
 	for i := openPos + 1; i < len(buf); i++ {
 		ch := buf[i]
-
 		if ch == openCh {
 			depth++
 			continue
 		}
+
 		if ch == closeCh {
 			if depth == 0 {
 				return i
@@ -1178,7 +1175,6 @@ func findClosingBracket(buf []rune, openPos int, openCh rune) int {
 			depth--
 		}
 	}
-
 	return -1
 }
 
@@ -1228,7 +1224,6 @@ func (r *root) copy() {
 	r.copyStr = s
 }
 
-
 func (r *root) cut() {
 	editor := r.getEditor()
 	if editor == nil {
@@ -1247,7 +1242,6 @@ func (r *root) cut() {
 	r.copyStr = editor.SelectedText()
 	editor.DeleteRange(r1, c1, r2, c2)
 }
-
 
 func (r *root) paste() {
 	if r.copyStr == "" {
