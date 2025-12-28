@@ -68,6 +68,7 @@ func main() {
 		ui.Default().Focus(root.searchBar)
 	})
 	app.BindKey("Ctrl+C", root.copy)
+	app.BindKey("Ctrl+X", root.cut)
 	app.BindKey("Ctrl+V", root.paste)
 	app.BindKey("Ctrl+Z", nil) // undo
 	app.BindKey("Ctrl+Y", nil) // redo
@@ -1226,6 +1227,27 @@ func (r *root) copy() {
 
 	r.copyStr = s
 }
+
+
+func (r *root) cut() {
+	editor := r.getEditor()
+	if editor == nil {
+		return
+	}
+
+	r1, c1, r2, c2, ok := editor.Selection()
+	if !ok {
+		// cut line by default
+		row, _ := editor.Cursor()
+		r.copyStr = string(editor.Line(row)) + "\n"
+		editor.DeleteRange(row, 0, row+1, 0)
+		return
+	}
+
+	r.copyStr = editor.SelectedText()
+	editor.DeleteRange(r1, c1, r2, c2)
+}
+
 
 func (r *root) paste() {
 	if r.copyStr == "" {
