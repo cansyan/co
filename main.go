@@ -114,7 +114,7 @@ func main() {
 
 		app.CloseOverlay()
 	})
-	// desire cmd+up, but can not detect key cmd.
+	// want key cmd+up, but can not detect it.
 	app.BindKey("alt+up", func() {
 		editor := root.getEditor()
 		if editor == nil {
