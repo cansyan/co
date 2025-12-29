@@ -95,13 +95,13 @@ func main() {
 	app.BindKey("F12", root.gotoDefinition)
 	app.BindKey("Ctrl+N", root.autoComplete)
 	app.BindKey("Ctrl+D", root.selectWord)
-	app.BindKey("Ctrl+L", root.selectLine)
-	app.BindKey("ctrl+b", root.selectBrackets)
+	app.BindKey("Ctrl+L", root.expandSelectionToLine)
+	app.BindKey("Ctrl+B", root.expandSelectionToBrackets)
 	app.BindKey("Esc", func() {
 		focused := ui.Default().Focused()
 		if editor, ok := focused.(*ui.TextEditor); ok {
 			if _, _, _, _, ok := editor.Selection(); ok {
-				editor.CancelSelection()
+				editor.ClearSelection()
 				return
 			}
 		}
@@ -998,7 +998,7 @@ func (sb *SearchBar) syncEditor() {
 	}
 	queryLen := utf8.RuneCountInString(sb.input.String())
 	editor.CenterRow(m.line)
-	editor.Select(m.line, m.col, m.line, m.col+queryLen)
+	editor.SetSelection(m.line, m.col, m.line, m.col+queryLen)
 }
 
 func (sb *SearchBar) Layout(x, y, w, h int) *ui.LayoutNode {
@@ -1073,7 +1073,7 @@ func (p *proxyInput) FocusTarget() ui.Element {
 	return p.parent
 }
 
-// if no selection, select the word under the cursor;
+// if no selection, select the word at current cursor;
 // if has selection, jump to the next same word, like * in Vim.
 //
 // To keep things simple, this is not multiple selection (multi-cursor).
@@ -1092,25 +1092,25 @@ func (r *root) selectWord() {
 	}
 }
 
-func (r *root) selectLine() {
+func (r *root) expandSelectionToLine() {
 	editor := r.getEditor()
 	if editor == nil {
 		return
 	}
 
-	// if has selection, expands it
 	r1, _, r2, _, ok := editor.Selection()
-	if ok {
-		if r2 < editor.Len()-1 {
-			editor.Select(r1, 0, r2+1, 0)
-		} else {
-			line := editor.Line(r2)
-			editor.Select(r1, 0, r2, len(line))
-		}
+	if !ok {
+		editor.SelectLine()
 		return
 	}
 
-	editor.SelectLine()
+	// expand selection
+	if r2 < editor.Len()-1 {
+		editor.SetSelection(r1, 0, r2+1, 0)
+	} else {
+		line := editor.Line(r2)
+		editor.SetSelection(r1, 0, r2, len(line))
+	}
 }
 
 func (r *root) selectAll() {
@@ -1120,7 +1120,7 @@ func (r *root) selectAll() {
 	}
 
 	line := editor.Line(editor.Len() - 1)
-	editor.Select(0, 0, editor.Len()-1, len(line))
+	editor.SetSelection(0, 0, editor.Len()-1, len(line))
 }
 
 var openToClose = map[rune]rune{
@@ -1135,13 +1135,13 @@ var closeToOpen = map[rune]rune{
 	'}': '{',
 }
 
-// selectBrackets expands selection to brackets.
+// expandSelectionToBrackets expands selection to brackets.
 // Given the cursor inside a bracketed block:
 //
 //	call once, selects inside the nearest matching pair;
 //	call again, expands to include the brackets themselves;
 //	repeated calls may expand further depending on context;
-func (r *root) selectBrackets() {
+func (r *root) expandSelectionToBrackets() {
 	editor := r.getEditor()
 	if editor == nil {
 		return
@@ -1161,7 +1161,7 @@ func (r *root) selectBrackets() {
 		_, okOpen := openToClose[buf[c1-1]]
 		_, okClose := closeToOpen[buf[c2]]
 		if okOpen && okClose {
-			editor.Select(r1, c1-1, r2, c2+1)
+			editor.SetSelection(r1, c1-1, r2, c2+1)
 			return
 		}
 	}
@@ -1171,7 +1171,7 @@ func (r *root) selectBrackets() {
 		return
 	}
 
-	editor.Select(row, start, row, end)
+	editor.SetSelection(row, start, row, end)
 }
 
 func expandSelectionToBrackets(buf []rune, pos int) (start, end int, ok bool) {
@@ -1235,8 +1235,13 @@ func (r *root) autoComplete() {
 		return
 	}
 
+	start, end, ok := editor.WordRangeAtCursor()
+	if !ok {
+		return
+	}
 	row, _ := editor.Cursor()
-	word, start, end := editor.WordUnderCursor()
+	word := string(editor.Line(row)[start:end])
+
 	symbols := r.extractSymbols(editor.String())
 	for _, s := range symbols {
 		if strings.HasPrefix(strings.ToLower(s.Name), word) {
@@ -1324,10 +1329,12 @@ func (r *root) gotoDefinition() {
 		return
 	}
 
-	word, _, _ := editor.WordUnderCursor()
-	if word == "" {
+	start, end, ok := editor.WordRangeAtCursor()
+	if !ok {
 		return
 	}
+	row, _ := editor.Cursor()
+	word := string(editor.Line(row)[start:end])
 
 	symbols := r.extractSymbols(editor.String())
 	for _, s := range symbols {

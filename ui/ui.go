@@ -685,13 +685,12 @@ func (e *TextEditor) Cursor() (row, col int) {
 	return e.row, e.col
 }
 
-// SetCursor set the content cursor to the given row(line index)
-// and col(rune index in the line)
+// SetCursor moves the cursor and clears any active selection.
 func (e *TextEditor) SetCursor(row, col int) {
 	if row < 0 || row >= len(e.buf) || col < 0 {
 		return
 	}
-	e.CancelSelection()
+	e.ClearSelection()
 	e.row = row
 	e.col = col
 	e.adjustCol()
@@ -935,9 +934,9 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
 
 	switch ev.Key() {
 	case tcell.KeyESC:
-		e.CancelSelection()
+		e.ClearSelection()
 	case tcell.KeyUp:
-		e.CancelSelection()
+		e.ClearSelection()
 		if ev.Modifiers()&tcell.ModMeta != 0 {
 			e.row, e.col = 0, 0
 			e.ScrollTo(e.row)
@@ -955,7 +954,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
 			e.ScrollTo(e.row)
 		}
 	case tcell.KeyDown:
-		e.CancelSelection()
+		e.ClearSelection()
 		if ev.Modifiers()&tcell.ModMeta != 0 {
 			e.row, e.col = len(e.buf)-1, 0
 			e.ScrollTo(e.row)
@@ -974,7 +973,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
 		}
 	case tcell.KeyLeft:
 		if ev.Modifiers()&tcell.ModMeta != 0 {
-			e.CancelSelection()
+			e.ClearSelection()
 			firstNonSpace := 0
 			for i, ch := range e.buf[e.row] {
 				if !unicode.IsSpace(ch) {
@@ -987,7 +986,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
 		}
 		if r1, c1, _, _, ok := e.Selection(); ok {
 			e.row, e.col = r1, c1
-			e.CancelSelection()
+			e.ClearSelection()
 			return
 		}
 
@@ -1000,13 +999,13 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
 		}
 	case tcell.KeyRight:
 		if ev.Modifiers()&tcell.ModMeta != 0 {
-			e.CancelSelection()
+			e.ClearSelection()
 			e.col = len(e.buf[e.row])
 			return
 		}
 		if _, _, r2, c2, ok := e.Selection(); ok {
 			e.row, e.col = r2, c2
-			e.CancelSelection()
+			e.ClearSelection()
 			return
 		}
 		if e.col < len(e.buf[e.row]) {
@@ -1021,7 +1020,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
 		e.Dirty = true
 		if r1, c1, r2, c2, ok := e.Selection(); ok {
 			e.DeleteRange(r1, c1, r2, c2)
-			e.CancelSelection()
+			e.ClearSelection()
 		}
 		head := e.buf[e.row][:e.col]
 		tail := e.buf[e.row][e.col:]
@@ -1038,7 +1037,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
 		e.Dirty = true
 		if r1, c1, r2, c2, ok := e.Selection(); ok {
 			e.DeleteRange(r1, c1, r2, c2)
-			e.CancelSelection()
+			e.ClearSelection()
 			return
 		}
 		if e.col > 0 {
@@ -1059,7 +1058,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
 		// 如果有選取，先刪除選取範圍，再插入字元
 		if r1, c1, r2, c2, ok := e.Selection(); ok {
 			e.DeleteRange(r1, c1, r2, c2)
-			e.CancelSelection()
+			e.ClearSelection()
 		}
 		r := ev.Rune()
 		e.buf[e.row] = slices.Insert(e.buf[e.row], e.col, r)
@@ -1069,7 +1068,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
 		e.Dirty = true
 		if r1, c1, r2, c2, ok := e.Selection(); ok {
 			e.DeleteRange(r1, c1, r2, c2)
-			e.CancelSelection()
+			e.ClearSelection()
 		}
 		e.buf[e.row] = slices.Insert(e.buf[e.row], e.col, '\t')
 		e.col++
@@ -1142,9 +1141,9 @@ func (e *TextEditor) OnMouseMove(lx, ly int) {
 	}
 }
 
-// Select sets the selection anchor to startRow and startCol,
+// SetSelection sets the selection anchor to startRow and startCol,
 // sets content cursor to endRow and endCol.
-func (e *TextEditor) Select(startRow, startCol, endRow, endCol int) {
+func (e *TextEditor) SetSelection(startRow, startCol, endRow, endCol int) {
 	length := e.Len()
 	if startRow < 0 || startRow > length-1 || endRow < 0 || endRow > length-1 {
 		return
@@ -1172,7 +1171,7 @@ func (e *TextEditor) Selection() (r1, c1, r2, c2 int, ok bool) {
 	return r1, c1, r2, c2, true
 }
 
-func (e *TextEditor) CancelSelection() {
+func (e *TextEditor) ClearSelection() {
 	e.selecting = false
 }
 
@@ -1200,60 +1199,62 @@ func (e *TextEditor) isSelected(r, c int) bool {
 	return false
 }
 
-func (e *TextEditor) WordUnderCursor() (string, int, int) {
+// WordRangeAtCursor returns the word boundaries at current cursor.
+func (e *TextEditor) WordRangeAtCursor() (start, end int, ok bool) {
+	if e.row < 0 || e.row >= len(e.buf) {
+		return
+	}
 	line := e.buf[e.row]
+	if e.col < 0 || e.col > len(line) {
+		return
+	}
 
-	// Define what constitutes a word character
 	isWordChar := func(r rune) bool {
 		return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 	}
 
-	// Find the start of the word
-	start := e.col
+	start = e.col
 	for start > 0 && isWordChar(line[start-1]) {
 		start--
 	}
 
-	// Find the end of the word
-	end := e.col
+	end = e.col
 	for end < len(line) && isWordChar(line[end]) {
 		end++
 	}
 
-	// If no word is found, return an empty string
+	// no word
 	if start == end {
-		return "", start, end
+		return
 	}
 
-	// Return the word and its boundaries
-	return string(line[start:end]), start, end
+	return start, end, true
 }
 
-// SelectWord 擴展當前游標到單詞邊界
+// SelectWord selects word at current cursor
 func (e *TextEditor) SelectWord() {
 	if len(e.buf) == 0 || e.row >= len(e.buf) {
 		return
 	}
-	line := e.buf[e.row]
-	if len(line) == 0 {
+
+	start, end, ok := e.WordRangeAtCursor()
+	if !ok {
 		return
 	}
-
-	_, start, end := e.WordUnderCursor()
 	// 讓游標停在單詞末尾，方便下次搜尋從末尾開始
-	e.Select(e.row, start, e.row, end)
+	e.SetSelection(e.row, start, e.row, end)
 }
 
-// SelectLine 擴展選中到整行
+// SelectLine selects current line
 func (e *TextEditor) SelectLine() {
 	if len(e.buf) == 0 || e.row >= len(e.buf) {
 		return
 	}
 	if e.row < len(e.buf)-1 {
 		// 選中整行，並將游標移至下一行開頭（模仿主流編輯器行為）
-		e.Select(e.row, 0, e.row+1, 0)
+		e.SetSelection(e.row, 0, e.row+1, 0)
 	} else {
-		e.Select(e.row, 0, e.row, len(e.buf[e.row]))
+		e.SetSelection(e.row, 0, e.row, len(e.buf[e.row]))
 	}
 }
 
@@ -1372,7 +1373,7 @@ func (e *TextEditor) InsertText(s string) {
 	// 如果有選取，先刪除選取範圍
 	if r1, c1, r2, c2, ok := e.Selection(); ok {
 		e.DeleteRange(r1, c1, r2, c2)
-		e.CancelSelection()
+		e.ClearSelection()
 	}
 
 	lines := strings.Split(s, "\n")
