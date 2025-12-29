@@ -90,8 +90,8 @@ func main() {
 		}
 	})
 	app.BindKey("Ctrl+R", func() { root.showPalette("@") }) // go to symbol
-	app.BindKey("ctrl+g", root.goToDefinition)              // (ctrl+g is usually for going to line)
-	app.BindKey("F12", root.goToDefinition)
+	app.BindKey("ctrl+g", root.gotoDefinition)              // (ctrl+g is usually for Goto Line)
+	app.BindKey("F12", root.gotoDefinition)
 	app.BindKey("Ctrl+N", root.autoComplete)
 	app.BindKey("Ctrl+D", root.selectWord)
 	app.BindKey("Ctrl+L", root.selectLine)
@@ -113,6 +113,27 @@ func main() {
 
 		app.CloseOverlay()
 	})
+	// desire cmd+up, but can not detect key cmd.
+	app.BindKey("alt+up", func() {
+		editor := root.getEditor()
+		if editor == nil {
+			return
+		}
+		editor.SetCursor(0, 0)
+		editor.CenterRow(0)
+	})
+	app.BindKey("alt+down", func() {
+		editor := root.getEditor()
+		if editor == nil {
+			return
+		}
+		length := editor.Len()
+		if length == 0 {
+			return
+		}
+		editor.SetCursor(length-1, len(editor.Line(length-1)))
+		editor.CenterRow(length - 1)
+	})
 
 	if err := app.Serve(root); err != nil {
 		log.Print(err)
@@ -127,7 +148,7 @@ type root struct {
 	btnNew  *ui.Button
 	btnSave *ui.Button
 	btnQuit *ui.Button
-	status  *ui.Text
+	status  string
 
 	searchBar  *SearchBar
 	showSearch bool
@@ -138,15 +159,13 @@ type root struct {
 }
 
 func newRoot() *root {
-	r := &root{
-		status: ui.NewText("Ready"),
-	}
+	r := &root{}
 	r.btnNew = ui.NewButton("New", func() {
 		r.newTab("untitled", "")
 		ui.Default().Focus(r)
-	})
-	r.btnSave = ui.NewButton("Save", r.saveFile)
-	r.btnQuit = ui.NewButton("Quit", ui.Default().Close)
+	}).NoFeedback()
+	r.btnSave = ui.NewButton("Save", r.saveFile).NoFeedback()
+	r.btnQuit = ui.NewButton("Quit", ui.Default().Close).NoFeedback()
 	r.searchBar = NewSearchBar(r)
 	return r
 }
@@ -154,9 +173,9 @@ func newRoot() *root {
 func (r *root) newTab(label string, content string) {
 	editor := ui.NewTextEditor()
 	editor.SetText(content)
-	editor.OnChange(func() {
-		r.status.Label = editor.Debug()
-	})
+	if filepath.Ext(label) == ".go" {
+		editor.SetLanguage("go")
+	}
 	r.tabs = append(r.tabs, newTab(r, label, editor))
 	r.active = len(r.tabs) - 1
 }
@@ -193,7 +212,7 @@ func (r *root) closeTab(i int) {
 					err := os.WriteFile(path, []byte(editor.String()), 0644)
 					if err != nil {
 						log.Print(err)
-						r.status.Label = err.Error()
+						r.setStatus(err.Error(), 5*time.Second)
 						return
 					}
 					r.deleteTab(i)
@@ -208,7 +227,7 @@ func (r *root) closeTab(i int) {
 					err := os.WriteFile(path, []byte(editor.String()), 0644)
 					if err != nil {
 						log.Print(err)
-						r.status.Label = err.Error()
+						r.setStatus(err.Error(), 5*time.Second)
 						return
 					}
 					r.deleteTab(i)
@@ -271,11 +290,30 @@ func (r *root) Layout(x, y, w, h int) *ui.LayoutNode {
 		mainStack.Append(ui.Divider(), r.searchBar)
 	}
 
-	statusBar := ui.HStack(r.status)
-	if r.leaderKeyActive {
-		indicator := ui.NewText("^K")
-		statusBar.Append(ui.Spacer, indicator)
+	leftStatus := ui.HStack()
+	if editor := r.getEditor(); editor != nil {
+		row, col := editor.Cursor()
+		posInfo := ui.NewText(fmt.Sprintf("Line %d, Column %d", row+1, col+1))
+		leftStatus.Append(ui.PadH(posInfo, 1))
+		if r.status != "" {
+			msg := ui.NewText(fmt.Sprintf("; %s", r.status))
+			leftStatus.Append(msg)
+		}
+	} else if r.status != "" {
+		leftStatus.Append(ui.PadH(ui.NewText(r.status), 1))
 	}
+
+	rightStatus := ui.HStack()
+	if r.leaderKeyActive {
+		rightStatus.Append(ui.PadH(ui.NewText("Wait for key..."), 1))
+	}
+
+	statusBar := ui.HStack(
+		leftStatus,
+		ui.Spacer,
+		rightStatus,
+	)
+
 	mainStack.Append(
 		ui.Divider(),
 		statusBar,
@@ -284,6 +322,19 @@ func (r *root) Layout(x, y, w, h int) *ui.LayoutNode {
 	n := ui.NewLayoutNode(r, x, y, w, h)
 	n.Children = []*ui.LayoutNode{mainStack.Layout(x, y, w, h)}
 	return n
+}
+
+// setStatus sets the status text and clears it after a delay.
+func (r *root) setStatus(msg string, delay time.Duration) {
+	r.status = msg
+	time.AfterFunc(delay, func() {
+		// Only clear if the current message is still the one we set.
+		// (Avoid clearing a newer, different message).
+		if r.status == msg {
+			r.status = ""
+			ui.Default().Post()
+		}
+	})
 }
 
 func (r *root) Render(ui.Screen, ui.Rect) {
@@ -408,32 +459,10 @@ func (r *root) fillCommandMode(p *Palette, query string) {
 		name   string
 		action func()
 	}{
-		{"Color theme: Breaks", func() { ui.Theme = ui.NewBreakersTheme() }},
-		{"Color theme: Mariana", func() { ui.Theme = ui.NewMarianaTheme() }},
-		{"Go to beginning", func() {
-			editor := r.getEditor()
-			if editor == nil {
-				return
-			}
-			editor.SetCursor(0, 0)
-			editor.CenterRow(0)
-			ui.Default().Focus(r)
-		}},
-		{"Go to end", func() {
-			editor := r.getEditor()
-			if editor == nil {
-				return
-			}
-			length := editor.Len()
-			if length == 0 {
-				return
-			}
-			editor.SetCursor(length-1, len(editor.Line(length-1)))
-			editor.CenterRow(length - 1)
-			ui.Default().Focus(r)
-		}},
-		{"Go to definition", func() { r.goToDefinition() }},
-		{"Go to symbol", func() { r.showPalette("@") }},
+		{"Color Theme: Breaks", func() { ui.Theme = ui.NewBreakersTheme() }},
+		{"Color Theme: Mariana", func() { ui.Theme = ui.NewMarianaTheme() }},
+		{"Goto Definition", func() { r.gotoDefinition() }},
+		{"Goto Symbol", func() { r.showPalette("@") }},
 		{"New File", func() { r.newTab("untitled", ""); ui.Default().Focus(r) }},
 		{"Quit", ui.Default().Close},
 	}
@@ -493,11 +522,11 @@ func (r *root) saveFile() {
 		err := os.WriteFile(path, []byte(editor.String()), 0644)
 		if err != nil {
 			log.Print(err)
-			r.status.Label = err.Error()
+			r.setStatus(err.Error(), 5*time.Second)
 			return
 		}
 		editor.Dirty = false
-		r.status.Label = "Saved changes"
+		r.setStatus("Saved "+path, 2*time.Second)
 		ui.Default().Focus(r)
 		return
 	}
@@ -509,7 +538,7 @@ func (r *root) saveFile() {
 		err := os.WriteFile(path, []byte(editor.String()), 0644)
 		if err != nil {
 			log.Print(err)
-			r.status.Label = err.Error()
+			r.status = err.Error()
 			return
 		}
 		tab.label = path
@@ -749,7 +778,7 @@ func (m *SaveAs) OnBlur()  {}
 type symbol struct {
 	Name      string // 原始識別碼 (e.g., "saveFile"), 用於程式碼補全
 	Signature string // 完整定義 (e.g., "(*root).saveFile"), 用於 Palette 顯示
-	Line      int    // 行號
+	Line      int    // line number
 	Kind      string // func, type
 }
 
@@ -1260,13 +1289,14 @@ func (r *root) activateLeader() {
 	if r.leaderTimer != nil {
 		r.leaderTimer.Stop()
 	}
-	// 1 秒後自動重置狀態
-	r.leaderTimer = time.AfterFunc(1*time.Second, func() {
+	// 2 秒後自動重置狀態
+	r.leaderTimer = time.AfterFunc(2*time.Second, func() {
 		r.leaderKeyActive = false
+		ui.Default().Post()
 	})
 }
 
-func (r *root) goToDefinition() {
+func (r *root) gotoDefinition() {
 	editor := r.getEditor()
 	if editor == nil {
 		return
@@ -1287,5 +1317,3 @@ func (r *root) goToDefinition() {
 		}
 	}
 }
-
-// TODO: use tree-sitter for symbols, selection, highlight

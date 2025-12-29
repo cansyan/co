@@ -207,13 +207,12 @@ func DrawString(s Screen, x, y, w int, str string, style tcell.Style) {
 // ---------------------------------------------------------------------
 
 type Text struct {
-	Style
-	Label string
+	Style Style
+	Text  string
 }
 
-func NewText(c string) *Text {
-	t := &Text{Label: c}
-	return t
+func NewText(text string) *Text {
+	return &Text{Text: text}
 }
 
 func (t *Text) Bold() *Text      { t.Style.FontBold = true; return t }
@@ -228,7 +227,7 @@ func (t *Text) Background(color string) *Text {
 	return t
 }
 
-func (t *Text) MinSize() (int, int) { return len(t.Label), 1 }
+func (t *Text) MinSize() (int, int) { return runewidth.StringWidth(t.Text), 1 }
 func (t *Text) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: t,
@@ -236,24 +235,31 @@ func (t *Text) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 func (t *Text) Render(s Screen, rect Rect) {
-	DrawString(s, rect.X, rect.Y, rect.W, t.Label, t.Style.Apply())
+	DrawString(s, rect.X, rect.Y, rect.W, t.Text, t.Style.Apply())
 }
 
 type Button struct {
-	Style
-	label   string
+	Style   Style
+	text    string
 	onClick func()
-	hovered bool
-	pressed bool
+
+	hovered    bool
+	pressed    bool
+	noFeedback bool
 }
 
 // NewButton creates a new button element with the given label.
-func NewButton(label string, onClick func()) *Button {
-	b := &Button{label: label, onClick: onClick}
+func NewButton(text string, onClick func()) *Button {
+	return &Button{text: text, onClick: onClick}
+}
+
+// Disable visual feedback
+func (b *Button) NoFeedback() *Button {
+	b.noFeedback = true
 	return b
 }
 
-func (b *Button) MinSize() (int, int) { return runewidth.StringWidth(b.label) + 2, 1 }
+func (b *Button) MinSize() (int, int) { return runewidth.StringWidth(b.text) + 2, 1 }
 func (b *Button) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: b,
@@ -262,10 +268,13 @@ func (b *Button) Layout(x, y, w, h int) *LayoutNode {
 }
 func (b *Button) Render(s Screen, rect Rect) {
 	st := b.Style
-	if b.pressed {
+	if !b.noFeedback && b.hovered {
+		st.BG = Theme.Hover
+	}
+	if !b.noFeedback && b.pressed {
 		st.BG = Theme.Selection
 	}
-	label := " " + b.label + " "
+	label := " " + b.text + " "
 	DrawString(s, rect.X, rect.Y, rect.W, label, st.Apply())
 }
 
@@ -609,6 +618,7 @@ type TextEditor struct {
 	contentX int
 	onChange func()
 	Dirty    bool
+	lang     string
 
 	anchorRow int  // 選取的「靜端」(Anchor) 起點行
 	anchorCol int  // 選取的「靜端」(Anchor) 起點列
@@ -624,6 +634,10 @@ func NewTextEditor() *TextEditor {
 		content: [][]rune{{}}, // Start with one empty line of runes
 	}
 	return e
+}
+
+func (e *TextEditor) SetLanguage(l string) {
+	e.lang = l
 }
 
 func (e *TextEditor) Foreground(c string) *TextEditor {
@@ -866,7 +880,10 @@ func (e *TextEditor) Render(s Screen, rect Rect) {
 		DrawString(s, rect.X, rect.Y+i, lineNumWidth, numStr, lnStyle.Apply())
 
 		// draw line content
-		spans := highlightGo(line)
+		var spans []StyleSpan
+		if e.lang == "go" {
+			spans = highlightGo(line)
+		}
 		styles := expandStyles(spans, e.style, len(line))
 		visualCol := 0
 		y := rect.Y + i
@@ -908,10 +925,13 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
 		if !keepVisualCol {
 			e.desiredVisualCol = 0
 		}
+	}()
+
+	onChange := func() {
 		if e.onChange != nil {
 			e.onChange()
 		}
-	}()
+	}
 
 	switch ev.Key() {
 	case tcell.KeyESC:
@@ -997,6 +1017,8 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
 			e.ScrollTo(e.row)
 		}
 	case tcell.KeyEnter:
+		defer onChange()
+		e.Dirty = true
 		if r1, c1, r2, c2, ok := e.Selection(); ok {
 			e.DeleteRange(r1, c1, r2, c2)
 			e.CancelSelection()
@@ -1011,8 +1033,9 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
 		e.row++
 		e.col = 0
 		e.ScrollTo(e.row)
-		e.Dirty = true
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
+		defer onChange()
+		e.Dirty = true
 		if r1, c1, r2, c2, ok := e.Selection(); ok {
 			e.DeleteRange(r1, c1, r2, c2)
 			e.CancelSelection()
@@ -1030,8 +1053,9 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
 			e.row--
 			e.ScrollTo(e.row)
 		}
-		e.Dirty = true
 	case tcell.KeyRune:
+		defer onChange()
+		e.Dirty = true
 		// 如果有選取，先刪除選取範圍，再插入字元
 		if r1, c1, r2, c2, ok := e.Selection(); ok {
 			e.DeleteRange(r1, c1, r2, c2)
@@ -1040,17 +1064,26 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
 		r := ev.Rune()
 		e.content[e.row] = slices.Insert(currentLine, e.col, r)
 		e.col++
-		e.Dirty = true
 	case tcell.KeyTAB:
+		defer onChange()
+		e.Dirty = true
 		if r1, c1, r2, c2, ok := e.Selection(); ok {
 			e.DeleteRange(r1, c1, r2, c2)
 			e.CancelSelection()
 		}
 		e.content[e.row] = slices.Insert(currentLine, e.col, '\t')
 		e.col++
-		e.Dirty = true
+	case tcell.KeyHome:
+		// goto the first non-space character
+		for i, char := range e.content[e.row] {
+			if !unicode.IsSpace(char) {
+				e.col = i
+				break
+			}
+		}
+	case tcell.KeyEnd:
+		e.col = len(e.content[e.row])
 	}
-
 }
 
 func (e *TextEditor) OnMouseUp(x, y int) {
@@ -1076,9 +1109,6 @@ func (e *TextEditor) OnMouseDown(x, y int) {
 	if e.row < 0 {
 		return
 	}
-	if e.onChange != nil {
-		defer e.onChange()
-	}
 
 	// Calculate the target column (rune index)
 	visualCol := max(x-e.contentX, 0)
@@ -1096,10 +1126,6 @@ func (e *TextEditor) OnMouseEnter() {}
 func (e *TextEditor) OnMouseLeave() {}
 func (e *TextEditor) OnMouseMove(lx, ly int) {
 	if e.pressed {
-		if e.onChange != nil {
-			defer e.onChange()
-		}
-
 		// Drag to select
 		targetRow := ly + e.offsetY
 		if targetRow < 0 {
@@ -1288,9 +1314,6 @@ func (e *TextEditor) FindNext(query string) {
 
 			// 3. 確保視覺調整
 			e.CenterRow(currentRow)
-			if e.onChange != nil {
-				e.onChange()
-			}
 			return
 		}
 	}
@@ -1328,12 +1351,6 @@ func (e *TextEditor) OnScroll(dy int) {
 		// scroll up
 		e.offsetY = min(e.offsetY+dy, len(e.content)-e.viewH)
 	}
-}
-
-// Cursor returns the current content index
-func (e *TextEditor) Debug() string {
-	s := fmt.Sprintf("Line %d, Column %d", e.row+1, e.col+1)
-	return s
 }
 
 // OnChange sets a callback function that is called whenever the text content changes.
@@ -2315,6 +2332,12 @@ func (a *App) resolveFocus(e Element) Element {
 	}
 }
 
+// Post requests a redraw.
+func (a *App) Post() {
+	// 發送一個空事件，喚醒 screen.PollEvent()
+	a.screen.PostEvent(tcell.NewEventInterrupt(nil))
+}
+
 // Serve starts the main event loop.
 func (a *App) Serve(root Element) error {
 	if root != nil {
@@ -2351,6 +2374,8 @@ func (a *App) Serve(root Element) error {
 
 		ev := screen.PollEvent()
 		switch ev := ev.(type) {
+		case *tcell.EventInterrupt:
+			// 被 PostEvent 喚醒
 		case *tcell.EventResize:
 			draw()
 			screen.Sync()
