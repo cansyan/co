@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"go/format"
 	"log"
 	"os"
 	"path/filepath"
@@ -209,8 +210,7 @@ func (r *root) closeTab(i int) {
 
 			ui.NewButton("Save", func() {
 				if path := tab.label; path != "untitled" {
-					err := os.WriteFile(path, []byte(editor.String()), 0644)
-					if err != nil {
+					if err := r.writeFile(path, editor); err != nil {
 						log.Print(err)
 						r.setStatus(err.Error(), 5*time.Second)
 						return
@@ -224,8 +224,7 @@ func (r *root) closeTab(i int) {
 					if path == "" {
 						return
 					}
-					err := os.WriteFile(path, []byte(editor.String()), 0644)
-					if err != nil {
+					if err := r.writeFile(path, editor); err != nil {
 						log.Print(err)
 						r.setStatus(err.Error(), 5*time.Second)
 						return
@@ -519,13 +518,11 @@ func (r *root) saveFile() {
 	}
 
 	if path := tab.label; path != "untitled" {
-		err := os.WriteFile(path, []byte(editor.String()), 0644)
-		if err != nil {
+		if err := r.writeFile(path, editor); err != nil {
 			log.Print(err)
 			r.setStatus(err.Error(), 5*time.Second)
 			return
 		}
-		editor.Dirty = false
 		r.setStatus("Saved "+path, 2*time.Second)
 		ui.Default().Focus(r)
 		return
@@ -535,17 +532,42 @@ func (r *root) saveFile() {
 		if path == "" {
 			return
 		}
-		err := os.WriteFile(path, []byte(editor.String()), 0644)
-		if err != nil {
+		if err := r.writeFile(path, editor); err != nil {
 			log.Print(err)
-			r.status = err.Error()
+			r.setStatus(err.Error(), 5*time.Second)
 			return
 		}
 		tab.label = path
-		editor.Dirty = false
 		ui.Default().Focus(r)
 	})
 	ui.Default().Overlay(sa, "center")
+}
+
+func (r *root) writeFile(path string, editor *ui.TextEditor) error {
+	bs := []byte(editor.String())
+
+	// Only format if it's a Go file
+	if filepath.Ext(path) == ".go" {
+		formatted, err := format.Source(bs)
+		if err == nil {
+			bs = formatted
+			row, col := editor.Cursor()
+			editor.SetText(string(formatted)) // Sync formatted text back to UI
+			editor.SetCursor(row, col)
+		} else {
+			// If formatting fails (e.g., syntax error), we still save
+			// but notify the user via status bar.
+			r.setStatus(fmt.Sprintf("Format error: %v", err), 5*time.Second)
+		}
+	}
+
+	err := os.WriteFile(path, bs, 0644)
+	if err != nil {
+		return err
+	}
+
+	editor.Dirty = false
+	return nil
 }
 
 type tab struct {
