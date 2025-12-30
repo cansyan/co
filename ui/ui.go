@@ -1245,17 +1245,108 @@ func (e *TextEditor) SelectWord() {
 	e.SetSelection(e.row, start, e.row, end)
 }
 
-// SelectLine selects current line
-func (e *TextEditor) SelectLine() {
+// ExpandSelectionToLine expands selection to line.
+// Repeated calls may expand further lines.
+func (e *TextEditor) ExpandSelectionToLine() {
 	if len(e.buf) == 0 || e.row >= len(e.buf) {
 		return
 	}
-	if e.row < len(e.buf)-1 {
-		// 選中整行，並將游標移至下一行開頭（模仿主流編輯器行為）
-		e.SetSelection(e.row, 0, e.row+1, 0)
-	} else {
-		e.SetSelection(e.row, 0, e.row, len(e.buf[e.row]))
+
+	r1, _, r2, _, ok := e.Selection()
+	if !ok {
+		if e.row < len(e.buf)-1 {
+			// 選中整行，並將游標移至下一行開頭（模仿主流編輯器行為）
+			e.SetSelection(e.row, 0, e.row+1, 0)
+		} else {
+			e.SetSelection(e.row, 0, e.row, len(e.buf[e.row]))
+		}
+		return
 	}
+
+	// expand selection
+	if r2 < e.Len()-1 {
+		e.SetSelection(r1, 0, r2+1, 0)
+	} else {
+		line := e.Line(r2)
+		e.SetSelection(r1, 0, r2, len(line))
+	}
+}
+
+// ExpandSelectionToBrackets expands selection to the nearest enclosing brackets.
+// Repeated calls may expand further depending on context;
+func (e *TextEditor) ExpandSelectionToBrackets() {
+	openRow, openCol, openCh := e.findOpeningBracket(e.row, e.col)
+	if openCol == -1 {
+		return
+	}
+
+	closeRow, closeCol := e.findClosingBracket(openRow, openCol, openCh)
+	if closeCol == -1 {
+		return
+	}
+
+	// include the brackets
+	e.SetSelection(openRow, openCol, closeRow, closeCol+1)
+}
+
+var bracketOpen = map[rune]rune{
+	'(': ')',
+	'[': ']',
+	'{': '}',
+}
+
+var bracketClose = map[rune]rune{
+	')': '(',
+	']': '[',
+	'}': '{',
+}
+
+func (e *TextEditor) findOpeningBracket(startRow, startCol int) (openRow, openCol int, openCh rune) {
+	var stack []rune
+	for r := startRow; r >= 0; r-- {
+		cStart := len(e.buf[r]) - 1
+		if r == startRow {
+			cStart = startCol - 1
+		}
+
+		for c := cStart; c >= 0; c-- {
+			char := e.buf[r][c]
+			if open, ok := bracketClose[char]; ok {
+				stack = append(stack, open)
+			} else if _, ok := bracketOpen[char]; ok {
+				if len(stack) == 0 {
+					return r, c, char
+				}
+				// pop
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+	return -1, -1, 0
+}
+
+func (e *TextEditor) findClosingBracket(openRow, openCol int, openCh rune) (closeRow, closeCol int) {
+	closeCh := bracketOpen[openCh]
+	depth := 0
+	for r := openRow; r < len(e.buf); r++ {
+		cStart := 0
+		if r == openRow {
+			cStart = openCol + 1
+		}
+
+		for c := cStart; c < len(e.buf[r]); c++ {
+			char := e.buf[r][c]
+			if char == openCh {
+				depth++
+			} else if char == closeCh {
+				if depth == 0 {
+					return r, c
+				}
+				depth--
+			}
+		}
+	}
+	return -1, -1
 }
 
 // FindNext 尋找下一個匹配項並更新選區

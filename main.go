@@ -1093,156 +1093,45 @@ func (r *root) selectWord() {
 }
 
 func (r *root) expandSelectionToLine() {
-	editor := r.getEditor()
-	if editor == nil {
+	e := r.getEditor()
+	if e == nil {
 		return
 	}
-
-	r1, _, r2, _, ok := editor.Selection()
-	if !ok {
-		editor.SelectLine()
-		return
-	}
-
-	// expand selection
-	if r2 < editor.Len()-1 {
-		editor.SetSelection(r1, 0, r2+1, 0)
-	} else {
-		line := editor.Line(r2)
-		editor.SetSelection(r1, 0, r2, len(line))
-	}
+	e.ExpandSelectionToLine()
 }
 
 func (r *root) selectAll() {
-	editor := r.getEditor()
-	if editor == nil {
+	e := r.getEditor()
+	if e == nil {
 		return
 	}
 
-	line := editor.Line(editor.Len() - 1)
-	editor.SetSelection(0, 0, editor.Len()-1, len(line))
+	line := e.Line(e.Len() - 1)
+	e.SetSelection(0, 0, e.Len()-1, len(line))
 }
 
-var openToClose = map[rune]rune{
-	'(': ')',
-	'[': ']',
-	'{': '}',
-}
-
-var closeToOpen = map[rune]rune{
-	')': '(',
-	']': '[',
-	'}': '{',
-}
-
-// expandSelectionToBrackets expands selection to brackets.
-// Given the cursor inside a bracketed block:
-//
-//	call once, selects inside the nearest matching pair;
-//	call again, expands to include the brackets themselves;
-//	repeated calls may expand further depending on context;
 func (r *root) expandSelectionToBrackets() {
-	editor := r.getEditor()
-	if editor == nil {
+	e := r.getEditor()
+	if e == nil {
 		return
 	}
-
-	row, col := editor.Cursor()
-	buf := editor.Line(row)
-	if len(buf) == 0 {
-		return
-	}
-	if r1, c1, r2, c2, ok := editor.Selection(); ok && r1 == r2 {
-		if c2 == len(buf) {
-			return //end of line
-		}
-
-		// second call
-		_, okOpen := openToClose[buf[c1-1]]
-		_, okClose := closeToOpen[buf[c2]]
-		if okOpen && okClose {
-			editor.SetSelection(r1, c1-1, r2, c2+1)
-			return
-		}
-	}
-
-	start, end, ok := expandSelectionToBrackets(buf, col)
-	if !ok {
-		return
-	}
-
-	editor.SetSelection(row, start, row, end)
-}
-
-func expandSelectionToBrackets(buf []rune, pos int) (start, end int, ok bool) {
-	openPos, openCh := findOpeningBracket(buf, pos)
-	if openPos == -1 {
-		return -1, -1, false
-	}
-
-	closePos := findClosingBracket(buf, openPos, openCh)
-	if closePos == -1 {
-		return -1, -1, false
-	}
-
-	// select *inside* the brackets
-	return openPos + 1, closePos, true
-}
-
-func findOpeningBracket(buf []rune, pos int) (int, rune) {
-	var stack []rune
-	for i := pos - 1; i >= 0; i-- {
-		ch := buf[i]
-		if open, ok := closeToOpen[ch]; ok {
-			stack = append(stack, open)
-			continue
-		}
-
-		if _, ok := openToClose[ch]; ok {
-			if len(stack) == 0 {
-				return i, ch
-			}
-			// pop
-			stack = stack[:len(stack)-1]
-		}
-	}
-	return -1, 0
-}
-
-func findClosingBracket(buf []rune, openPos int, openCh rune) int {
-	closeCh := openToClose[openCh]
-	depth := 0
-	for i := openPos + 1; i < len(buf); i++ {
-		ch := buf[i]
-		if ch == openCh {
-			depth++
-			continue
-		}
-
-		if ch == closeCh {
-			if depth == 0 {
-				return i
-			}
-			depth--
-		}
-	}
-	return -1
+	e.ExpandSelectionToBrackets()
 }
 
 func (r *root) autoComplete() {
-	editor := r.getEditor()
-	if editor == nil {
+	e := r.getEditor()
+	if e == nil {
 		return
 	}
 
-	start, end, ok := editor.WordRangeAtCursor()
+	start, end, ok := e.WordRangeAtCursor()
 	if !ok {
 		return
 	}
-	row, _ := editor.Cursor()
-	word := string(editor.Line(row)[start:end])
+	row, _ := e.Cursor()
+	word := string(e.Line(row)[start:end])
 
-	symbols := r.extractSymbols(editor.String())
+	symbols := r.extractSymbols(e.String())
 	for _, s := range symbols {
 		if strings.HasPrefix(strings.ToLower(s.Name), word) {
 			// 如果補全建議跟現在長得一模一樣，跳過，嘗試下一個
@@ -1250,12 +1139,12 @@ func (r *root) autoComplete() {
 				continue
 			}
 
-			editor.DeleteRange(row, start, row, end)
-			editor.InsertText(s.Name)
+			e.DeleteRange(row, start, row, end)
+			e.InsertText(s.Name)
 			if s.Kind == "func" {
-				editor.InsertText("()")
-				row, col := editor.Cursor()
-				editor.SetCursor(row, col-1)
+				e.InsertText("()")
+				row, col := e.Cursor()
+				e.SetCursor(row, col-1)
 			}
 			return
 		}
