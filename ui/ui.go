@@ -1025,12 +1025,24 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
 		head := e.buf[e.row][:e.col]
 		tail := e.buf[e.row][e.col:]
 
+		// keep indentation
+		lead := 0
+		for _, r := range head {
+			if unicode.IsSpace(r) {
+				lead++
+			} else {
+				break
+			}
+		}
+		newLine := make([]rune, lead+len(tail))
+		copy(newLine, head[:lead])
+		copy(newLine[lead:], tail)
+
 		e.buf[e.row] = head
-		newLine := slices.Clone(tail)
 		e.buf = slices.Insert(e.buf, e.row+1, newLine)
 
 		e.row++
-		e.col = 0
+		e.col = lead
 		e.ScrollTo(e.row)
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
 		defer onChange()

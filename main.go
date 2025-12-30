@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 	"tui/ui"
+	"unicode"
 	"unicode/utf8"
 
 	"slices"
@@ -134,6 +135,31 @@ func main() {
 		}
 		editor.SetCursor(length-1, len(editor.Line(length-1)))
 		editor.CenterRow(length - 1)
+	})
+	// goto the first non-whitespace character
+	app.BindKey("alt+left", func() {
+		e := root.getEditor()
+		if e == nil {
+			return
+		}
+		e.ClearSelection()
+		row, _ := e.Cursor()
+		for i, char := range e.Line(row) {
+			if !unicode.IsSpace(char) {
+				e.SetCursor(row, i)
+				return
+			}
+		}
+	})
+	// goto the end of line
+	app.BindKey("alt+right", func() {
+		e := root.getEditor()
+		if e == nil {
+			return
+		}
+		e.ClearSelection()
+		row, _ := e.Cursor()
+		e.SetCursor(row, len(e.Line(row)))
 	})
 
 	if err := app.Serve(root); err != nil {
@@ -293,18 +319,18 @@ func (r *root) Layout(x, y, w, h int) *ui.LayoutNode {
 	if editor := r.getEditor(); editor != nil {
 		row, col := editor.Cursor()
 		posInfo := ui.NewText(fmt.Sprintf("Line %d, Column %d", row+1, col+1))
-		leftStatus.Append(ui.PadH(posInfo, 1))
+		leftStatus.Append(posInfo)
 		if r.status != "" {
 			msg := ui.NewText(fmt.Sprintf("; %s", r.status))
 			leftStatus.Append(msg)
 		}
 	} else if r.status != "" {
-		leftStatus.Append(ui.PadH(ui.NewText(r.status), 1))
+		leftStatus.Append(ui.NewText(r.status))
 	}
 
 	rightStatus := ui.HStack()
 	if r.leaderKeyActive {
-		rightStatus.Append(ui.PadH(ui.NewText("Wait for key..."), 1))
+		rightStatus.Append(ui.NewText("Wait for key..."))
 	}
 
 	statusBar := ui.HStack(
@@ -315,7 +341,7 @@ func (r *root) Layout(x, y, w, h int) *ui.LayoutNode {
 
 	mainStack.Append(
 		ui.Divider(),
-		statusBar,
+		ui.PadH(statusBar, 1),
 	)
 
 	n := ui.NewLayoutNode(r, x, y, w, h)
