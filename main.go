@@ -315,29 +315,18 @@ func (r *root) Layout(x, y, w, h int) *ui.LayoutNode {
 		mainStack.Append(ui.Divider(), r.searchBar)
 	}
 
-	leftStatus := ui.HStack()
-	if editor := r.getEditor(); editor != nil {
-		row, col := editor.Cursor()
-		posInfo := ui.NewText(fmt.Sprintf("Line %d, Column %d", row+1, col+1))
-		leftStatus.Append(posInfo)
-		if r.status != "" {
-			msg := ui.NewText(fmt.Sprintf("; %s", r.status))
-			leftStatus.Append(msg)
-		}
-	} else if r.status != "" {
-		leftStatus.Append(ui.NewText(r.status))
+	statusBar := ui.HStack()
+	if e := r.getEditor(); e != nil {
+		row, col := e.Cursor()
+		posInfo := fmt.Sprintf("Line %d, Column %d", row+1, col+1)
+		statusBar.Append(ui.NewText(posInfo))
 	}
-
-	rightStatus := ui.HStack()
+	if r.status != "" {
+		statusBar.Append(ui.Spacer, ui.NewText(r.status))
+	}
 	if r.leaderKeyActive {
-		rightStatus.Append(ui.NewText("Wait for key..."))
+		statusBar.Append(ui.Spacer, ui.NewText("Wait for key..."))
 	}
-
-	statusBar := ui.HStack(
-		leftStatus,
-		ui.Spacer,
-		rightStatus,
-	)
 
 	mainStack.Append(
 		ui.Divider(),

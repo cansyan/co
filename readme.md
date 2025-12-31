@@ -4,7 +4,7 @@ Features:
 - component: Button, Text, TextInput, TextViewer, TextEditor, Spacer, Divider
 - container: VStack, HStack, Border, Padding, Overlay
 - keyboard: focus management, event handling, keybinding
-- mouse: hover enter/move/leave, click, scroll, drag
+- mouse: hover enter/move/leave, click, scroll
 
 Design decisions:
 - redraw on every event
