@@ -44,20 +44,18 @@ func main() {
 			return
 		}
 	} else {
-		root.newTab("untitled", "")
+		root.newTab("untitled")
 	}
 
 	app := ui.Default()
 	app.Focus(root)
-
-	// common
 	app.BindKey("Ctrl+Q", app.Close)
 	app.BindKey("Ctrl+S", root.saveFile)
 	app.BindKey("Ctrl+W", func() {
 		root.closeTab(root.active)
 	})
 	app.BindKey("Ctrl+T", func() {
-		root.newTab("untitled", "")
+		root.newTab("untitled")
 		ui.Default().Focus(root)
 	})
 	app.BindKey("Ctrl+F", func() {
@@ -69,12 +67,6 @@ func main() {
 		root.searchBar.input.Select(0, len([]rune(query)))
 		ui.Default().Focus(root.searchBar)
 	})
-	app.BindKey("Ctrl+C", root.copy)
-	app.BindKey("Ctrl+X", root.cut)
-	app.BindKey("Ctrl+V", root.paste)
-	app.BindKey("Ctrl+Z", nil) // undo
-	app.BindKey("Ctrl+Y", nil) // redo
-	app.BindKey("Ctrl+A", root.selectAll)
 
 	// command palette
 	app.BindKey("Ctrl+K", func() {
@@ -92,21 +84,7 @@ func main() {
 		}
 	})
 	app.BindKey("Ctrl+R", func() { root.showPalette("@") }) // go to symbol
-	app.BindKey("ctrl+g", root.gotoDefinition)              // (ctrl+g is usually for Goto Line)
-	app.BindKey("F12", root.gotoDefinition)
-	app.BindKey("Ctrl+N", root.autoComplete)
-	app.BindKey("Ctrl+D", root.selectWord)
-	app.BindKey("Ctrl+L", root.expandSelectionToLine)
-	app.BindKey("Ctrl+B", root.expandSelectionToBrackets)
 	app.BindKey("Esc", func() {
-		focused := ui.Default().Focused()
-		if editor, ok := focused.(*ui.TextEditor); ok {
-			if _, _, _, _, ok := editor.Selection(); ok {
-				editor.ClearSelection()
-				return
-			}
-		}
-
 		if root.showSearch {
 			root.showSearch = false
 			ui.Default().Focus(root)
@@ -114,52 +92,6 @@ func main() {
 		}
 
 		app.CloseOverlay()
-	})
-	// want key cmd+up, but can not detect it.
-	app.BindKey("alt+up", func() {
-		editor := root.getEditor()
-		if editor == nil {
-			return
-		}
-		editor.SetCursor(0, 0)
-		editor.CenterRow(0)
-	})
-	app.BindKey("alt+down", func() {
-		editor := root.getEditor()
-		if editor == nil {
-			return
-		}
-		length := editor.Len()
-		if length == 0 {
-			return
-		}
-		editor.SetCursor(length-1, len(editor.Line(length-1)))
-		editor.CenterRow(length - 1)
-	})
-	// goto the first non-whitespace character
-	app.BindKey("alt+left", func() {
-		e := root.getEditor()
-		if e == nil {
-			return
-		}
-		e.ClearSelection()
-		row, _ := e.Cursor()
-		for i, char := range e.Line(row) {
-			if !unicode.IsSpace(char) {
-				e.SetCursor(row, i)
-				return
-			}
-		}
-	})
-	// goto the end of line
-	app.BindKey("alt+right", func() {
-		e := root.getEditor()
-		if e == nil {
-			return
-		}
-		e.ClearSelection()
-		row, _ := e.Cursor()
-		e.SetCursor(row, len(e.Line(row)))
 	})
 
 	if err := app.Serve(root); err != nil {
@@ -190,7 +122,7 @@ type root struct {
 func newRoot() *root {
 	r := &root{}
 	r.btnNew = ui.NewButton("New", func() {
-		r.newTab("untitled", "")
+		r.newTab("untitled")
 		ui.Default().Focus(r)
 	}).NoFeedback()
 	r.btnSave = ui.NewButton("Save", r.saveFile).NoFeedback()
@@ -199,13 +131,8 @@ func newRoot() *root {
 	return r
 }
 
-func (r *root) newTab(label string, content string) {
-	editor := ui.NewTextEditor()
-	editor.SetText(content)
-	if filepath.Ext(label) == ".go" {
-		editor.SetLanguage("go")
-	}
-	r.tabs = append(r.tabs, newTab(r, label, editor))
+func (r *root) newTab(label string) {
+	r.tabs = append(r.tabs, newTab(r, label))
 	r.active = len(r.tabs) - 1
 }
 
@@ -367,7 +294,7 @@ func (r *root) FocusTarget() ui.Element {
 func (r *root) OnFocus()                          {}
 func (r *root) OnBlur()                           {}
 func (r *root) HandleKey(ev *tcell.EventKey) bool { return false }
-func (r *root) getEditor() *ui.TextEditor {
+func (r *root) getEditor() *Editor {
 	if len(r.tabs) == 0 {
 		return nil
 	}
@@ -413,7 +340,7 @@ func (r *root) showPalette(prefix string) {
 				return
 			}
 
-			symbols := r.extractSymbols(editor.String())
+			symbols := extractSymbols(editor.String())
 			for _, s := range symbols {
 				ok := true
 				for _, word := range words {
@@ -472,9 +399,13 @@ func (r *root) fillCommandMode(p *Palette, query string) {
 	}{
 		{"Color Theme: Breaks", func() { ui.Theme = ui.NewBreakersTheme() }},
 		{"Color Theme: Mariana", func() { ui.Theme = ui.NewMarianaTheme() }},
-		{"Goto Definition", func() { r.gotoDefinition() }},
+		{"Goto Definition", func() {
+			if e := r.getEditor(); e != nil {
+				e.gotoDefinition()
+			}
+		}},
 		{"Goto Symbol", func() { r.showPalette("@") }},
-		{"New File", func() { r.newTab("untitled", ""); ui.Default().Focus(r) }},
+		{"New File", func() { r.newTab("untitled"); ui.Default().Focus(r) }},
 		{"Quit", ui.Default().Close},
 	}
 	for _, cmd := range commands {
@@ -511,7 +442,8 @@ func (r *root) openFile(name string) error {
 		return err
 	}
 
-	r.newTab(filepath.Base(name), string(bs))
+	r.newTab(filepath.Base(name))
+	r.getEditor().SetText(string(bs))
 	return nil
 }
 
@@ -552,7 +484,7 @@ func (r *root) saveFile() {
 	ui.Default().Overlay(sa, "center")
 }
 
-func (r *root) writeFile(path string, editor *ui.TextEditor) error {
+func (r *root) writeFile(path string, editor *Editor) error {
 	bs := []byte(editor.String())
 
 	// Only format if it's a Go file
@@ -583,16 +515,15 @@ type tab struct {
 	root     *root
 	label    string
 	btnClose *ui.Button
-	body     *ui.TextEditor
+	body     *Editor
 	hovered  bool
 	style    ui.Style
 }
 
-func newTab(root *root, label string, body *ui.TextEditor) *tab {
+func newTab(root *root, label string) *tab {
 	t := &tab{
 		root:  root,
 		label: label,
-		body:  body,
 	}
 	t.btnClose = ui.NewButton("x", func() {
 		for i, tab := range root.tabs {
@@ -602,6 +533,11 @@ func newTab(root *root, label string, body *ui.TextEditor) *tab {
 			}
 		}
 	})
+	e := NewEditor(root)
+	if filepath.Ext(label) == ".go" {
+		e.SetLanguage("go")
+	}
+	t.body = e
 	return t
 }
 
@@ -710,9 +646,9 @@ func (p *Palette) HandleKey(ev *tcell.EventKey) bool {
 	switch ev.Key() {
 	case tcell.KeyESC:
 		ui.Default().CloseOverlay()
-	case tcell.KeyDown:
+	case tcell.KeyDown, tcell.KeyCtrlN:
 		p.list.Hovered = (p.list.Hovered + 1) % len(p.list.Items)
-	case tcell.KeyUp:
+	case tcell.KeyUp, tcell.KeyCtrlP:
 		n := len(p.list.Items)
 		p.list.Hovered = (p.list.Hovered - 1 + n) % n
 	case tcell.KeyEnter:
@@ -819,7 +755,7 @@ type symbol struct {
 	Kind      string // func, type
 }
 
-func (r *root) extractSymbols(content string) []symbol {
+func extractSymbols(content string) []symbol {
 	var symbols []symbol
 	// Group 1: Receiver (optional), Group 2: Name
 	funcRegex := regexp.MustCompile(`(?m)^func\s+(?:\(([^)]+)\)\s+)?([a-zA-Z_]\w*)`)
@@ -1045,11 +981,9 @@ func (sb *SearchBar) HandleKey(ev *tcell.EventKey) bool {
 	switch ev.Key() {
 	case tcell.KeyEnter:
 		sb.navigate(true)
-		// can not detect key shift+enter,
-		// tcell's current implementation does not report modifier key Shift
-	case tcell.KeyUp:
+	case tcell.KeyUp, tcell.KeyCtrlP:
 		sb.navigate(false)
-	case tcell.KeyDown:
+	case tcell.KeyDown, tcell.KeyCtrlN:
 		sb.navigate(true)
 	case tcell.KeyESC:
 		// leave this as a backup, but the global
@@ -1087,54 +1021,123 @@ func (p *proxyInput) FocusTarget() ui.Element {
 	return p.parent
 }
 
-// if no selection, select the word at current cursor;
-// if has selection, jump to the next same word, like * in Vim.
-//
-// To keep things simple, this is not multiple selection (multi-cursor).
-func (r *root) selectWord() {
-	tab := r.tabs[r.active]
-	editor := tab.body
-	r1, c1, r2, c2, ok := editor.Selection()
-	if !ok {
-		editor.SelectWord()
-	} else if r1 == r2 {
-		query := string(editor.Line(r1)[c1:c2])
-		editor.FindNext(query)
+func (r *root) activateLeader() {
+	r.leaderKeyActive = true
+	if r.leaderTimer != nil {
+		r.leaderTimer.Stop()
+	}
+	// 2 秒後自動重置狀態
+	r.leaderTimer = time.AfterFunc(2*time.Second, func() {
+		r.leaderKeyActive = false
+		ui.Default().Post()
+	})
+}
+
+type Editor struct {
+	*ui.TextEditor
+	r *root
+}
+
+func NewEditor(r *root) *Editor {
+	return &Editor{
+		TextEditor: ui.NewTextEditor(),
+		r:          r,
 	}
 }
 
-func (r *root) expandSelectionToLine() {
-	e := r.getEditor()
-	if e == nil {
-		return
+func (e *Editor) Layout(x, y, w, h int) *ui.LayoutNode {
+	return &ui.LayoutNode{
+		Element: e,
+		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
 	}
-	e.ExpandSelectionToLine()
 }
 
-func (r *root) selectAll() {
-	e := r.getEditor()
-	if e == nil {
-		return
-	}
-
-	line := e.Line(e.Len() - 1)
-	e.SetSelection(0, 0, e.Len()-1, len(line))
+func (e *Editor) FocusTarget() ui.Element {
+	return e
 }
 
-func (r *root) expandSelectionToBrackets() {
-	e := r.getEditor()
-	if e == nil {
-		return
+func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
+	switch strings.ToLower(ev.Name()) {
+	case "ctrl+a":
+		lastLine := e.Line(e.Len() - 1)
+		e.SetSelection(0, 0, e.Len()-1, len(lastLine))
+	case "ctrl+c":
+		s := e.SelectedText()
+		if s == "" {
+			// copy current line by default
+			row, _ := e.Cursor()
+			e.r.copyStr = string(e.Line(row))
+			return true
+		}
+		e.r.copyStr = s
+	case "ctrl+x":
+		r1, c1, r2, c2, ok := e.Selection()
+		if !ok {
+			// cut line by default
+			row, _ := e.Cursor()
+			e.r.copyStr = string(e.Line(row)) + "\n"
+			e.DeleteRange(row, 0, row+1, 0)
+			return true
+		}
+
+		e.r.copyStr = e.SelectedText()
+		e.DeleteRange(r1, c1, r2, c2)
+	case "ctrl+v":
+		if e.r.copyStr == "" {
+			return true
+		}
+		e.InsertText(e.r.copyStr)
+	case "ctrl+n":
+		e.autoComplete()
+	case "ctrl+d":
+		// if no selection, select the word at current cursor;
+		// if has selection, jump to the next same word, like * in Vim.
+		// To keep things simple, this is not multiple selection (multi-cursor)
+		r1, c1, r2, c2, ok := e.Selection()
+		if !ok {
+			e.SelectWord()
+		} else if r1 == r2 {
+			query := string(e.Line(r1)[c1:c2])
+			e.FindNext(query)
+		}
+	case "ctrl+l":
+		e.ExpandSelectionToLine()
+	case "ctrl+b":
+		e.ExpandSelectionToBrackets()
+	case "ctrl+g":
+		e.gotoDefinition()
+	case "alt+up": // goto first line
+		e.SetCursor(0, 0)
+		e.CenterRow(0)
+	case "alt+down": // goto last line
+		e.SetCursor(e.Len()-1, 0)
+		e.CenterRow(e.Len() - 1)
+	case "alt+left": // goto the first non-whitespace character
+		e.ClearSelection()
+		row, _ := e.Cursor()
+		for i, char := range e.Line(row) {
+			if !unicode.IsSpace(char) {
+				e.SetCursor(row, i)
+				return true
+			}
+		}
+	case "alt+right": // goto the end of line
+		e.ClearSelection()
+		row, _ := e.Cursor()
+		e.SetCursor(row, len(e.Line(row)))
+	case "esc":
+		if _, _, _, _, ok := e.Selection(); ok {
+			e.ClearSelection()
+			return true
+		}
+		return false
+	default:
+		return e.TextEditor.HandleKey(ev)
 	}
-	e.ExpandSelectionToBrackets()
+	return true
 }
 
-func (r *root) autoComplete() {
-	e := r.getEditor()
-	if e == nil {
-		return
-	}
-
+func (e *Editor) gotoDefinition() {
 	start, end, ok := e.WordRangeAtCursor()
 	if !ok {
 		return
@@ -1142,7 +1145,26 @@ func (r *root) autoComplete() {
 	row, _ := e.Cursor()
 	word := string(e.Line(row)[start:end])
 
-	symbols := r.extractSymbols(e.String())
+	symbols := extractSymbols(e.String())
+	for _, s := range symbols {
+		if s.Name == word {
+			// Move the cursor to the symbol's definition
+			e.SetCursor(s.Line, 0)
+			e.CenterRow(s.Line)
+			return
+		}
+	}
+}
+
+func (e *Editor) autoComplete() {
+	start, end, ok := e.WordRangeAtCursor()
+	if !ok {
+		return
+	}
+	row, _ := e.Cursor()
+	word := string(e.Line(row)[start:end])
+
+	symbols := extractSymbols(e.String())
 	for _, s := range symbols {
 		if strings.HasPrefix(strings.ToLower(s.Name), word) {
 			// 如果補全建議跟現在長得一模一樣，跳過，嘗試下一個
@@ -1157,91 +1179,6 @@ func (r *root) autoComplete() {
 				row, col := e.Cursor()
 				e.SetCursor(row, col-1)
 			}
-			return
-		}
-	}
-}
-
-// copy stores copied text to app's buffer, not OS pasteboard
-func (r *root) copy() {
-	editor := r.getEditor()
-	if editor == nil {
-		return
-	}
-
-	s := editor.SelectedText()
-	if s == "" {
-		// copy current line by default
-		row, _ := editor.Cursor()
-		r.copyStr = string(editor.Line(row))
-		return
-	}
-
-	r.copyStr = s
-}
-
-func (r *root) cut() {
-	editor := r.getEditor()
-	if editor == nil {
-		return
-	}
-
-	r1, c1, r2, c2, ok := editor.Selection()
-	if !ok {
-		// cut line by default
-		row, _ := editor.Cursor()
-		r.copyStr = string(editor.Line(row)) + "\n"
-		editor.DeleteRange(row, 0, row+1, 0)
-		return
-	}
-
-	r.copyStr = editor.SelectedText()
-	editor.DeleteRange(r1, c1, r2, c2)
-}
-
-func (r *root) paste() {
-	if r.copyStr == "" {
-		return
-	}
-
-	editor := r.getEditor()
-	if editor == nil {
-		return
-	}
-	editor.InsertText(r.copyStr)
-}
-
-func (r *root) activateLeader() {
-	r.leaderKeyActive = true
-	if r.leaderTimer != nil {
-		r.leaderTimer.Stop()
-	}
-	// 2 秒後自動重置狀態
-	r.leaderTimer = time.AfterFunc(2*time.Second, func() {
-		r.leaderKeyActive = false
-		ui.Default().Post()
-	})
-}
-
-func (r *root) gotoDefinition() {
-	editor := r.getEditor()
-	if editor == nil {
-		return
-	}
-
-	start, end, ok := editor.WordRangeAtCursor()
-	if !ok {
-		return
-	}
-	row, _ := editor.Cursor()
-	word := string(editor.Line(row)[start:end])
-
-	symbols := r.extractSymbols(editor.String())
-	for _, s := range symbols {
-		if s.Name == word {
-			// Move the cursor to the symbol's definition
-			editor.SetCursor(s.Line, 0)
-			editor.CenterRow(s.Line)
 			return
 		}
 	}
