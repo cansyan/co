@@ -168,6 +168,8 @@ func main() {
 	}
 }
 
+var _ ui.Focusable = (*root)(nil)
+
 // root implements ui.Element
 type root struct {
 	tabs    []*tab
@@ -213,8 +215,8 @@ func (r *root) closeTab(i int) {
 		return
 	}
 	tab := r.tabs[i]
-	editor, ok := tab.body.(*ui.TextEditor)
-	if !ok || !editor.Dirty {
+	editor := tab.body
+	if !editor.Dirty {
 		r.deleteTab(i)
 		ui.Default().Focus(r)
 		return
@@ -362,19 +364,14 @@ func (r *root) FocusTarget() ui.Element {
 	return r.tabs[r.active].body
 }
 
-func (r *root) OnFocus()                     {}
-func (r *root) OnBlur()                      {}
-func (r *root) HandleKey(ev *tcell.EventKey) {}
+func (r *root) OnFocus()                          {}
+func (r *root) OnBlur()                           {}
+func (r *root) HandleKey(ev *tcell.EventKey) bool { return false }
 func (r *root) getEditor() *ui.TextEditor {
-	tab := r.tabs[r.active]
-	if tab == nil || tab.body == nil {
+	if len(r.tabs) == 0 {
 		return nil
 	}
-	editor, ok := tab.body.(*ui.TextEditor)
-	if !ok {
-		return nil
-	}
-	return editor
+	return r.tabs[r.active].body
 }
 func (r *root) showPalette(prefix string) {
 	p := NewPalette()
@@ -523,10 +520,7 @@ func (r *root) saveFile() {
 		return
 	}
 	tab := r.tabs[r.active]
-	editor, ok := tab.body.(*ui.TextEditor)
-	if !ok {
-		return
-	}
+	editor := tab.body
 	if !editor.Dirty {
 		ui.Default().Focus(r)
 		return
@@ -589,12 +583,12 @@ type tab struct {
 	root     *root
 	label    string
 	btnClose *ui.Button
-	body     ui.Element
+	body     *ui.TextEditor
 	hovered  bool
 	style    ui.Style
 }
 
-func newTab(root *root, label string, body ui.Element) *tab {
+func newTab(root *root, label string, body *ui.TextEditor) *tab {
 	t := &tab{
 		root:  root,
 		label: label,
@@ -711,7 +705,8 @@ func (p *Palette) Render(ui.Screen, ui.Rect) {
 	// no-op
 }
 
-func (p *Palette) HandleKey(ev *tcell.EventKey) {
+func (p *Palette) HandleKey(ev *tcell.EventKey) bool {
+	consumed := true
 	switch ev.Key() {
 	case tcell.KeyESC:
 		ui.Default().CloseOverlay()
@@ -729,7 +724,9 @@ func (p *Palette) HandleKey(ev *tcell.EventKey) {
 		}
 	default:
 		p.input.HandleKey(ev)
+		consumed = false
 	}
+	return consumed
 }
 
 func (p *Palette) FocusTarget() ui.Element { return p }
@@ -793,7 +790,8 @@ func (m *SaveAs) Layout(x, y, w, h int) *ui.LayoutNode {
 
 func (m *SaveAs) Render(s ui.Screen, r ui.Rect) {}
 
-func (m *SaveAs) HandleKey(ev *tcell.EventKey) {
+func (m *SaveAs) HandleKey(ev *tcell.EventKey) bool {
+	consumed := true
 	switch ev.Key() {
 	case tcell.KeyESC:
 		ui.Default().CloseOverlay()
@@ -802,7 +800,9 @@ func (m *SaveAs) HandleKey(ev *tcell.EventKey) {
 		ui.Default().CloseOverlay()
 	default:
 		m.input.HandleKey(ev)
+		consumed = false
 	}
+	return consumed
 }
 
 func (m *SaveAs) FocusTarget() ui.Element {
@@ -956,11 +956,7 @@ func (sb *SearchBar) setInitialActiveIndex() {
 	}
 
 	tab := sb.root.tabs[sb.root.active]
-	editor, ok := tab.body.(*ui.TextEditor)
-	if !ok {
-		return
-	}
-
+	editor := tab.body
 	curLine, curCol := editor.Cursor()
 
 	// 尋找第一個在游標位置之後的匹配項
@@ -1044,7 +1040,8 @@ func (sb *SearchBar) MinSize() (int, int) {
 
 func (sb *SearchBar) Render(s ui.Screen, r ui.Rect) {}
 
-func (sb *SearchBar) HandleKey(ev *tcell.EventKey) {
+func (sb *SearchBar) HandleKey(ev *tcell.EventKey) bool {
+	consumed := true
 	switch ev.Key() {
 	case tcell.KeyEnter:
 		sb.navigate(true)
@@ -1061,7 +1058,9 @@ func (sb *SearchBar) HandleKey(ev *tcell.EventKey) {
 		ui.Default().Focus(sb.root)
 	default:
 		sb.input.HandleKey(ev)
+		consumed = false
 	}
+	return consumed
 }
 
 func (sb *SearchBar) FocusTarget() ui.Element { return sb }
@@ -1094,10 +1093,7 @@ func (p *proxyInput) FocusTarget() ui.Element {
 // To keep things simple, this is not multiple selection (multi-cursor).
 func (r *root) selectWord() {
 	tab := r.tabs[r.active]
-	editor, ok := tab.body.(*ui.TextEditor)
-	if !ok {
-		return
-	}
+	editor := tab.body
 	r1, c1, r2, c2, ok := editor.Selection()
 	if !ok {
 		editor.SelectWord()

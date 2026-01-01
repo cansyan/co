@@ -75,7 +75,7 @@ type Focusable interface {
 	OnFocus()
 	// OnBlur is called when the element loses focus.
 	OnBlur()
-	HandleKey(ev *tcell.EventKey)
+	HandleKey(ev *tcell.EventKey) bool // Return true if consumed
 }
 
 type LayoutNode struct {
@@ -414,14 +414,10 @@ func (t *TextInput) FocusTarget() Element { return t }
 func (t *TextInput) OnFocus()             { t.focused = true }
 func (t *TextInput) OnBlur()              { t.focused = false }
 
-func (t *TextInput) HandleKey(ev *tcell.EventKey) {
-	if !t.focused {
-		return
-	}
-
+func (t *TextInput) HandleKey(ev *tcell.EventKey) bool {
 	// 簡單邏輯：按下任何非 Shift 的移動鍵就重置選取起點
 	resetSelection := true
-
+	consumed := true
 	switch ev.Key() {
 	case tcell.KeyLeft:
 		if t.cursor > 0 {
@@ -455,11 +451,14 @@ func (t *TextInput) HandleKey(ev *tcell.EventKey) {
 		if t.onChange != nil {
 			t.onChange()
 		}
+	default:
+		consumed = false
 	}
 
 	if resetSelection && !t.pressed {
 		t.selStart = t.cursor
 	}
+	return consumed
 }
 
 func (t *TextInput) OnMouseDown(x, y int) {
@@ -918,7 +917,7 @@ func (e *TextEditor) FocusTarget() Element { return e }
 func (e *TextEditor) OnFocus()             { e.focused = true }
 func (e *TextEditor) OnBlur()              { e.focused = false }
 
-func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
+func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 	keepVisualCol := false
 	defer func() {
 		if !keepVisualCol {
@@ -932,6 +931,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
 		}
 	}
 
+	consumed = true
 	switch ev.Key() {
 	case tcell.KeyESC:
 		e.ClearSelection()
@@ -1094,7 +1094,10 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) {
 		}
 	case tcell.KeyEnd:
 		e.col = len(e.buf[e.row])
+	default:
+		consumed = false
 	}
+	return consumed
 }
 
 func (e *TextEditor) OnMouseUp(x, y int) {
@@ -1679,6 +1682,26 @@ func (l *ListView) OnMouseMove(rx, ry int) {
 }
 
 func (l *ListView) OnMouseLeave() { l.Hovered = -1 }
+
+func (l *ListView) FocusTarget() Element { return l }
+func (l *ListView) OnFocus()             {}
+func (l *ListView) OnBlur()              {}
+func (l *ListView) HandleKey(ev *tcell.EventKey) bool {
+	consumed := true
+	switch ev.Key() {
+	case tcell.KeyUp, tcell.KeyCtrlP:
+		l.Selected = (l.Selected - 1 + len(l.Items)) % len(l.Items)
+	case tcell.KeyDown, tcell.KeyCtrlN:
+		l.Selected = (l.Selected + 1) % len(l.Items)
+	case tcell.KeyEnter:
+		if l.Selected >= 0 && l.Items[l.Selected].Action != nil {
+			l.Items[l.Selected].Action()
+		}
+	default:
+		consumed = false
+	}
+	return consumed
+}
 
 type TabItem struct {
 	t       *TabView
@@ -2503,16 +2526,20 @@ func (a *App) BindKey(key string, action func()) {
 
 func (a *App) handleKey(ev *tcell.EventKey) {
 	log.Printf("key %s", ev.Name())
+	// Try to let the focused element handle it first
+	if a.focused != nil {
+		if f, ok := a.focused.(Focusable); ok {
+			if f.HandleKey(ev) {
+				return
+			}
+		}
+	}
+
+	// If not consumed, fallback to global key bindings
 	key := strings.ToLower(ev.Name())
 	if action, ok := a.bindings[key]; ok {
 		action()
 		return
-	}
-	if a.focused == nil {
-		return
-	}
-	if f, ok := a.focused.(Focusable); ok {
-		f.HandleKey(ev)
 	}
 }
 
