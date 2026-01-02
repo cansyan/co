@@ -1036,6 +1036,10 @@ func (r *root) activateLeader() {
 type Editor struct {
 	*ui.TextEditor
 	r *root
+	
+	// word completion
+	wc     *ui.ListView
+	wcNode *ui.LayoutNode
 }
 
 func NewEditor(r *root) *Editor {
@@ -1046,10 +1050,18 @@ func NewEditor(r *root) *Editor {
 }
 
 func (e *Editor) Layout(x, y, w, h int) *ui.LayoutNode {
-	return &ui.LayoutNode{
+	node := &ui.LayoutNode{
 		Element: e,
 		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
 	}
+	if e.wc != nil {
+		box := ui.Border(e.wc)
+		w, h := box.MinSize()
+		n := box.Layout(e.ScreenCursorX, e.ScreenCursorY, w, h)
+		e.wcNode = n
+		node.Children = append(node.Children, n)
+	}
+	return node
 }
 
 func (e *Editor) FocusTarget() ui.Element {
@@ -1057,6 +1069,14 @@ func (e *Editor) FocusTarget() ui.Element {
 }
 
 func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
+	// reset word completion on unreleated keys
+	keepWords := false
+	defer func() {
+		if !keepWords {
+			e.wc = nil
+		}
+	}()
+
 	switch strings.ToLower(ev.Name()) {
 	case "ctrl+a":
 		lastLine := e.Line(e.Len() - 1)
@@ -1088,7 +1108,38 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		}
 		e.InsertText(e.r.copyStr)
 	case "ctrl+n":
-		e.autoComplete()
+		keepWords = true
+		if e.wc == nil {
+			e.initWordCompletion()
+			// insert the only alternative
+			if e.wc != nil && len(e.wc.Items) == 1 && e.wc.Items[0].Action != nil {
+				e.wc.Items[0].Action()
+				e.wc = nil
+			}
+			return true
+		}
+		e.wc.Selected = (e.wc.Selected + 1) % len(e.wc.Items)
+	case "ctrl+p":
+		if e.wc != nil {
+			keepWords = true
+			e.wc.Selected = (e.wc.Selected - 1 + len(e.wc.Items)) % len(e.wc.Items)
+			return true
+		}
+		return false // fallback to global key bindings
+	case "up":
+		if e.wc != nil {
+			keepWords = true
+			e.wc.Selected = (e.wc.Selected - 1 + len(e.wc.Items)) % len(e.wc.Items)
+			return true
+		}
+		return e.TextEditor.HandleKey(ev)
+	case "down":
+		if e.wc != nil {
+			keepWords = true
+			e.wc.Selected = (e.wc.Selected + 1) % len(e.wc.Items)
+			return true
+		}
+		return e.TextEditor.HandleKey(ev)
 	case "ctrl+d":
 		// if no selection, select the word at current cursor;
 		// if has selection, jump to the next same word, like * in Vim.
@@ -1131,10 +1182,27 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 			return true
 		}
 		return false
+	case "enter":
+		if e.wc != nil && e.wc.Items[e.wc.Selected].Action != nil {
+			e.wc.Items[e.wc.Selected].Action()
+			e.wc = nil
+			return true
+		}
+		return e.TextEditor.HandleKey(ev)
 	default:
 		return e.TextEditor.HandleKey(ev)
 	}
 	return true
+}
+
+func (e *Editor) OnMouseDown(lx, ly int) {
+	if e.wcNode != nil {
+		p := ui.Point{X: lx, Y: ly}
+		if !p.In(e.wcNode.Rect) {
+			e.wc = nil
+		}
+	}
+	e.TextEditor.OnMouseDown(lx, ly)
 }
 
 func (e *Editor) gotoDefinition() {
@@ -1156,22 +1224,26 @@ func (e *Editor) gotoDefinition() {
 	}
 }
 
-func (e *Editor) autoComplete() {
+func (e *Editor) initWordCompletion() {
 	start, end, ok := e.WordRangeAtCursor()
 	if !ok {
 		return
 	}
 	row, _ := e.Cursor()
-	word := string(e.Line(row)[start:end])
+	query := string(e.Line(row)[start:end])
 
+	words := ui.NewListView()
 	symbols := extractSymbols(e.String())
+	filter := make(map[string]struct{})
 	for _, s := range symbols {
-		if strings.HasPrefix(strings.ToLower(s.Name), word) {
-			// 如果補全建議跟現在長得一模一樣，跳過，嘗試下一個
-			if s.Name == word {
-				continue
-			}
-
+		if !strings.HasPrefix(strings.ToLower(s.Name), query) {
+			continue
+		}
+		if _, ok := filter[s.Name]; ok {
+			continue
+		}
+		filter[s.Name] = struct{}{}
+		words.Append(s.Name, func() {
 			e.DeleteRange(row, start, row, end)
 			e.InsertText(s.Name)
 			if s.Kind == "func" {
@@ -1179,7 +1251,13 @@ func (e *Editor) autoComplete() {
 				row, col := e.Cursor()
 				e.SetCursor(row, col-1)
 			}
-			return
-		}
+			e.wc = nil
+			ui.Default().Focus(e)
+		})
+	}
+
+	if len(words.Items) > 0 {
+		words.Selected = 0
+		e.wc = words
 	}
 }

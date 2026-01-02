@@ -628,6 +628,9 @@ type TextEditor struct {
 
 	onChange func()
 	Dirty    bool
+
+	ScreenCursorX int
+	ScreenCursorY int
 }
 
 func NewTextEditor() *TextEditor {
@@ -906,6 +909,7 @@ func (e *TextEditor) Render(s Screen, rect Rect) {
 	// Place the cursor
 	if e.focused {
 		if cursorFound {
+			e.ScreenCursorX, e.ScreenCursorY = cursorX, cursorY
 			s.ShowCursor(cursorX, cursorY)
 		} else {
 			// Cursor line is not visible, hide cursor
@@ -1943,6 +1947,11 @@ func (s layoutSpec) Layout(x, y, w, h int) *LayoutNode {
 	return node
 }
 
+func (s layoutSpec) FocusTarget() Element           { return s.Element }
+func (s layoutSpec) OnFocus()                       {}
+func (s layoutSpec) OnBlur()                        {}
+func (s layoutSpec) HandleKey(*tcell.EventKey) bool { return false }
+
 // 實作 Render: 繪製裝飾（Border）
 func (s layoutSpec) Render(screen Screen, rect Rect) {
 	if s.border {
@@ -2249,10 +2258,10 @@ func (o *overlay) Layout(x, y, w, h int) *LayoutNode {
 		x = x + (w-mw)/2
 		// y = y + 1
 	case "center":
-		fallthrough
-	default:
 		x = x + (w-mw)/2
 		y = y + (h-mh)/2
+	default:
+		fmt.Sscanf(o.align, "%d,%d", &x, &y)
 	}
 
 	node := NewLayoutNode(o, x, y, mw, mh)
