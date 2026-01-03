@@ -246,8 +246,7 @@ func (r *root) Layout(x, y, w, h int) *ui.LayoutNode {
 
 	statusBar := ui.HStack()
 	if e := r.getEditor(); e != nil {
-		row, col := e.Cursor()
-		posInfo := fmt.Sprintf("Line %d, Column %d", row+1, col+1)
+		posInfo := fmt.Sprintf("Line %d, Column %d", e.Pos.Row+1, e.Pos.Col+1)
 		statusBar.Append(ui.NewText(posInfo))
 	}
 	if r.status != "" {
@@ -484,17 +483,17 @@ func (r *root) saveFile() {
 	ui.Default().Overlay(sa, "center")
 }
 
-func (r *root) writeFile(path string, editor *Editor) error {
-	bs := []byte(editor.String())
+func (r *root) writeFile(path string, e *Editor) error {
+	bs := []byte(e.String())
 
 	// Only format if it's a Go file
 	if filepath.Ext(path) == ".go" {
 		formatted, err := format.Source(bs)
 		if err == nil {
 			bs = formatted
-			row, col := editor.Cursor()
-			editor.SetText(string(formatted)) // Sync formatted text back to UI
-			editor.SetCursor(row, col)
+			row, col := e.Pos.Row, e.Pos.Col
+			e.SetText(string(formatted)) // Sync formatted text back to UI
+			e.SetCursor(row, col)
 		} else {
 			// If formatting fails (e.g., syntax error), we still save
 			// but notify the user via status bar.
@@ -507,7 +506,7 @@ func (r *root) writeFile(path string, editor *Editor) error {
 		return err
 	}
 
-	editor.Dirty = false
+	e.Dirty = false
 	return nil
 }
 
@@ -799,17 +798,12 @@ func extractSymbols(content string) []symbol {
 	return symbols
 }
 
-type match struct {
-	line int
-	col  int
-}
-
 type SearchBar struct {
 	root        *root
 	input       *proxyInput
 	btnPrev     *ui.Button
 	btnNext     *ui.Button
-	matches     []match
+	matches     []ui.Pos
 	activeIndex int // -1 表示尚未進行導航定位
 }
 
@@ -876,9 +870,9 @@ func (sb *SearchBar) updateMatches() {
 		linePrefix := content[lastLineStart:matchPos]
 		runeCol := utf8.RuneCountInString(linePrefix)
 
-		sb.matches = append(sb.matches, match{
-			line: lineCount,
-			col:  runeCol,
+		sb.matches = append(sb.matches, ui.Pos{
+			Row: lineCount,
+			Col: runeCol,
 		})
 
 		currentPos = matchPos + len(query)
@@ -892,12 +886,11 @@ func (sb *SearchBar) setInitialActiveIndex() {
 	}
 
 	tab := sb.root.tabs[sb.root.active]
-	editor := tab.body
-	curLine, curCol := editor.Cursor()
+	e := tab.body
 
 	// 尋找第一個在游標位置之後的匹配項
 	for i, m := range sb.matches {
-		if m.line > curLine || (m.line == curLine && m.col >= curCol) {
+		if m.Row > e.Pos.Row || (m.Row == e.Pos.Row && m.Col >= e.Pos.Col) {
 			sb.activeIndex = i
 			return
 		}
@@ -944,8 +937,8 @@ func (sb *SearchBar) syncEditor() {
 		return
 	}
 	queryLen := utf8.RuneCountInString(sb.input.String())
-	editor.CenterRow(m.line)
-	editor.SetSelection(m.line, m.col, m.line, m.col+queryLen)
+	editor.CenterRow(m.Row)
+	editor.SetSelection(m, ui.Pos{Row: m.Row, Col: m.Col + queryLen})
 }
 
 func (sb *SearchBar) Layout(x, y, w, h int) *ui.LayoutNode {
@@ -1060,28 +1053,26 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 	switch strings.ToLower(ev.Name()) {
 	case "ctrl+a":
 		lastLine := e.Line(e.Len() - 1)
-		e.SetSelection(0, 0, e.Len()-1, len(lastLine))
+		e.SetSelection(ui.Pos{}, ui.Pos{Row: e.Len() - 1, Col: len(lastLine)})
 	case "ctrl+c":
 		s := e.SelectedText()
 		if s == "" {
 			// copy current line by default
-			row, _ := e.Cursor()
-			e.r.copyStr = string(e.Line(row))
+			e.r.copyStr = string(e.Line(e.Pos.Row))
 			return true
 		}
 		e.r.copyStr = s
 	case "ctrl+x":
-		r1, c1, r2, c2, ok := e.Selection()
+		start, end, ok := e.Selection()
 		if !ok {
 			// cut line by default
-			row, _ := e.Cursor()
-			e.r.copyStr = string(e.Line(row)) + "\n"
-			e.DeleteRange(row, 0, row+1, 0)
+			e.r.copyStr = string(e.Line(e.Pos.Row)) + "\n"
+			e.DeleteRange(ui.Pos{Row: e.Pos.Row}, ui.Pos{Row: e.Pos.Row + 1})
 			return true
 		}
 
 		e.r.copyStr = e.SelectedText()
-		e.DeleteRange(r1, c1, r2, c2)
+		e.DeleteRange(start, end)
 	case "ctrl+v":
 		if e.r.copyStr == "" {
 			return true
@@ -1093,11 +1084,11 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		// if no selection, select the word at current cursor;
 		// if has selection, jump to the next same word, like * in Vim.
 		// To keep things simple, this is not multiple selection (multi-cursor)
-		r1, c1, r2, c2, ok := e.Selection()
+		start, end, ok := e.Selection()
 		if !ok {
 			e.SelectWord()
-		} else if r1 == r2 {
-			query := string(e.Line(r1)[c1:c2])
+		} else if start.Row == end.Row {
+			query := string(e.Line(start.Row)[start.Col:end.Col])
 			e.FindNext(query)
 		}
 	case "ctrl+l":
@@ -1114,19 +1105,17 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		e.CenterRow(e.Len() - 1)
 	case "alt+left": // goto the first non-whitespace character
 		e.ClearSelection()
-		row, _ := e.Cursor()
-		for i, char := range e.Line(row) {
+		for i, char := range e.Line(e.Pos.Row) {
 			if !unicode.IsSpace(char) {
-				e.SetCursor(row, i)
+				e.SetCursor(e.Pos.Row, i)
 				return true
 			}
 		}
 	case "alt+right": // goto the end of line
 		e.ClearSelection()
-		row, _ := e.Cursor()
-		e.SetCursor(row, len(e.Line(row)))
+		e.SetCursor(e.Pos.Row, len(e.Line(e.Pos.Row)))
 	case "esc":
-		if _, _, _, _, ok := e.Selection(); ok {
+		if _, _, ok := e.Selection(); ok {
 			e.ClearSelection()
 			return true
 		}
@@ -1142,8 +1131,7 @@ func (e *Editor) gotoDefinition() {
 	if !ok {
 		return
 	}
-	row, _ := e.Cursor()
-	word := string(e.Line(row)[start:end])
+	word := string(e.Line(e.Pos.Row)[start:end])
 
 	symbols := extractSymbols(e.String())
 	for _, s := range symbols {
@@ -1161,8 +1149,7 @@ func (e *Editor) autoComplete() {
 	if !ok {
 		return
 	}
-	row, _ := e.Cursor()
-	word := string(e.Line(row)[start:end])
+	word := string(e.Line(e.Pos.Row)[start:end])
 
 	symbols := extractSymbols(e.String())
 	for _, s := range symbols {
@@ -1172,12 +1159,11 @@ func (e *Editor) autoComplete() {
 				continue
 			}
 
-			e.DeleteRange(row, start, row, end)
+			e.DeleteRange(ui.Pos{Row: e.Pos.Row, Col: start}, ui.Pos{Row: e.Pos.Row, Col: end})
 			e.InsertText(s.Name)
 			if s.Kind == "func" {
 				e.InsertText("()")
-				row, col := e.Cursor()
-				e.SetCursor(row, col-1)
+				e.SetCursor(e.Pos.Row, e.Pos.Col-1)
 			}
 			return
 		}
