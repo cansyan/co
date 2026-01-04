@@ -325,6 +325,7 @@ type TextInput struct {
 	placeHolder string
 	selStart    int  // 選取起點 (rune index)
 	pressed     bool // 標記滑鼠是否按下以進行拖拽
+	onCommit    func()
 }
 
 func NewTextInput() *TextInput {
@@ -347,6 +348,11 @@ func (t *TextInput) SetText(s string) {
 
 func (t *TextInput) OnChange(fn func()) *TextInput {
 	t.onChange = fn
+	return t
+}
+
+func (t *TextInput) OnCommit(fn func()) *TextInput {
+	t.onCommit = fn
 	return t
 }
 
@@ -450,6 +456,10 @@ func (t *TextInput) HandleKey(ev *tcell.EventKey) bool {
 		t.cursor++
 		if t.onChange != nil {
 			t.onChange()
+		}
+	case tcell.KeyEnter:
+		if t.onCommit != nil {
+			t.onCommit()
 		}
 	default:
 		consumed = false
@@ -1368,7 +1378,7 @@ func (e *TextEditor) FindNext(query string) {
 	startRow := e.Pos.Row
 	startCol := e.Pos.Col
 
-	for i := 0; i < lineCount; i++ {
+	for i := range lineCount {
 		// 使用取模實現 Wrap Around (循環搜尋)
 		currentRow := (startRow + i) % lineCount
 		line := e.buf[currentRow]
@@ -1388,7 +1398,7 @@ func (e *TextEditor) FindNext(query string) {
 		remaining := line[searchFromCol:]
 		for j := 0; j <= len(remaining)-qLen; j++ {
 			match := true
-			for k := 0; k < qLen; k++ {
+			for k := range qLen {
 				if remaining[j+k] != qRunes[k] {
 					match = false
 					break
@@ -2002,6 +2012,11 @@ func (s layoutSpec) Render(screen Screen, rect Rect) {
 	}
 	// 這裡不需要處理 Padding 的 Render，因為 Layout 已經把子組件限縮在裡面了
 }
+
+func (s layoutSpec) FocusTarget() Element   { return s.Element }
+func (s layoutSpec) OnFocus()               {}
+func (s layoutSpec) OnBlur()                {}
+func (s layoutSpec) HandleKey(*tcell.EventKey) bool {return false}
 
 // 輔助函數：取得或建立 spec
 func getSpec(e Element) layoutSpec {

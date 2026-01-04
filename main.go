@@ -91,6 +91,22 @@ func main() {
 		}
 	})
 	app.BindKey("Ctrl+R", func() { root.showPalette("@") }) // go to symbol
+	app.BindKey("ctrl+o", func() {
+		e := ui.NewTextInput()
+		e.SetPlaceholder("Open file path: ")
+		e.OnCommit(func() {
+			if e.String() != "" {
+				err := root.openFile(e.String())
+				if err != nil {
+					log.Print(err)
+					root.setStatus(err.Error(), 3)
+				}
+			}
+			ui.Default().Focus(root)
+		})
+		view := ui.Border(ui.Frame(e, 60, 1))
+		ui.Default().Overlay(view, "top")
+	})
 	app.BindKey("Esc", func() {
 		if root.showSearch {
 			root.showSearch = false
@@ -372,24 +388,7 @@ func (r *root) showPalette(prefix string) {
 			r.fillCommandMode(p, text[1:])
 		default:
 			// 4. File Search Mode (Default)
-			query := strings.ToLower(text)
-			entries, _ := os.ReadDir(".")
-			for _, entry := range entries {
-				if entry.IsDir() {
-					continue
-				}
-				name := entry.Name()
-				if query == "" || strings.Contains(strings.ToLower(name), query) {
-					p.list.Append(name, func() {
-						r.openFile(name)
-						ui.Default().Focus(r)
-					})
-				}
-				// 10 results is fine
-				if len(p.list.Items) >= 10 {
-					return
-				}
-			}
+			r.fillFileSearchMode(p, text)
 		}
 	})
 
@@ -430,6 +429,38 @@ func (r *root) fillCommandMode(p *Palette, query string) {
 				cmd.action()
 				ui.Default().Focus(r)
 			})
+		}
+	}
+}
+
+func (r *root) fillFileSearchMode(p *Palette, query string) {
+	query = strings.ToLower(query)
+	filter := make(map[string]bool)
+	for _, t := range r.tabs {
+		if query == "" || strings.Contains(strings.ToLower(t.label), query) {
+			p.list.Append(t.label, func() {
+				r.openFile(t.label)
+				ui.Default().Focus(r)
+			})
+			filter[t.label] = true
+			if len(p.list.Items) >= 10 {
+				return
+			}
+		}
+	}
+
+	entries, _ := os.ReadDir(".")
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || filter[name] {
+			continue
+		}
+		p.list.Append(name, func() {
+			r.openFile(name)
+			ui.Default().Focus(r)
+		})
+		if len(p.list.Items) >= 10 {
+			return
 		}
 	}
 }
