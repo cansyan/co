@@ -612,7 +612,7 @@ type TextEditor struct {
 	Pos     Pos      // cursor position; also selection end
 	goalCol int      // desired visual column when moving vertically
 
-	anchorPos Pos // selection anchor (fixed head)
+	anchor    Pos // selection anchor (fixed head)
 	selecting bool
 
 	offsetY  int // vertical scroll offset (top row)
@@ -1095,7 +1095,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 
 func (e *TextEditor) OnMouseUp(x, y int) {
 	e.pressed = false
-	if e.Pos.Row == e.anchorPos.Row && e.Pos.Col == e.anchorPos.Col {
+	if e.Pos.Row == e.anchor.Row && e.Pos.Col == e.anchor.Col {
 		e.selecting = false
 	}
 }
@@ -1123,7 +1123,7 @@ func (e *TextEditor) OnMouseDown(x, y int) {
 
 	if !e.pressed {
 		// 點擊瞬間，錨點與游標重合
-		e.anchorPos = e.Pos
+		e.anchor = e.Pos
 		e.selecting = true
 		e.pressed = true
 	}
@@ -1156,18 +1156,18 @@ func (e *TextEditor) SetSelection(start, end Pos) {
 	if start.Row < 0 || start.Row > length-1 || end.Row < 0 || end.Row > length-1 {
 		return
 	}
-	e.anchorPos = start
+	e.anchor = start
 	e.Pos = end
 	e.selecting = true
 	e.adjustCol()
 }
 
 func (e *TextEditor) Selection() (start, end Pos, ok bool) {
-	if !e.selecting || (e.Pos.Row == e.anchorPos.Row && e.Pos.Col == e.anchorPos.Col) {
+	if !e.selecting || (e.Pos.Row == e.anchor.Row && e.Pos.Col == e.anchor.Col) {
 		return
 	}
 
-	start = e.anchorPos
+	start = e.anchor
 	end = e.Pos
 
 	// ensure start is before end
@@ -1405,7 +1405,7 @@ func (e *TextEditor) FindNext(query string) {
 			actualCol := searchFromCol + foundIdx
 
 			// 1. 更新選區：從匹配項開始到結束
-			e.anchorPos = Pos{Row: currentRow, Col: actualCol}
+			e.anchor = Pos{Row: currentRow, Col: actualCol}
 			e.Pos.Row = currentRow
 			e.Pos.Col = actualCol + qLen
 			e.selecting = true
@@ -1613,7 +1613,6 @@ func (e *TextEditor) DeleteRange(start, end Pos) {
 	e.Pos.Row = start.Row
 	e.Pos.Col = len(head)
 
-	e.adjustCol()
 	e.ScrollTo(e.Pos.Row)
 	e.Dirty = true
 	if e.onChange != nil {
@@ -1623,7 +1622,7 @@ func (e *TextEditor) DeleteRange(start, end Pos) {
 
 type ListView struct {
 	Items    []ListItem
-	Hovered  int // -1 means nothing hovered
+	hovered  int // -1 means nothing hovered
 	Selected int // -1 means nothing selected, changes only on click
 }
 
@@ -1634,7 +1633,7 @@ type ListItem struct {
 
 func NewListView() *ListView {
 	l := &ListView{
-		Hovered:  -1,
+		hovered:  -1,
 		Selected: -1,
 	}
 	return l
@@ -1646,7 +1645,7 @@ func (l *ListView) Append(text string, action func()) {
 
 func (l *ListView) Clear() {
 	l.Items = nil
-	l.Hovered = -1
+	l.hovered = -1
 	l.Selected = -1
 }
 
@@ -1677,7 +1676,7 @@ func (l *ListView) Render(s Screen, rect Rect) {
 		switch i {
 		case l.Selected:
 			st.BG = Theme.Selection
-		case l.Hovered:
+		case l.hovered:
 			st.BG = Theme.Hover
 		}
 
@@ -1707,13 +1706,13 @@ func (l *ListView) OnMouseEnter() {}
 
 func (l *ListView) OnMouseMove(rx, ry int) {
 	if ry < 0 || ry >= len(l.Items) {
-		l.Hovered = -1
+		l.hovered = -1
 		return
 	}
-	l.Hovered = ry
+	l.hovered = ry
 }
 
-func (l *ListView) OnMouseLeave() { l.Hovered = -1 }
+func (l *ListView) OnMouseLeave() { l.hovered = -1 }
 
 func (l *ListView) FocusTarget() Element { return l }
 func (l *ListView) OnFocus()             {}
@@ -1722,17 +1721,37 @@ func (l *ListView) HandleKey(ev *tcell.EventKey) bool {
 	consumed := true
 	switch ev.Key() {
 	case tcell.KeyUp, tcell.KeyCtrlP:
-		l.Selected = (l.Selected - 1 + len(l.Items)) % len(l.Items)
+		l.Prev()
 	case tcell.KeyDown, tcell.KeyCtrlN:
-		l.Selected = (l.Selected + 1) % len(l.Items)
+		l.Next()
 	case tcell.KeyEnter:
-		if l.Selected >= 0 && l.Items[l.Selected].Action != nil {
-			l.Items[l.Selected].Action()
-		}
+		l.Act()
 	default:
 		consumed = false
 	}
 	return consumed
+}
+
+func (l *ListView) Next() {
+	l.Selected = (l.Selected + 1) % len(l.Items)
+}
+
+func (l *ListView) Prev() {
+	l.Selected = (l.Selected - 1 + len(l.Items)) % len(l.Items)
+}
+
+func (l *ListView) Act() {
+	if len(l.Items) == 0 {
+		return
+	}
+	if l.Selected < 0 {
+		return
+	}
+	if l.Items[l.Selected].Action == nil {
+		return
+	}
+
+	l.Items[l.Selected].Action()
 }
 
 type TabItem struct {
@@ -2493,7 +2512,7 @@ func (a *App) resolveFocus(e Element) Element {
 
 // Post requests a redraw.
 func (a *App) Post() {
-	// 發送一個空事件，喚醒 screen.PollEvent()
+	// sends an empty event, wakes screen.PollEvent()
 	a.screen.PostEvent(tcell.NewEventInterrupt(nil))
 }
 
@@ -2515,7 +2534,7 @@ func (a *App) Serve(root Element) error {
 	screen.EnableMouse()
 
 	draw := func() {
-		screen.SetCursorStyle(tcell.CursorStyleSteadyBlock, tcell.GetColor(Theme.Cursor))
+		screen.SetCursorStyle(tcell.CursorStyleSteadyBar, tcell.GetColor(Theme.Cursor))
 		screen.Fill(' ', Style{}.Apply())
 		a.Render()
 		screen.Show()

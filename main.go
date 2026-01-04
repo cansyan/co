@@ -61,11 +61,18 @@ func main() {
 	app.BindKey("Ctrl+F", func() {
 		root.showSearch = true
 		// 重置狀態，確保切換文件或重新開啟時會重新掃描
-		root.searchBar.matches = nil
-		root.searchBar.activeIndex = -1
-		query := root.searchBar.input.String()
-		root.searchBar.input.Select(0, len([]rune(query)))
-		ui.Default().Focus(root.searchBar)
+		sb := root.searchBar
+		sb.matches = nil
+		sb.activeIndex = -1
+		query := sb.input.String()
+		if e := root.getEditor(); e != nil {
+			if s := e.SelectedText(); s != "" {
+				query = s
+				sb.input.SetText(s)
+			}
+		}
+		sb.input.Select(0, len([]rune(query)))
+		ui.Default().Focus(sb)
 	})
 
 	// command palette
@@ -304,7 +311,7 @@ func (r *root) showPalette(prefix string) {
 	p.input.OnChange(func() {
 		text := p.input.String()
 		p.list.Clear()
-		p.list.Hovered = 0
+		p.list.Selected = 0
 
 		switch {
 		case strings.HasPrefix(text, ":"):
@@ -604,7 +611,6 @@ func NewPalette() *Palette {
 		input: ui.NewTextInput(),
 		list:  ui.NewListView(),
 	}
-	p.list.Hovered = 0
 	return p
 }
 
@@ -646,17 +652,11 @@ func (p *Palette) HandleKey(ev *tcell.EventKey) bool {
 	case tcell.KeyESC:
 		ui.Default().CloseOverlay()
 	case tcell.KeyDown, tcell.KeyCtrlN:
-		p.list.Hovered = (p.list.Hovered + 1) % len(p.list.Items)
+		p.list.Next()
 	case tcell.KeyUp, tcell.KeyCtrlP:
-		n := len(p.list.Items)
-		p.list.Hovered = (p.list.Hovered - 1 + n) % n
+		p.list.Prev()
 	case tcell.KeyEnter:
-		if len(p.list.Items) > 0 {
-			item := p.list.Items[p.list.Hovered]
-			if item.Action != nil {
-				item.Action()
-			}
-		}
+		p.list.Act()
 	default:
 		p.input.HandleKey(ev)
 		consumed = false
