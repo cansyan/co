@@ -4,13 +4,9 @@ package ui
 
 import (
 	"fmt"
-	"go/token"
 	"log"
-	"math"
 	"slices"
-	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
@@ -72,8 +68,8 @@ type Focusable interface {
 	OnBlur()
 }
 
-// FocusDelegate allows an element to delegate focus to another element.
-type FocusDelegate interface {
+// FocusDelegator allows an element to delegate focus to another element.
+type FocusDelegator interface {
 	FocusTarget() Element
 }
 
@@ -211,27 +207,36 @@ func DrawString(s Screen, x, y, w int, str string, style tcell.Style) {
 // ---------------------------------------------------------------------
 
 type Text struct {
-	Style Style
-	Text  string
+	Style   Style
+	Content string
 }
 
 func NewText(text string) *Text {
-	return &Text{Text: text}
+	return &Text{Content: text}
 }
 
-func (t *Text) Bold() *Text      { t.Style.FontBold = true; return t }
-func (t *Text) Italic() *Text    { t.Style.FontItalic = true; return t }
-func (t *Text) Underline() *Text { t.Style.FontUnderline = true; return t }
-func (t *Text) Foreground(color string) *Text {
+// SetBold enables bold styling (chainable)
+func (t *Text) SetBold() *Text { t.Style.FontBold = true; return t }
+
+// SetItalic enables italic styling (chainable)
+func (t *Text) SetItalic() *Text { t.Style.FontItalic = true; return t }
+
+// SetUnderline enables underline styling (chainable)
+func (t *Text) SetUnderline() *Text { t.Style.FontUnderline = true; return t }
+
+// SetForeground sets the foreground color (chainable)
+func (t *Text) SetForeground(color string) *Text {
 	t.Style.FG = color
 	return t
 }
-func (t *Text) Background(color string) *Text {
+
+// SetBackground sets the background color (chainable)
+func (t *Text) SetBackground(color string) *Text {
 	t.Style.BG = color
 	return t
 }
 
-func (t *Text) MinSize() (int, int) { return runewidth.StringWidth(t.Text), 1 }
+func (t *Text) MinSize() (int, int) { return runewidth.StringWidth(t.Content), 1 }
 func (t *Text) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: t,
@@ -239,7 +244,7 @@ func (t *Text) Layout(x, y, w, h int) *LayoutNode {
 	}
 }
 func (t *Text) Render(s Screen, rect Rect) {
-	DrawString(s, rect.X, rect.Y, rect.W, t.Text, t.Style.Apply())
+	DrawString(s, rect.X, rect.Y, rect.W, t.Content, t.Style.Apply())
 }
 
 type Button struct {
@@ -257,8 +262,8 @@ func NewButton(text string, onClick func()) *Button {
 	return &Button{text: text, onClick: onClick}
 }
 
-// Disable visual feedback
-func (b *Button) NoFeedback() *Button {
+// DisableFeedback disables visual feedback for hover/press states (chainable)
+func (b *Button) DisableFeedback() *Button {
 	b.noFeedback = true
 	return b
 }
@@ -305,16 +310,21 @@ func (b *Button) OnMouseUp(x, y int) {
 	b.pressed = false
 }
 
-func (b *Button) OnClick() {
-	b.onClick()
+// Trigger invokes the button's click action programmatically
+func (b *Button) Trigger() {
+	if b.onClick != nil {
+		b.onClick()
+	}
 }
 
-func (b *Button) Foreground(color string) *Button {
+// SetForeground sets the foreground color (chainable)
+func (b *Button) SetForeground(color string) *Button {
 	b.Style.FG = color
 	return b
 }
 
-func (b *Button) Background(color string) *Button {
+// SetBackground sets the background color (chainable)
+func (b *Button) SetBackground(color string) *Button {
 	b.Style.BG = color
 	return b
 }
@@ -322,13 +332,13 @@ func (b *Button) Background(color string) *Button {
 // TextInput is a single-line editable text input field.
 type TextInput struct {
 	text        []rune
-	cursor      int
+	cursor      int // cursor position; also selection end
 	focused     bool
-	style       Style
+	Style       Style
 	onChange    func()
 	placeHolder string
-	selStart    int  // 選取起點 (rune index)
-	pressed     bool // 標記滑鼠是否按下以進行拖拽
+	anchor      int // selection anchor (rune index)
+	pressed     bool
 	onCommit    func()
 }
 
@@ -337,14 +347,15 @@ func NewTextInput() *TextInput {
 	return t
 }
 
-func (t *TextInput) String() string {
+// Text returns the current text content
+func (t *TextInput) Text() string {
 	return string(t.text)
 }
 
 func (t *TextInput) SetText(s string) {
 	t.text = []rune(s)
 	t.cursor = len(t.text)
-	t.selStart = t.cursor
+	t.anchor = t.cursor
 	if t.onChange != nil {
 		t.onChange()
 	}
@@ -362,15 +373,6 @@ func (t *TextInput) OnCommit(fn func()) *TextInput {
 
 func (t *TextInput) SetPlaceholder(s string) {
 	t.placeHolder = s
-}
-
-func (t *TextInput) Foreground(c string) *TextInput {
-	t.style.FG = c
-	return t
-}
-func (t *TextInput) Background(c string) *TextInput {
-	t.style.BG = c
-	return t
 }
 
 func (t *TextInput) MinSize() (int, int) {
@@ -395,9 +397,8 @@ func (t *TextInput) Render(s Screen, rect Rect) {
 	}
 
 	start, end, hasSel := t.selection()
-	// log.Print(start, end, hasSel)
-	baseStyle := t.style.Apply()
-	selStyle := t.style.Merge(Style{BG: Theme.Selection}).Apply()
+	baseStyle := t.Style.Apply()
+	selStyle := t.Style.Merge(Style{BG: Theme.Selection}).Apply()
 
 	xOffset := 0
 	for i, r := range t.text {
@@ -467,7 +468,7 @@ func (t *TextInput) HandleKey(ev *tcell.EventKey) bool {
 	}
 
 	if resetSelection && !t.pressed {
-		t.selStart = t.cursor
+		t.anchor = t.cursor
 	}
 	return consumed
 }
@@ -482,7 +483,7 @@ func (t *TextInput) OnMouseDown(x, y int) {
 	t.cursor = x
 	if !t.pressed {
 		t.pressed = true
-		t.selStart = x
+		t.anchor = x
 	}
 }
 
@@ -510,16 +511,16 @@ func (t *TextInput) clampCursor(x int) int {
 }
 
 func (t *TextInput) Select(start, end int) {
-	t.selStart = start
+	t.anchor = start
 	t.cursor = end
 }
 
 // 取得正規化後的選取範圍 (start <= end)
 func (t *TextInput) selection() (int, int, bool) {
-	if t.selStart == t.cursor {
+	if t.anchor == t.cursor {
 		return 0, 0, false
 	}
-	start, end := t.selStart, t.cursor
+	start, end := t.anchor, t.cursor
 	if start > end {
 		start, end = end, start
 	}
@@ -612,1020 +613,6 @@ func (tv *TextViewer) Write(p []byte) (int, error) {
 		tv.onChange()
 	}
 	return len(p), nil
-}
-
-// OnChange register a callback function that will be called on content changed
-func (tv *TextViewer) OnChange(f func()) { tv.onChange = f }
-
-// TextEditor is a multi-line editable text area.
-type TextEditor struct {
-	buf     [][]rune // row-major text buffer
-	Pos     Pos      // cursor position; also selection end
-	goalCol int      // desired visual column when moving vertically
-
-	anchor    Pos // selection anchor (fixed head)
-	selecting bool
-
-	offsetY  int // vertical scroll offset (top row)
-	viewH    int // last rendered height
-	contentX int
-
-	focused bool
-	pressed bool // mouse pressed
-
-	style Style
-	lang  string
-
-	onChange func()
-	Dirty    bool
-}
-
-func NewTextEditor() *TextEditor {
-	e := &TextEditor{
-		buf: [][]rune{{}}, // Start with one empty line of runes
-	}
-	return e
-}
-
-func (e *TextEditor) SetLanguage(l string) {
-	e.lang = l
-}
-
-func (e *TextEditor) Foreground(c string) *TextEditor {
-	e.style.FG = c
-	return e
-}
-func (e *TextEditor) Background(c string) *TextEditor {
-	e.style.BG = c
-	return e
-}
-
-func (e *TextEditor) Len() int {
-	return len(e.buf)
-}
-
-func (e *TextEditor) String() string {
-	var sb strings.Builder
-	for i, line := range e.buf {
-		sb.WriteString(string(line))
-		if i == len(e.buf)-1 && len(line) == 0 {
-			continue
-		}
-		sb.WriteByte('\n')
-	}
-	return sb.String()
-}
-
-func (e *TextEditor) SetText(s string) {
-	lines := strings.Split(s, "\n")
-	e.buf = make([][]rune, len(lines))
-	for i, line := range lines {
-		e.buf[i] = []rune(line)
-	}
-	e.Pos = Pos{Row: 0, Col: 0}
-	e.adjustCol()
-}
-
-// SetCursor moves the cursor and clears any active selection.
-func (e *TextEditor) SetCursor(row, col int) {
-	if row < 0 || row >= len(e.buf) || col < 0 {
-		return
-	}
-	e.ClearSelection()
-	e.Pos = Pos{Row: row, Col: col}
-	e.adjustCol()
-}
-
-// CenterRow 僅負責將特定行移動到螢幕中心，提供最大上下視野
-// mainly for jumping to search result, symbol
-func (e *TextEditor) CenterRow(row int) {
-	if e.viewH <= 0 {
-		return
-	}
-
-	e.offsetY = row - (e.viewH / 2)
-	e.clampScroll() // 抽離出的邊界檢查邏輯
-}
-
-// ScrollTo adjusts offsetY to ensures the row is visible on the screen,
-// does minimal scrolling, and mainly for arrow key movement and typing.
-func (e *TextEditor) ScrollTo(row int) {
-	if e.viewH <= 0 {
-		return
-	}
-
-	const scrolloff = 1 // 預留 1 行邊距，體驗更好
-
-	// 處理下方出界
-	if e.Pos.Row >= e.offsetY+e.viewH-scrolloff {
-		e.offsetY = e.Pos.Row - e.viewH + 1 + scrolloff
-	}
-
-	// 處理上方出界
-	if e.Pos.Row < e.offsetY+scrolloff {
-		e.offsetY = e.Pos.Row - scrolloff
-	}
-
-	e.clampScroll()
-}
-
-func (e *TextEditor) clampScroll() {
-	maxOffset := max(0, len(e.buf)-e.viewH)
-	if e.offsetY > maxOffset {
-		e.offsetY = maxOffset
-	}
-	if e.offsetY < 0 {
-		e.offsetY = 0
-	}
-}
-
-func (e *TextEditor) adjustCol() {
-	if e.Pos.Row < len(e.buf) {
-		lineLen := len(e.buf[e.Pos.Row])
-		if e.Pos.Col > lineLen {
-			e.Pos.Col = lineLen
-		}
-	}
-}
-
-func (e *TextEditor) MinSize() (int, int) {
-	// Fixed width: 5 columns for line numbers + 20 for content
-	return 25, 5
-}
-
-func (e *TextEditor) Layout(x, y, w, h int) *LayoutNode {
-	return &LayoutNode{
-		Element: e,
-		Rect:    Rect{X: x, Y: y, W: w, H: h},
-	}
-}
-
-const tabSize = 4
-
-// visualColFromLine returns the visual column (in terminal cells)
-// corresponding to rune index i in the line.
-//
-// Tabs are expanded using tabSize, and rune widths are measured with
-// runewidth.RuneWidth. If i is beyond the end of the line, the total
-// visual width of the entire line is returned.
-func visualColFromLine(line []rune, i int) int {
-	var col int
-	for j, r := range line {
-		if j == i {
-			return col
-		}
-
-		if r == '\t' {
-			col += tabSize - col%tabSize
-		} else {
-			col += runewidth.RuneWidth(r)
-		}
-	}
-	return col
-}
-
-// visualColToLine converts a visual column position into rune index in the line.
-//
-// Tabs are expanded using tabSize. When col falls inside a tab expansion,
-// the function chooses the nearest rune boundary; if the column is closer to
-// the previous column than the next, it may return the preceding rune index.
-//
-// If col is past the end of the line, len(line) is returned.
-func visualColToLine(line []rune, col int) int {
-	var total int
-	for i, r := range line {
-		next := total
-		if r == '\t' {
-			next += tabSize - total%tabSize
-		} else {
-			next += runewidth.RuneWidth(r)
-		}
-
-		if col < next {
-			return i
-		}
-		total = next
-	}
-	return len(line)
-}
-
-func (e *TextEditor) drawRune(s tcell.Screen, x, y int, maxWidth int, r rune, visualCol int, style Style) int {
-	if maxWidth <= 0 {
-		return 0
-	}
-
-	// TAB
-	if r == '\t' {
-		spaces := tabSize - visualCol%tabSize
-		if spaces > maxWidth {
-			spaces = maxWidth
-		}
-		for i := range spaces {
-			s.SetContent(x+i, y, ' ', nil, style.Apply())
-		}
-		return spaces
-	}
-
-	// other rune
-	w := runewidth.RuneWidth(r)
-	if w <= 0 {
-		w = 1
-	}
-	if w > maxWidth {
-		return 0
-	}
-	s.SetContent(x, y, r, nil, style.Apply())
-	return w
-}
-
-func (e *TextEditor) Render(s Screen, rect Rect) {
-	e.viewH = rect.H
-
-	// Dynamic width calculation (for proper right-justification)
-	numLines := len(e.buf)
-	if numLines == 0 {
-		numLines = 1
-	}
-	actualNumDigits := len(strconv.Itoa(numLines))
-	lineNumWidth := actualNumDigits + 2
-	lineNumStyle := Style{FG: "silver"}
-
-	contentX := rect.X + lineNumWidth + 1
-	e.contentX = contentX
-	contentW := rect.W - lineNumWidth
-	if contentW <= 0 {
-		return
-	}
-
-	var cursorX, cursorY int
-	cursorFound := false
-	// Loop over visible rows
-	for i := range rect.H {
-		row := i + e.offsetY
-		if row >= len(e.buf) {
-			break
-		}
-
-		line := e.buf[row]
-		lnStyle := lineNumStyle
-		if row == e.Pos.Row {
-			cursorFound = true
-			cursorX = contentX + visualColFromLine(line, e.Pos.Col)
-			cursorY = rect.Y + i
-			lnStyle.BG = Theme.Selection
-		}
-
-		// draw line number
-		lineNum := row + 1
-		numStr := fmt.Sprintf("%*d  ", lineNumWidth-1, lineNum)
-		DrawString(s, rect.X, rect.Y+i, lineNumWidth, numStr, lnStyle.Apply())
-
-		// draw line content
-		var spans []StyleSpan
-		if e.lang == "go" {
-			spans = highlightGo(line)
-		}
-		styles := expandStyles(spans, e.style, len(line))
-		visualCol := 0
-		y := rect.Y + i
-		for col, r := range line {
-			charStyle := styles[col]
-			if e.isSelected(Pos{Row: row, Col: col}) {
-				charStyle.BG = Theme.Selection
-			}
-			cells := e.drawRune(s, contentX+visualCol, y, contentW-visualCol, r, visualCol, charStyle)
-			visualCol += cells
-		}
-
-		// draw line end indicator while selected
-		if e.isSelected(Pos{Row: row, Col: len(line)}) {
-			charStyle := e.style.Merge(Style{BG: Theme.Selection})
-			e.drawRune(s, contentX+visualCol, y, contentW-visualCol, ' ', visualCol, charStyle)
-		}
-	}
-
-	// Place the cursor
-	if e.focused {
-		if cursorFound {
-			s.ShowCursor(cursorX, cursorY)
-		} else {
-			// Cursor line is not visible, hide cursor
-			s.HideCursor()
-		}
-	}
-}
-func (e *TextEditor) OnFocus() { e.focused = true }
-func (e *TextEditor) OnBlur()  { e.focused = false }
-
-func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
-	keepVisualCol := false
-	defer func() {
-		if !keepVisualCol {
-			e.goalCol = 0
-		}
-	}()
-
-	onChange := func() {
-		if e.onChange != nil {
-			e.onChange()
-		}
-	}
-
-	consumed = true
-	switch ev.Key() {
-	case tcell.KeyESC:
-		e.ClearSelection()
-	case tcell.KeyUp:
-		e.ClearSelection()
-		if ev.Modifiers()&tcell.ModMeta != 0 {
-			e.Pos.Row, e.Pos.Col = 0, 0
-			e.ScrollTo(e.Pos.Row)
-			return
-		}
-
-		keepVisualCol = true
-		if e.goalCol == 0 {
-			e.goalCol = visualColFromLine(e.buf[e.Pos.Row], e.Pos.Col)
-		}
-		if e.Pos.Row > 0 {
-			e.Pos.Row--
-			e.Pos.Col = visualColToLine(e.buf[e.Pos.Row], e.goalCol)
-			e.adjustCol()
-			e.ScrollTo(e.Pos.Row)
-		}
-	case tcell.KeyDown:
-		e.ClearSelection()
-		if ev.Modifiers()&tcell.ModMeta != 0 {
-			e.Pos.Row, e.Pos.Col = len(e.buf)-1, 0
-			e.ScrollTo(e.Pos.Row)
-			return
-		}
-
-		keepVisualCol = true
-		if e.goalCol == 0 {
-			e.goalCol = visualColFromLine(e.buf[e.Pos.Row], e.Pos.Col)
-		}
-		if e.Pos.Row < len(e.buf)-1 {
-			e.Pos.Row++
-			e.Pos.Col = visualColToLine(e.buf[e.Pos.Row], e.goalCol)
-			e.adjustCol()
-			e.ScrollTo(e.Pos.Row)
-		}
-	case tcell.KeyLeft:
-		if ev.Modifiers()&tcell.ModMeta != 0 {
-			e.ClearSelection()
-			firstNonSpace := 0
-			for i, ch := range e.buf[e.Pos.Row] {
-				if !unicode.IsSpace(ch) {
-					firstNonSpace = i
-					break
-				}
-			}
-			e.Pos.Col = firstNonSpace
-			return
-		}
-		if start, _, ok := e.Selection(); ok {
-			e.Pos = start
-			e.ClearSelection()
-			return
-		}
-
-		if e.Pos.Col > 0 {
-			e.Pos.Col--
-		} else if e.Pos.Row > 0 {
-			e.Pos.Row--
-			e.Pos.Col = len(e.buf[e.Pos.Row]) // End of previous line
-			e.ScrollTo(e.Pos.Row)
-		}
-	case tcell.KeyRight:
-		if ev.Modifiers()&tcell.ModMeta != 0 {
-			e.ClearSelection()
-			e.Pos.Col = len(e.buf[e.Pos.Row])
-			return
-		}
-		if _, end, ok := e.Selection(); ok {
-			e.Pos = end
-			e.ClearSelection()
-			return
-		}
-		if e.Pos.Col < len(e.buf[e.Pos.Row]) {
-			e.Pos.Col++
-		} else if e.Pos.Row < len(e.buf)-1 {
-			e.Pos.Row++
-			e.Pos.Col = 0 // Start of next line
-			e.ScrollTo(e.Pos.Row)
-		}
-	case tcell.KeyEnter:
-		defer onChange()
-		e.Dirty = true
-		if start, end, ok := e.Selection(); ok {
-			e.DeleteRange(start, end)
-			e.ClearSelection()
-		}
-		head := e.buf[e.Pos.Row][:e.Pos.Col]
-		tail := e.buf[e.Pos.Row][e.Pos.Col:]
-
-		// keep indentation
-		lead := 0
-		for _, r := range head {
-			if unicode.IsSpace(r) {
-				lead++
-			} else {
-				break
-			}
-		}
-		newLine := make([]rune, lead+len(tail))
-		copy(newLine, head[:lead])
-		copy(newLine[lead:], tail)
-
-		e.buf[e.Pos.Row] = head
-		e.buf = slices.Insert(e.buf, e.Pos.Row+1, newLine)
-
-		e.Pos.Row++
-		e.Pos.Col = lead
-		e.ScrollTo(e.Pos.Row)
-	case tcell.KeyBackspace, tcell.KeyBackspace2:
-		defer onChange()
-		e.Dirty = true
-		if start, end, ok := e.Selection(); ok {
-			e.DeleteRange(start, end)
-			e.ClearSelection()
-			return
-		}
-		if e.Pos.Col > 0 {
-			e.buf[e.Pos.Row] = slices.Delete(e.buf[e.Pos.Row], e.Pos.Col-1, e.Pos.Col)
-			e.Pos.Col--
-		} else if e.Pos.Row > 0 {
-			prevLine := e.buf[e.Pos.Row-1]
-			e.Pos.Col = len(prevLine)
-			e.buf[e.Pos.Row-1] = append(prevLine, e.buf[e.Pos.Row]...)
-
-			e.buf = slices.Delete(e.buf, e.Pos.Row, e.Pos.Row+1)
-			e.Pos.Row--
-			e.ScrollTo(e.Pos.Row)
-		}
-	case tcell.KeyRune:
-		defer onChange()
-		e.Dirty = true
-		// 如果有選取，先刪除選取範圍，再插入字元
-		if start, end, ok := e.Selection(); ok {
-			e.DeleteRange(start, end)
-			e.ClearSelection()
-		}
-		r := ev.Rune()
-		e.buf[e.Pos.Row] = slices.Insert(e.buf[e.Pos.Row], e.Pos.Col, r)
-		e.Pos.Col++
-	case tcell.KeyTAB:
-		defer onChange()
-		e.Dirty = true
-		if start, end, ok := e.Selection(); ok {
-			e.DeleteRange(start, end)
-			e.ClearSelection()
-		}
-		e.buf[e.Pos.Row] = slices.Insert(e.buf[e.Pos.Row], e.Pos.Col, '\t')
-		e.Pos.Col++
-	case tcell.KeyHome:
-		// goto the first non-space character
-		for i, char := range e.buf[e.Pos.Row] {
-			if !unicode.IsSpace(char) {
-				e.Pos.Col = i
-				break
-			}
-		}
-	case tcell.KeyEnd:
-		e.Pos.Col = len(e.buf[e.Pos.Row])
-	default:
-		consumed = false
-	}
-	return consumed
-}
-
-func (e *TextEditor) OnMouseUp(x, y int) {
-	e.pressed = false
-	if e.Pos.Row == e.anchor.Row && e.Pos.Col == e.anchor.Col {
-		e.selecting = false
-	}
-}
-
-func (e *TextEditor) OnMouseDown(x, y int) {
-	// Calculate the target row (relative to content)
-	targetRow := y + e.offsetY
-
-	// Clamp the target row
-	if targetRow < 0 {
-		e.Pos.Row = 0
-	} else if targetRow >= len(e.buf) {
-		e.Pos.Row = len(e.buf) - 1
-	} else {
-		e.Pos.Row = targetRow
-	}
-
-	if e.Pos.Row < 0 {
-		return
-	}
-
-	// Calculate the target column (rune index)
-	visualCol := max(x-e.contentX, 0)
-	e.Pos.Col = visualColToLine(e.buf[e.Pos.Row], visualCol)
-
-	if !e.pressed {
-		// 點擊瞬間，錨點與游標重合
-		e.anchor = e.Pos
-		e.selecting = true
-		e.pressed = true
-	}
-}
-
-func (e *TextEditor) OnMouseEnter() {}
-func (e *TextEditor) OnMouseLeave() {}
-func (e *TextEditor) OnMouseMove(lx, ly int) {
-	if e.pressed {
-		// Drag to select
-		targetRow := ly + e.offsetY
-		if targetRow < 0 {
-			targetRow = 0
-		} else if targetRow >= len(e.buf) {
-			targetRow = len(e.buf) - 1
-		}
-		currentLine := e.buf[targetRow]
-		clickedX := max(lx-e.contentX, 0)
-		targetCol := visualColToLine(currentLine, clickedX)
-
-		e.Pos.Row = targetRow
-		e.Pos.Col = targetCol
-	}
-}
-
-// SetSelection sets the selection anchor to startRow and startCol,
-// sets content cursor to endRow and endCol.
-func (e *TextEditor) SetSelection(start, end Pos) {
-	length := e.Len()
-	if start.Row < 0 || start.Row > length-1 || end.Row < 0 || end.Row > length-1 {
-		return
-	}
-	e.anchor = start
-	e.Pos = end
-	e.selecting = true
-	e.adjustCol()
-}
-
-func (e *TextEditor) Selection() (start, end Pos, ok bool) {
-	if !e.selecting || (e.Pos.Row == e.anchor.Row && e.Pos.Col == e.anchor.Col) {
-		return
-	}
-
-	start = e.anchor
-	end = e.Pos
-
-	// ensure start is before end
-	if start.Row > end.Row || (start.Row == end.Row && start.Col > end.Col) {
-		start, end = end, start
-	}
-	return start, end, true
-}
-
-func (e *TextEditor) ClearSelection() {
-	e.selecting = false
-}
-
-func (e *TextEditor) isSelected(pos Pos) bool {
-	start, end, ok := e.Selection()
-	if !ok {
-		return false
-	}
-
-	if pos.Row < start.Row || pos.Row > end.Row {
-		return false
-	}
-	if pos.Row > start.Row && pos.Row < end.Row {
-		return true
-	}
-	if start.Row == end.Row {
-		return pos.Col >= start.Col && pos.Col < end.Col
-	}
-	if pos.Row == start.Row {
-		return pos.Col >= start.Col
-	}
-	if pos.Row == end.Row {
-		return pos.Col < end.Col
-	}
-	return false
-}
-
-// WordRangeAtCursor returns the word boundaries at current cursor.
-func (e *TextEditor) WordRangeAtCursor() (start, end int, ok bool) {
-	if e.Pos.Row < 0 || e.Pos.Row >= len(e.buf) {
-		return
-	}
-	line := e.buf[e.Pos.Row]
-	if e.Pos.Col < 0 || e.Pos.Col > len(line) {
-		return
-	}
-
-	isWordChar := func(r rune) bool {
-		return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
-	}
-
-	start = e.Pos.Col
-	for start > 0 && isWordChar(line[start-1]) {
-		start--
-	}
-
-	end = e.Pos.Col
-	for end < len(line) && isWordChar(line[end]) {
-		end++
-	}
-
-	// no word
-	if start == end {
-		return
-	}
-
-	return start, end, true
-}
-
-// SelectWord selects word at current cursor
-func (e *TextEditor) SelectWord() {
-	if len(e.buf) == 0 || e.Pos.Row >= len(e.buf) {
-		return
-	}
-
-	start, end, ok := e.WordRangeAtCursor()
-	if !ok {
-		return
-	}
-	// 讓游標停在單詞末尾，方便下次搜尋從末尾開始
-	e.SetSelection(Pos{Row: e.Pos.Row, Col: start}, Pos{Row: e.Pos.Row, Col: end})
-}
-
-// ExpandSelectionToLine expands selection to line.
-// Repeated calls may expand further lines.
-func (e *TextEditor) ExpandSelectionToLine() {
-	if len(e.buf) == 0 || e.Pos.Row >= len(e.buf) {
-		return
-	}
-
-	start, end, ok := e.Selection()
-	if !ok {
-		if e.Pos.Row < len(e.buf)-1 {
-			// 選中整行，並將游標移至下一行開頭（模仿主流編輯器行為）
-			e.SetSelection(Pos{Row: e.Pos.Row}, Pos{Row: e.Pos.Row + 1})
-		} else {
-			e.SetSelection(Pos{Row: e.Pos.Row}, Pos{Row: e.Pos.Row, Col: len(e.buf[e.Pos.Row])})
-		}
-		return
-	}
-
-	// expand selection
-	if end.Row < e.Len()-1 {
-		e.SetSelection(Pos{Row: start.Row, Col: 0}, Pos{Row: end.Row + 1, Col: 0})
-	} else {
-		line := e.Line(end.Row)
-		e.SetSelection(Pos{Row: start.Row, Col: 0}, Pos{Row: end.Row, Col: len(line)})
-	}
-}
-
-// ExpandSelectionToBrackets expands selection to the nearest enclosing brackets.
-// Repeated calls may expand further depending on context;
-func (e *TextEditor) ExpandSelectionToBrackets() {
-	openRow, openCol, openCh := e.findOpeningBracket(e.Pos.Row, e.Pos.Col)
-	if openCol == -1 {
-		return
-	}
-
-	closeRow, closeCol := e.findClosingBracket(openRow, openCol, openCh)
-	if closeCol == -1 {
-		return
-	}
-
-	// include the brackets
-	e.SetSelection(Pos{Row: openRow, Col: openCol}, Pos{Row: closeRow, Col: closeCol + 1})
-}
-
-var bracketOpen = map[rune]rune{
-	'(': ')',
-	'[': ']',
-	'{': '}',
-}
-
-var bracketClose = map[rune]rune{
-	')': '(',
-	']': '[',
-	'}': '{',
-}
-
-func (e *TextEditor) findOpeningBracket(startRow, startCol int) (openRow, openCol int, openCh rune) {
-	var stack []rune
-	for r := startRow; r >= 0; r-- {
-		cStart := len(e.buf[r]) - 1
-		if r == startRow {
-			cStart = startCol - 1
-		}
-
-		for c := cStart; c >= 0; c-- {
-			char := e.buf[r][c]
-			if open, ok := bracketClose[char]; ok {
-				stack = append(stack, open)
-			} else if _, ok := bracketOpen[char]; ok {
-				if len(stack) == 0 {
-					return r, c, char
-				}
-				// pop
-				stack = stack[:len(stack)-1]
-			}
-		}
-	}
-	return -1, -1, 0
-}
-
-func (e *TextEditor) findClosingBracket(openRow, openCol int, openCh rune) (closeRow, closeCol int) {
-	closeCh := bracketOpen[openCh]
-	depth := 0
-	for r := openRow; r < len(e.buf); r++ {
-		cStart := 0
-		if r == openRow {
-			cStart = openCol + 1
-		}
-
-		for c := cStart; c < len(e.buf[r]); c++ {
-			char := e.buf[r][c]
-			switch char {
-			case openCh:
-				depth++
-			case closeCh:
-				if depth == 0 {
-					return r, c
-				}
-				depth--
-			}
-		}
-	}
-	return -1, -1
-}
-
-// FindNext 尋找下一個匹配項並更新選區
-func (e *TextEditor) FindNext(query string) {
-	if query == "" {
-		return
-	}
-	qRunes := []rune(query)
-	qLen := len(qRunes)
-	lineCount := len(e.buf)
-
-	// 從當前位置之後開始搜尋
-	startRow := e.Pos.Row
-	startCol := e.Pos.Col
-
-	for i := range lineCount {
-		// 使用取模實現 Wrap Around (循環搜尋)
-		currentRow := (startRow + i) % lineCount
-		line := e.buf[currentRow]
-
-		// 如果是起始行，從當前列開始找；否則從行首開始找
-		searchFromCol := 0
-		if i == 0 {
-			searchFromCol = startCol
-		}
-
-		if searchFromCol >= len(line) && i == 0 {
-			continue
-		}
-
-		// 在當前行中尋找匹配
-		foundIdx := -1
-		remaining := line[searchFromCol:]
-		for j := 0; j <= len(remaining)-qLen; j++ {
-			match := true
-			for k := range qLen {
-				if remaining[j+k] != qRunes[k] {
-					match = false
-					break
-				}
-			}
-			if match {
-				foundIdx = j
-				break
-			}
-		}
-
-		if foundIdx != -1 {
-			// 找到匹配項後的座標計算
-			actualCol := searchFromCol + foundIdx
-
-			// 1. 更新選區：從匹配項開始到結束
-			e.anchor = Pos{Row: currentRow, Col: actualCol}
-			e.Pos.Row = currentRow
-			e.Pos.Col = actualCol + qLen
-			e.selecting = true
-
-			// 3. 確保視覺調整
-			e.CenterRow(currentRow)
-			return
-		}
-	}
-}
-
-// SelectedText 回傳當前選區的字串內容
-func (e *TextEditor) SelectedText() string {
-	start, end, ok := e.Selection()
-	if !ok {
-		return ""
-	}
-
-	if start.Row == end.Row {
-		return string(e.buf[start.Row][start.Col:end.Col])
-	}
-
-	var sb strings.Builder
-	sb.WriteString(string(e.buf[start.Row][start.Col:]))
-	sb.WriteByte('\n')
-	for i := start.Row + 1; i < end.Row; i++ {
-		sb.WriteString(string(e.buf[i]))
-		sb.WriteByte('\n')
-	}
-	sb.WriteString(string(e.buf[end.Row][:end.Col]))
-	return sb.String()
-}
-
-func (e *TextEditor) OnScroll(dy int) {
-	if len(e.buf) <= e.viewH {
-		e.offsetY = 0
-	} else if dy < 0 {
-		// scroll down
-		e.offsetY = max(e.offsetY+dy, 0)
-	} else {
-		// scroll up
-		e.offsetY = min(e.offsetY+dy, len(e.buf)-e.viewH)
-	}
-}
-
-// OnChange sets a callback function that is called whenever the text content changes.
-func (e *TextEditor) OnChange(fn func()) {
-	e.onChange = fn
-}
-
-// Line return a line of text on the given row index.
-func (e *TextEditor) Line(i int) []rune {
-	return slices.Clone(e.buf[i])
-}
-
-type Pos struct {
-	Row int
-	Col int
-}
-
-func (p Pos) Advance(rs []rune) Pos {
-	for _, r := range rs {
-		if r == '\n' {
-			p.Row++
-			p.Col = 0
-		} else {
-			p.Col++
-		}
-	}
-	return p
-}
-
-func (e *TextEditor) insertRunes(pos Pos, rs []rune) {
-	if len(rs) == 0 {
-		return
-	}
-
-	lines := splitRunesByNewline(rs)
-	line := e.buf[pos.Row]
-
-	if len(lines) == 1 {
-		e.buf[pos.Row] = spliceRunes(line, pos.Col, 0, lines[0])
-		return
-	}
-
-	// multi-line insert
-	head := append(append([]rune{}, line[:pos.Col]...), lines[0]...)
-	tail := append([]rune{}, line[pos.Col:]...)
-
-	lines[len(lines)-1] = append(lines[len(lines)-1], tail...)
-
-	newLines := make([][]rune, 0, len(lines))
-	newLines = append(newLines, head)
-	newLines = append(newLines, lines[1:]...)
-
-	e.buf = spliceLines(e.buf, pos.Row, 1, newLines)
-}
-
-// InsertText simulates a paste operation: it inserts a string 's' at the current
-// cursor position (t.row, t.col), correctly handling any embedded newlines ('\n').
-func (e *TextEditor) InsertText(s string) {
-	if s == "" {
-		return
-	}
-
-	// selection
-	if start, end, ok := e.Selection(); ok {
-		e.DeleteRange(start, end)
-		e.ClearSelection()
-	}
-
-	// insert
-	rs := []rune(s)
-	e.insertRunes(e.Pos, rs)
-
-	// move cursor
-	e.Pos = e.Pos.Advance(rs)
-
-	// UI side effects
-	e.ScrollTo(e.Pos.Row)
-	e.Dirty = true
-	if e.onChange != nil {
-		e.onChange()
-	}
-}
-
-func splitRunesByNewline(rs []rune) [][]rune {
-	var lines [][]rune
-	start := 0
-	for i, r := range rs {
-		if r == '\n' {
-			lines = append(lines, append([]rune{}, rs[start:i]...))
-			start = i + 1
-		}
-	}
-	lines = append(lines, append([]rune{}, rs[start:]...))
-	return lines
-}
-
-func spliceRunes(rs []rune, start, remove int, insert []rune) []rune {
-	out := make([]rune, 0, len(rs)-remove+len(insert))
-	out = append(out, rs[:start]...)
-	if insert != nil {
-		out = append(out, insert...)
-	}
-	out = append(out, rs[start+remove:]...)
-	return out
-}
-
-func spliceLines(lines [][]rune, start, remove int, insert [][]rune) [][]rune {
-	out := make([][]rune, 0, len(lines)-remove+len(insert))
-	out = append(out, lines[:start]...)
-	if insert != nil {
-		out = append(out, insert...)
-	}
-	out = append(out, lines[start+remove:]...)
-	return out
-}
-
-// DeleteRange deletes a range of text defined by two cursor positions (start, end).
-// the positions are inclusive of start and exclusive of end.
-func (e *TextEditor) DeleteRange(start, end Pos) {
-	// 1. Normalize and clamp the selection range
-	if start.Row > end.Row || (start.Row == end.Row && start.Col > end.Col) {
-		start.Row, end.Row = end.Row, start.Row
-		start.Col, end.Col = end.Col, start.Col
-	}
-
-	if start.Row < 0 {
-		start.Row = 0
-	}
-	if end.Row >= len(e.buf) {
-		end.Row = len(e.buf) - 1
-	}
-	if start.Row > end.Row {
-		return
-	}
-
-	startLine := e.buf[start.Row]
-	endLine := e.buf[end.Row]
-
-	start.Col = min(start.Col, len(startLine))
-	end.Col = min(end.Col, len(endLine))
-
-	// 2. Extract Head and Tail
-	head := startLine[:start.Col]
-	tail := endLine[end.Col:]
-
-	// 3. Perform Merging and Deletion
-	mergedLine := append(head, tail...)
-
-	// a) Replace the starting line with the merged content
-	e.buf[start.Row] = mergedLine
-
-	// b) Delete intermediate lines
-	if start.Row < end.Row {
-		e.buf = slices.Delete(e.buf, start.Row+1, end.Row+1)
-	}
-
-	if len(e.buf) == 0 {
-		e.buf = [][]rune{{}}
-	}
-
-	// 4. Update Cursor State
-	e.Pos.Row = start.Row
-	e.Pos.Col = len(head)
-
-	e.ScrollTo(e.Pos.Row)
-	e.Dirty = true
-	if e.onChange != nil {
-		e.onChange()
-	}
 }
 
 type ListView struct {
@@ -1724,173 +711,41 @@ func (l *ListView) OnMouseLeave() { l.hovered = -1 }
 
 func (l *ListView) OnFocus() {}
 func (l *ListView) OnBlur()  {}
+
+// SelectNext moves selection to the next item
+func (l *ListView) SelectNext() {
+	l.Selected = (l.Selected + 1) % len(l.Items)
+}
+
+// SelectPrev moves selection to the previous item
+func (l *ListView) SelectPrev() {
+	l.Selected = (l.Selected - 1 + len(l.Items)) % len(l.Items)
+}
+
+// Activate invokes the action of the currently selected item
+func (l *ListView) Activate() {
+	if len(l.Items) == 0 || l.Selected < 0 {
+		return
+	}
+	if l.Items[l.Selected].Action != nil {
+		l.Items[l.Selected].Action()
+	}
+}
+
 func (l *ListView) HandleKey(ev *tcell.EventKey) bool {
 	consumed := true
 	switch ev.Key() {
 	case tcell.KeyUp, tcell.KeyCtrlP:
-		l.Prev()
+		l.SelectPrev()
 	case tcell.KeyDown, tcell.KeyCtrlN:
-		l.Next()
+		l.SelectNext()
 	case tcell.KeyEnter:
-		l.Act()
+		l.Activate()
 	default:
 		consumed = false
 	}
 	return consumed
 }
-
-func (l *ListView) Next() {
-	l.Selected = (l.Selected + 1) % len(l.Items)
-}
-
-func (l *ListView) Prev() {
-	l.Selected = (l.Selected - 1 + len(l.Items)) % len(l.Items)
-}
-
-func (l *ListView) Act() {
-	if len(l.Items) == 0 {
-		return
-	}
-	if l.Selected < 0 {
-		return
-	}
-	if l.Items[l.Selected].Action == nil {
-		return
-	}
-
-	l.Items[l.Selected].Action()
-}
-
-type TabItem struct {
-	t       *TabView
-	label   string
-	body    Element
-	hovered bool
-}
-
-func (ti *TabItem) OnMouseEnter() {
-	ti.hovered = true
-}
-func (ti *TabItem) OnMouseLeave() {
-	ti.hovered = false
-}
-func (ti *TabItem) OnMouseMove(rx, ry int) {
-}
-
-func (ti *TabItem) OnMouseUp(rx, ry int) {}
-func (ti *TabItem) OnMouseDown(rx, ry int) {
-	for i, item := range ti.t.items {
-		if item == ti {
-			ti.t.SetActive(i)
-			return
-		}
-	}
-}
-
-func (ti *TabItem) MinSize() (int, int) {
-	return runewidth.StringWidth(ti.label), 1
-}
-
-func (ti *TabItem) Layout(x, y, w, h int) *LayoutNode {
-	return &LayoutNode{
-		Element: ti,
-		Rect:    Rect{X: x, Y: y, W: w, H: h},
-	}
-}
-
-// var StyleActiveTab = Style{Underline: true}
-
-func (ti *TabItem) Render(s Screen, rect Rect) {
-	var st Style
-	if ti == ti.t.items[ti.t.active] {
-		st.FontUnderline = true
-	} else if ti.hovered {
-		st.BG = Theme.Hover
-	}
-	DrawString(s, rect.X, rect.Y, rect.W, ti.label, st.Apply())
-}
-
-func (ti *TabItem) FocusTarget() Element {
-	return ti.body
-}
-
-func (ti *TabItem) OnFocus() {}
-func (ti *TabItem) OnBlur()  {}
-
-type TabView struct {
-	items  []*TabItem
-	active int
-}
-
-func NewTabView() *TabView {
-	t := &TabView{}
-	return t
-}
-
-func (t *TabView) Append(label string, e Element) *TabView {
-	t.items = append(t.items, &TabItem{
-		t:     t,
-		label: label,
-		body:  e,
-	})
-	return t
-}
-
-func (t *TabView) SetActive(i int) {
-	if i >= 0 && i < len(t.items) {
-		t.active = i
-	}
-}
-
-func (t *TabView) MinSize() (int, int) {
-	maxW, maxH := 0, 0
-	for _, item := range t.items {
-		w, h := item.body.MinSize()
-		if w > maxW {
-			maxW = w
-		}
-		if h > maxH {
-			maxH = h
-		}
-	}
-	return maxW, maxH + 1 // +1 for tab labels
-}
-
-func (t *TabView) Layout(x, y, w, h int) *LayoutNode {
-	n := &LayoutNode{
-		Element: t,
-		Rect:    Rect{X: x, Y: y, W: w, H: h},
-	}
-
-	hs := HStack().Spacing(1)
-	for i, item := range t.items {
-		hs.Append(item)
-		if i != len(t.items)-1 {
-			hs.Append(Divider())
-		}
-	}
-	n.Children = append(n.Children, hs.Layout(x, y, w, 1))
-
-	if t.active >= 0 && t.active < len(t.items) {
-		node := t.items[t.active].body.Layout(x, y+1, w, h-1)
-		n.Children = append(n.Children, node)
-	}
-	return n
-}
-
-func (t *TabView) Render(s Screen, rect Rect) {
-	// do nothing, children render themselves
-}
-
-func (t *TabView) FocusTarget() Element {
-	if t.active < 0 || t.active >= len(t.items) {
-		return t
-	}
-	return t.items[t.active]
-}
-
-func (t *TabView) OnFocus() {}
-func (t *TabView) OnBlur()  {}
 
 type divider struct {
 	vertical bool
@@ -1930,454 +785,31 @@ func (e Empty) Layout(x, y, w, h int) *LayoutNode {
 }
 func (e Empty) Render(Screen, Rect) {}
 
-// Spacer fills the remaining space between siblings inside an HStack or VStack.
-var Spacer = Grow(Empty{})
-
-// ---------------------------------------------------------------------
-// Containers
-// ---------------------------------------------------------------------
-
-// layoutSpec is a decorator.
-// It can acts like marker, tells the layout algorithm the grow a element.
-// It can acts like wrapper, wraps element and changes it's rendering (padding, border, frame).
-type layoutSpec struct {
-	Element
-	grow                   int // the weight to grow
-	padT, padB, padL, padR int
-	width, height          int // Frame 約束
-	border                 bool
-}
-
-// 實作 MinSize: 包裝容器必須把額外的空間算進去
-func (s layoutSpec) MinSize() (w, h int) {
-	mw, mh := s.Element.MinSize()
-
-	// 加上 Padding
-	mw += s.padL + s.padR
-	mh += s.padT + s.padB
-
-	// 加上 Border 空間 (上下左右各 1)
-	if s.border {
-		mw += 2
-		mh += 2
-	}
-
-	// 如果有 Frame 強制約束
-	if s.width > 0 && mw < s.width {
-		mw = s.width
-	}
-	if s.height > 0 && mh < s.height {
-		mh = s.height
-	}
-
-	return mw, mh
-}
-
-// 實作 Layout: 決定子組件實際拿到的矩形
-func (s layoutSpec) Layout(x, y, w, h int) *LayoutNode {
-	ix, iy, iw, ih := x, y, w, h
-
-	// 1. 處理 Border 縮減
-	if s.border {
-		ix, iy, iw, ih = ix+1, iy+1, iw-2, ih-2
-	}
-
-	// 2. 處理 Padding 縮減
-	ix += s.padL
-	iy += s.padT
-	iw -= (s.padL + s.padR)
-	ih -= (s.padT + s.padB)
-
-	// 3. 處理 Frame 約束 (如果給定的 w/h 超過 Frame，這裡可以做對齊處理，暫時簡化)
-	if s.width > 0 && iw > s.width {
-		iw = s.width
-	}
-	if s.height > 0 && ih > s.height {
-		ih = s.height
-	}
-
-	node := NewLayoutNode(s, x, y, w, h)
-	node.Children = []*LayoutNode{s.Element.Layout(ix, iy, iw, ih)}
-	return node
-}
-
-// 實作 Render: 繪製裝飾（Border）
-func (s layoutSpec) Render(screen Screen, rect Rect) {
-	if s.border {
-		// 這裡實作畫框邏輯，可以使用你的 Theme 顏色
-		drawBorder(screen, rect)
-	}
-	// 這裡不需要處理 Padding 的 Render，因為 Layout 已經把子組件限縮在裡面了
-}
-
-// Add FocusTarget to layoutSpec to enable focus delegation through decorators
-func (s layoutSpec) FocusTarget() Element {
-	return s.Element
-}
-
-func (s layoutSpec) OnFocus() {
-	if f, ok := s.Element.(Focusable); ok {
-		f.OnFocus()
-	}
-}
-
-func (s layoutSpec) OnBlur() {
-	if f, ok := s.Element.(Focusable); ok {
-		f.OnBlur()
-	}
-}
-
-// get or build spec
-func getSpec(e Element) layoutSpec {
-	if s, ok := e.(layoutSpec); ok {
-		return s
-	}
-	return layoutSpec{Element: e}
-}
-
-// --- Functional Options ---
-
-// Pad is a wrapper that adds spaces around the element
-func Pad(e Element, amount int) Element {
-	// Current implementation merges layoutSpec,
-	// does not distint inner/outer padding.
-	// If needed, allow nesting layoutSpec.
-	s := getSpec(e)
-	s.padT, s.padB, s.padL, s.padR = amount, amount, amount, amount
-	return s
-}
-
-func PadH(e Element, amount int) Element {
-	s := getSpec(e)
-	s.padL, s.padR = amount, amount
-	return s
-}
-
-func PadV(e Element, amount int) Element {
-	s := getSpec(e)
-	s.padT, s.padB = amount, amount
-	return s
-}
-
-func Grow(e Element) Element {
-	s := getSpec(e)
-	s.grow = 1
-	return s
-}
-
-func Frame(e Element, w, h int) Element {
-	s := getSpec(e)
-	s.width, s.height = w, h
-	return s
-}
-
-func Border(e Element) Element {
-	s := getSpec(e)
-	s.border = true
-	return s
-}
-
-// vstack is a vertical layout container.
-// Itself does not apply any visual styling like background colors, borders,
-// it is completely transparent and invisible
-type vstack struct {
-	children []Element
-	spacing  int
-}
-
-// VStack arranges children vertically.
-func VStack(children ...Element) *vstack {
-	v := &vstack{children: children}
-	return v
-}
-
-func (v *vstack) MinSize() (int, int) {
-	maxW, totalH := 0, 0
-	for i, child := range v.children {
-		cw, ch := child.MinSize()
-		if cw > maxW {
-			maxW = cw
-		}
-		totalH += ch
-		if i < len(v.children)-1 {
-			totalH += v.spacing
-		}
-	}
-	return maxW, totalH
-}
-
-func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
-	n := NewLayoutNode(v, x, y, w, h)
-	// First pass: measure children
-	totalH := 0
-	totalGrow := 0
-	for _, child := range v.children {
-		if i, ok := child.(layoutSpec); ok && i.grow > 0 {
-			totalGrow += i.grow
-		} else {
-			_, ch := child.MinSize()
-			totalH += ch
-		}
-	}
-
-	// Compute spare space
-	spare := max(h-totalH-v.spacing*(len(v.children)-1), 0)
-	var share float64
-	if totalGrow > 0 {
-		share = float64(spare) / float64(totalGrow)
-	}
-
-	// Second pass: layout children
-	used := 0
-	for i, child := range v.children {
-		if d, ok := child.(*divider); ok {
-			d.vertical = false
-		}
-		_, ch := child.MinSize()
-		if s, ok := child.(layoutSpec); ok && s.grow > 0 {
-			expand := int(math.Ceil(float64(s.grow) * share))
-			if expand > spare {
-				expand = spare
-			}
-			ch = expand
-			spare -= expand
-		}
-		if used+ch > h {
-			ch = h - used
-		}
-		if ch > 0 {
-			childNode := child.Layout(x, y+used, w, ch)
-			n.Children = append(n.Children, childNode)
-		}
-		used += ch
-		if i < len(v.children)-1 {
-			used += v.spacing
-		}
-	}
-	return n
-}
-
-func (v *vstack) Render(s Screen, rect Rect) {
-	// no-op
-}
-
-func (v *vstack) Append(e ...Element) *vstack {
-	v.children = append(v.children, e...)
-	return v
-}
-
-// Spacing sets the spacing (in rows) between child elements.
-func (v *vstack) Spacing(p int) *vstack {
-	v.spacing = p
-	return v
-}
-
-// hstack is a horizontal layout container.
-// Itself does not apply any visual styling like background colors, borders,
-// it is completely transparent and invisible
-type hstack struct {
-	children []Element
-	spacing  int
-}
-
-// HStack arranges children horizontally.
-func HStack(children ...Element) *hstack {
-	h := &hstack{children: children}
-	return h
-}
-
-func (hs *hstack) MinSize() (int, int) {
-	totalW, maxH := 0, 0
-	for i, child := range hs.children {
-		cw, ch := child.MinSize()
-		totalW += cw
-		if ch > maxH {
-			maxH = ch
-		}
-		if i < len(hs.children)-1 {
-			totalW += hs.spacing
-		}
-	}
-	return totalW, maxH
-}
-
-func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
-	n := NewLayoutNode(hs, x, y, w, h)
-	// First pass: measure children
-	totalWidth := 0
-	totalGrow := 0
-	for _, child := range hs.children {
-		if s, ok := child.(layoutSpec); ok && s.grow > 0 {
-			totalGrow += s.grow
-		} else {
-			cw, _ := child.MinSize()
-			totalWidth += cw
-		}
-	}
-
-	// Compute remaining space
-	remain := max(w-totalWidth-hs.spacing*(len(hs.children)-1), 0)
-	var share float64
-	if totalGrow > 0 {
-		share = float64(remain) / float64(totalGrow)
-	}
-
-	// Second pass: layout children
-	used := 0
-	for i, child := range hs.children {
-		if div, ok := child.(*divider); ok {
-			div.vertical = true
-		}
-		cw, _ := child.MinSize()
-		if s, ok := child.(layoutSpec); ok && s.grow > 0 {
-			expand := min(int(math.Ceil(float64(s.grow)*share)), remain)
-			cw = expand
-			remain -= expand
-		}
-		if used+cw > w {
-			cw = w - used
-		}
-		if cw > 0 {
-			childNode := child.Layout(x+used, y, cw, h)
-			n.Children = append(n.Children, childNode)
-		}
-		used += cw
-		if i < len(hs.children)-1 {
-			used += hs.spacing
-		}
-	}
-	return n
-}
-
-func (hs *hstack) Render(s Screen, rect Rect) {
-	// no-op
-}
-
-func (hs *hstack) Append(e ...Element) *hstack {
-	hs.children = append(hs.children, e...)
-	return hs
-}
-
-// Spacing sets the spacing (in columns) between child elements.
-func (hs *hstack) Spacing(p int) *hstack { hs.spacing = p; return hs }
-
-// Box Drawing charaters
-const (
-	hLine = '─'
-	vLine = '│'
-	// cornerTopLeft, cornerTopRight = '╭', '╮'
-	// cornerBotLeft, cornerBotRight = '╰', '╯'
-	cornerTopLeft, cornerTopRight = '┌', '┐'
-	cornerBotLeft, cornerBotRight = '└', '┘'
-)
-
-func drawBorder(s Screen, rect Rect) {
-	// Too small to draw a border
-	if rect.W < 2 || rect.H < 2 {
-		return
-	}
-
-	st := Style{FG: Theme.Border}.Apply()
-	// Top and bottom borders
-	for i := range rect.W {
-		s.SetContent(rect.X+i, rect.Y, hLine, nil, st)
-		s.SetContent(rect.X+i, rect.Y+rect.H-1, hLine, nil, st)
-	}
-	// Left and right borders
-	for i := range rect.H {
-		s.SetContent(rect.X, rect.Y+i, vLine, nil, st)
-		s.SetContent(rect.X+rect.W-1, rect.Y+i, vLine, nil, st)
-	}
-	// Corners
-	s.SetContent(rect.X, rect.Y, cornerTopLeft, nil, st)
-	s.SetContent(rect.X+rect.W-1, rect.Y, cornerTopRight, nil, st)
-	s.SetContent(rect.X, rect.Y+rect.H-1, cornerBotLeft, nil, st)
-	s.SetContent(rect.X+rect.W-1, rect.Y+rect.H-1, cornerBotRight, nil, st)
-}
-
-// ResetRect resets the content of the given rectangle to the specified style.
-func ResetRect(s Screen, rect Rect, style Style) {
-	st := style.Apply()
-	for x := rect.X; x < rect.X+rect.W; x++ {
-		for y := rect.Y; y < rect.Y+rect.H; y++ {
-			// when debugging, printing '.' would be better
-			s.SetContent(x, y, ' ', nil, st)
-		}
-	}
-}
-
-// overlay is an container that appears over the main UI.
-type overlay struct {
-	child     Element
-	align     string
-	prevFocus Element
-}
-
-func (o *overlay) MinSize() (int, int) {
-	return o.child.MinSize()
-}
-
-func (o *overlay) Layout(x, y, w, h int) *LayoutNode {
-	mw, mh := o.child.MinSize()
-	switch o.align {
-	case "top":
-		x = x + (w-mw)/2
-		// y = y + 1
-	case "center":
-		fallthrough
-	default:
-		x = x + (w-mw)/2
-		y = y + (h-mh)/2
-	}
-
-	node := NewLayoutNode(o, x, y, mw, mh)
-	node.Children = []*LayoutNode{o.child.Layout(x, y, mw, mh)}
-	return node
-}
-
-func (o *overlay) Render(s Screen, rect Rect) {
-	ResetRect(s, rect, Style{})
-}
-
 // ---------------------------------------------------------------------
 // APP RUNNER
 // ---------------------------------------------------------------------
 
 type App struct {
 	screen  Screen
-	Root    Element // root element to render
+	root    Element // root element of the UI hierarchy to be rendered
 	focused Element
-	// focusID map[string]Element
-	hover Element
-	tree  *LayoutNode // reflects the view hierarchy after last render
-	done  chan struct{}
+	hover   Element
+	tree    *LayoutNode // reflects the view hierarchy after last render
+	done    chan struct{}
 
 	clickPoint Point
 	bindings   map[string]func()
 	overlay    *overlay // for temporary display
 }
 
-var app *App
-
-func Default() *App {
-	if app == nil {
-		app = NewApp(Empty{})
-	}
-	return app
-}
-
 func NewApp(root Element) *App {
 	a := &App{
-		Root:     root,
+		root:     root,
 		done:     make(chan struct{}),
 		bindings: make(map[string]func()),
 	}
-	a.bindings["Ctrl+C"] = a.Close
+	a.bindings["Ctrl+C"] = a.Stop
 	return a
-}
-
-func (a *App) Screen() Screen {
-	return a.screen
 }
 
 func drawTree(node *LayoutNode, s Screen) {
@@ -2394,7 +826,7 @@ func drawTree(node *LayoutNode, s Screen) {
 // Render builds the layout tree then render it to the screen.
 func (a *App) Render() {
 	w, h := a.screen.Size()
-	a.tree = a.Root.Layout(0, 0, w, h)
+	a.tree = a.root.Layout(0, 0, w, h)
 	if o := a.overlay; o != nil {
 		node := o.Layout(0, 0, w, h)
 		a.tree.Children = append(a.tree.Children, node)
@@ -2437,34 +869,7 @@ func hitTest(n *LayoutNode, p Point) (Element, Point) {
 	}
 }
 
-// SetFocusID marks the given element with a string identifier for later focus.
-// func (a *App) SetFocusID(s string, e Element) {
-// 	if a.focusID == nil {
-// 		a.focusID = make(map[string]Element)
-// 	}
-// 	a.focusID[s] = e
-// }
-
-// Focus sets focus to the element identified by the given string.
-// It is intended to be used with MarkFocus, to decouple elements.
-//
-//	func (a *App) FocusID(s string) {
-//		if s == "" {
-//			return
-//		}
-//		e, ok := a.focusID[s]
-//		if !ok {
-//			log.Printf("focus id %q not found", s)
-//			return
-//		}
-//		a.Focus(e)
-//	}
-
-func (a *App) Focused() Element {
-	return a.focused
-}
-
-func (a *App) Focus(e Element) {
+func (a *App) SetFocus(e Element) {
 	defer func(prev Element) {
 		log.Printf("Focus changed: %T -> %T", prev, a.focused)
 	}(a.focused)
@@ -2532,7 +937,7 @@ func (a *App) resolveFocus(e Element) Element {
 		}
 		visited[e] = true
 
-		f, ok := e.(FocusDelegate)
+		f, ok := e.(FocusDelegator)
 		if !ok {
 			return e
 		}
@@ -2544,17 +949,14 @@ func (a *App) resolveFocus(e Element) Element {
 	}
 }
 
-// Post requests a redraw.
-func (a *App) Post() {
+// Refresh requests a redraw of the UI
+func (a *App) Refresh() {
 	// sends an empty event, wakes screen.PollEvent()
 	a.screen.PostEvent(tcell.NewEventInterrupt(nil))
 }
 
-// Serve starts the main event loop.
-func (a *App) Serve(root Element) error {
-	if root != nil {
-		a.Root = root
-	}
+// Run starts the main event loop
+func (a *App) Run() error {
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return err
@@ -2641,7 +1043,7 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 
 	switch ev.Buttons() {
 	case tcell.ButtonPrimary:
-		a.Focus(hit)
+		a.SetFocus(hit)
 		a.clickPoint = Point{X: x, Y: y}
 		// mouse down
 		if i, ok := hit.(Clickable); ok {
@@ -2681,7 +1083,7 @@ func (a *App) updateHover(e Element, lx, ly int) {
 	}
 }
 
-func (a *App) Close() {
+func (a *App) Stop() {
 	close(a.done)
 }
 
@@ -2694,247 +1096,13 @@ func (a *App) Overlay(e Element, align string) {
 	if a.focused != nil {
 		a.overlay.prevFocus = a.focused
 	}
-	a.Focus(e)
+	a.SetFocus(e)
 }
 
 // CloseOverlay removes the overlay element
 func (a *App) CloseOverlay() {
 	if a.overlay != nil {
-		a.Focus(a.overlay.prevFocus)
+		a.SetFocus(a.overlay.prevFocus)
 	}
 	a.overlay = nil
-}
-
-var Theme ColorTheme
-
-func init() {
-	Theme = NewMarianaTheme()
-}
-
-type ColorTheme struct {
-	Foreground string
-	Background string
-	Cursor     string
-	Border     string
-	Hover      string
-	Selection  string
-	Syntax     SyntaxColor
-}
-
-type SyntaxColor struct {
-	Keyword      Style
-	String       Style
-	Comment      Style
-	Number       Style
-	FunctionName Style
-	FunctionCall Style
-}
-
-func NewBreakersTheme() ColorTheme {
-	return ColorTheme{
-		Foreground: "#333333", // grey3
-		Background: "#fbffff", // white5 (extremely light cyan-white)
-		Cursor:     "#5fb3b3", // blue2 (caret)
-		Border:     "#d9e0e4", // white2 (selection_border)
-		Hover:      "#dae0e2", // white3
-		Selection:  "#dae0e2", // white3 (line_highlight / selection)
-		Syntax: SyntaxColor{
-			Keyword: Style{
-				FG:         "#c594c5", // pink
-				FontItalic: true,      // storage.type italic
-			},
-			String: Style{
-				FG: "#89bd82", // green
-			},
-			Comment: Style{
-				FG: "#999999", // grey2
-			},
-			Number: Style{
-				FG: "#fac863", // orange
-			},
-			FunctionName: Style{
-				FG: "#5fb3b3", // blue2 (entity.name.function)
-			},
-			FunctionCall: Style{
-				FG: "#6699cc", // blue (variable.function)
-			},
-		},
-	}
-}
-
-func NewMarianaTheme() ColorTheme {
-	return ColorTheme{
-		Foreground: "#d8dee9", // white3
-		Background: "#303841", // blue3
-		Cursor:     "#fac863", // orange
-		Border:     "#65737e", // blue4 (selection_border)
-		Hover:      "#4e5a65",
-		Selection:  "#4e5a65", // blue2 (alpha handled by terminal blending)
-		Syntax: SyntaxColor{
-			Keyword: Style{
-				FG:         "#c594c5", // pink
-				FontItalic: true,
-			},
-			String: Style{
-				FG: "#99c794", // green
-			},
-			Comment: Style{
-				FG: "#a7adba", // blue6
-			},
-			Number: Style{
-				FG: "#fac863", // orange
-			},
-			FunctionName: Style{
-				FG: "#5fb3b3", // blue5 (entity.name.function)
-			},
-			FunctionCall: Style{
-				FG: "#6699cc", // blue (variable.function)
-			},
-		},
-	}
-}
-
-const (
-	stateDefault = iota
-	stateInString
-	stateInRawString
-	stateInComment
-)
-
-type StyleSpan struct {
-	Start int
-	End   int // exclusive
-	Style Style
-}
-
-func highlightGo(line []rune) []StyleSpan {
-	var spans []StyleSpan
-	state := stateDefault
-	start := 0
-
-	for i := 0; i < len(line); {
-		r := line[i]
-		switch state {
-		case stateDefault:
-			switch r {
-			case '"':
-				state = stateInString
-				start = i
-			case '`':
-				state = stateInRawString
-				start = i
-			case '/':
-				if i+1 < len(line) && line[i+1] == '/' {
-					state = stateInComment
-					start = i
-				}
-			default:
-				if isAlphaNumeric(r) {
-					j := i + 1
-					// Extract word
-					for j < len(line) && isAlphaNumeric(line[j]) {
-						j++
-					}
-					word := string(line[i:j])
-
-					if token.IsKeyword(word) {
-						spans = append(spans, StyleSpan{
-							Start: i,
-							End:   j,
-							Style: Theme.Syntax.Keyword,
-						})
-						i = j // skip over the keyword in the loop
-						continue
-					}
-
-					// function
-					if j < len(line) && line[j] == '(' {
-						if i-5 >= 0 && string(line[i-5:i]) == "func " {
-							spans = append(spans, StyleSpan{
-								Start: i,
-								End:   j,
-								Style: Theme.Syntax.FunctionName,
-							})
-						} else {
-							spans = append(spans, StyleSpan{
-								Start: i,
-								End:   j,
-								Style: Theme.Syntax.FunctionCall,
-							})
-						}
-						i = j
-						continue
-					}
-
-					isNumber := true
-					for _, c := range word {
-						if !unicode.IsDigit(c) {
-							isNumber = false
-							break
-						}
-					}
-					if isNumber {
-						spans = append(spans, StyleSpan{
-							Start: i,
-							End:   j,
-							Style: Theme.Syntax.Number,
-						})
-						i = j
-						continue
-					}
-
-					i = j // skip over the keyword in the loop
-					continue
-				}
-			}
-
-		case stateInString:
-			if r == '"' {
-				spans = append(spans, StyleSpan{
-					Start: start,
-					End:   i + 1,
-					Style: Theme.Syntax.String,
-				})
-				state = stateDefault
-			}
-		case stateInRawString:
-			if r == '`' {
-				spans = append(spans, StyleSpan{
-					Start: start,
-					End:   i + 1,
-					Style: Theme.Syntax.String,
-				})
-				state = stateDefault
-			}
-		case stateInComment:
-			spans = append(spans, StyleSpan{
-				Start: start,
-				End:   len(line),
-				Style: Theme.Syntax.Comment,
-			})
-			i = len(line)
-			continue
-		}
-		i++
-	}
-
-	return spans
-}
-
-// isAlphaNumeric 檢查字元是否為字母、數字或底線
-func isAlphaNumeric(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
-}
-
-func expandStyles(spans []StyleSpan, base Style, n int) []Style {
-	styles := make([]Style, n)
-	for i := range styles {
-		styles[i] = base
-	}
-	for _, sp := range spans {
-		for i := sp.Start; i < sp.End && i < n; i++ {
-			styles[i] = styles[i].Merge(sp.Style)
-		}
-	}
-	return styles
 }

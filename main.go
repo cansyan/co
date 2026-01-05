@@ -21,6 +21,7 @@ import (
 )
 
 var light = flag.Bool("light", false, "use light color theme")
+var app *ui.App
 
 func main() {
 	flag.Parse()
@@ -36,97 +37,29 @@ func main() {
 	defer f.Close()
 	log.SetOutput(f)
 
-	root := newRoot()
+	editorApp := newEditorApp()
 	if path := flag.Arg(0); path != "" {
-		err := root.openFile(path)
+		err := editorApp.openFile(path)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return
 		}
 	} else {
-		root.newTab("untitled")
+		editorApp.newTab("untitled")
 	}
 
-	app := ui.Default()
-	app.Focus(root)
-	app.BindKey("Ctrl+Q", app.Close)
-	app.BindKey("Ctrl+S", root.saveFile)
-	app.BindKey("Ctrl+W", func() {
-		root.closeTab(root.active)
-	})
-	app.BindKey("Ctrl+T", func() {
-		root.newTab("untitled")
-		ui.Default().Focus(root)
-	})
-	app.BindKey("Ctrl+F", func() {
-		root.showSearch = true
-		// 重置狀態，確保切換文件或重新開啟時會重新掃描
-		sb := root.searchBar
-		sb.matches = nil
-		sb.activeIndex = -1
-		query := sb.input.String()
-		if e := root.getEditor(); e != nil {
-			if s := e.SelectedText(); s != "" {
-				query = s
-				sb.input.SetText(s)
-			}
-		}
-		sb.input.Select(0, len([]rune(query)))
-		ui.Default().Focus(sb)
-	})
-
-	// command palette
-	app.BindKey("Ctrl+K", func() {
-		root.activateLeader()
-	})
-	app.BindKey("Ctrl+P", func() {
-		if root.leaderKeyActive {
-			root.leaderKeyActive = false
-			if root.leaderTimer != nil {
-				root.leaderTimer.Stop()
-			}
-			root.showPalette(">") // Ctrl+K Ctrl+P 進入指令模式
-		} else {
-			root.showPalette("") // 預設模式：檔案搜尋
-		}
-	})
-	app.BindKey("Ctrl+R", func() { root.showPalette("@") }) // go to symbol
-	app.BindKey("ctrl+o", func() {
-		e := ui.NewTextInput()
-		e.SetPlaceholder("Open file path: ")
-		e.OnCommit(func() {
-			if e.String() != "" {
-				err := root.openFile(e.String())
-				if err != nil {
-					log.Print(err)
-					root.setStatus(err.Error(), 3)
-				}
-			}
-			ui.Default().Focus(root)
-		})
-		view := ui.Border(ui.Frame(e, 60, 1))
-		ui.Default().Overlay(view, "top")
-	})
-	app.BindKey("Esc", func() {
-		if root.showSearch {
-			root.showSearch = false
-			ui.Default().Focus(root)
-			return
-		}
-
-		app.CloseOverlay()
-	})
-
-	if err := app.Serve(root); err != nil {
+	app = ui.NewApp(editorApp)
+	app.SetFocus(editorApp)
+	app.BindKey("Ctrl+Q", app.Stop)
+	if err := app.Run(); err != nil {
 		log.Print(err)
 		return
 	}
 }
 
-var _ ui.Focusable = (*root)(nil)
+var _ ui.Focusable = (*EditorApp)(nil)
 
-// root implements ui.Element
-type root struct {
+type EditorApp struct {
 	tabs    []*tab
 	active  int
 	btnNew  *ui.Button
@@ -142,33 +75,33 @@ type root struct {
 	leaderTimer     *time.Timer
 }
 
-func newRoot() *root {
-	r := &root{}
+func newEditorApp() *EditorApp {
+	r := &EditorApp{}
 	r.btnNew = ui.NewButton("New", func() {
 		r.newTab("untitled")
-		ui.Default().Focus(r)
-	}).NoFeedback()
-	r.btnSave = ui.NewButton("Save", r.saveFile).NoFeedback()
-	r.btnQuit = ui.NewButton("Quit", ui.Default().Close).NoFeedback()
+		app.SetFocus(r)
+	}).DisableFeedback()
+	r.btnSave = ui.NewButton("Save", r.saveFile).DisableFeedback()
+	r.btnQuit = ui.NewButton("Quit", app.Stop).DisableFeedback()
 	r.searchBar = NewSearchBar(r)
 	return r
 }
 
-func (r *root) newTab(label string) {
-	r.tabs = append(r.tabs, newTab(r, label))
-	r.active = len(r.tabs) - 1
+func (a *EditorApp) newTab(label string) {
+	a.tabs = append(a.tabs, newTab(a, label))
+	a.active = len(a.tabs) - 1
 }
 
 // closeTab closes the tab at index i, prompting to save if there are unsaved changes.
-func (r *root) closeTab(i int) {
-	if i < 0 || i >= len(r.tabs) {
+func (a *EditorApp) closeTab(i int) {
+	if i < 0 || i >= len(a.tabs) {
 		return
 	}
-	tab := r.tabs[i]
+	tab := a.tabs[i]
 	editor := tab.body
 	if !editor.Dirty {
-		r.deleteTab(i)
-		ui.Default().Focus(r)
+		a.deleteTab(i)
+		a.requestFocus()
 		return
 	}
 
@@ -177,24 +110,24 @@ func (r *root) closeTab(i int) {
 		ui.PadH(ui.NewText("Save the changes before closing?"), 1),
 		ui.PadH(ui.HStack(
 			ui.NewButton("Don't Save", func() {
-				r.deleteTab(i)
-				ui.Default().CloseOverlay()
-				ui.Default().Focus(r)
+				a.deleteTab(i)
+				app.CloseOverlay()
+				a.requestFocus()
 			}),
 
 			ui.PadH(ui.NewButton("Cancel", func() {
-				ui.Default().CloseOverlay()
+				app.CloseOverlay()
 			}), 2),
 
 			ui.NewButton("Save", func() {
 				if path := tab.label; path != "untitled" {
-					if err := r.writeFile(path, editor); err != nil {
+					if err := a.writeFile(path, editor); err != nil {
 						log.Print(err)
-						r.setStatus(err.Error(), 5*time.Second)
+						a.setStatus(err.Error(), 5*time.Second)
 						return
 					}
-					r.deleteTab(i)
-					ui.Default().CloseOverlay()
+					a.deleteTab(i)
+					app.CloseOverlay()
 					return
 				}
 
@@ -202,40 +135,40 @@ func (r *root) closeTab(i int) {
 					if path == "" {
 						return
 					}
-					if err := r.writeFile(path, editor); err != nil {
+					if err := a.writeFile(path, editor); err != nil {
 						log.Print(err)
-						r.setStatus(err.Error(), 5*time.Second)
+						a.setStatus(err.Error(), 5*time.Second)
 						return
 					}
-					r.deleteTab(i)
+					a.deleteTab(i)
 				})
-				ui.Default().Overlay(sa, "center")
-			}).Background(ui.Theme.Selection),
+				app.Overlay(sa, "center")
+			}).SetBackground(ui.Theme.Selection),
 		), 2),
 	).Spacing(1))
-	ui.Default().Overlay(view, "top")
+	app.Overlay(view, "top")
 }
 
-func (r *root) deleteTab(i int) {
-	if i < 0 || i >= len(r.tabs) {
+func (a *EditorApp) deleteTab(i int) {
+	if i < 0 || i >= len(a.tabs) {
 		return
 	}
 
-	r.tabs = slices.Delete(r.tabs, i, i+1)
-	if i < r.active {
-		r.active--
-	} else if i == r.active {
-		r.active = max(0, len(r.tabs)-1)
+	a.tabs = slices.Delete(a.tabs, i, i+1)
+	if i < a.active {
+		a.active--
+	} else if i == a.active {
+		a.active = max(0, len(a.tabs)-1)
 	}
 
-	if len(r.tabs) == 0 {
-		ui.Default().Close()
+	if len(a.tabs) == 0 {
+		app.Stop()
 	}
 }
 
-func (r *root) MinSize() (int, int) {
+func (a *EditorApp) MinSize() (int, int) {
 	var maxW, maxH int
-	for _, t := range r.tabs {
+	for _, t := range a.tabs {
 		w, h := t.body.MinSize()
 		if w > maxW {
 			maxW = w
@@ -247,35 +180,35 @@ func (r *root) MinSize() (int, int) {
 	return maxW, maxH + 1 // +1 for tab label
 }
 
-func (r *root) Layout(x, y, w, h int) *ui.LayoutNode {
+func (a *EditorApp) Layout(x, y, w, h int) *ui.LayoutNode {
 	tabLabels := ui.HStack()
-	for i, tab := range r.tabs {
+	for i, tab := range a.tabs {
 		tabLabels.Append(tab)
-		if i != len(r.tabs)-1 {
+		if i != len(a.tabs)-1 {
 			tabLabels.Append(ui.Divider())
 		}
 	}
 
 	mainStack := ui.VStack()
 	mainStack.Append(
-		ui.HStack(ui.Grow(tabLabels), r.btnNew, r.btnSave, r.btnQuit),
+		ui.HStack(ui.Grow(tabLabels), a.btnNew, a.btnSave, a.btnQuit),
 	)
-	if len(r.tabs) > 0 {
-		mainStack.Append(ui.Grow(r.tabs[r.active].body))
+	if len(a.tabs) > 0 {
+		mainStack.Append(ui.Grow(a.tabs[a.active].body))
 	}
-	if r.showSearch {
-		mainStack.Append(ui.Divider(), r.searchBar)
+	if a.showSearch {
+		mainStack.Append(ui.Divider(), a.searchBar)
 	}
 
 	statusBar := ui.HStack()
-	if e := r.getEditor(); e != nil {
+	if e := a.getEditor(); e != nil {
 		posInfo := fmt.Sprintf("Line %d, Column %d", e.Pos.Row+1, e.Pos.Col+1)
 		statusBar.Append(ui.NewText(posInfo))
 	}
-	if r.status != "" {
-		statusBar.Append(ui.Spacer, ui.NewText(r.status))
+	if a.status != "" {
+		statusBar.Append(ui.Spacer, ui.NewText(a.status))
 	}
-	if r.leaderKeyActive {
+	if a.leaderKeyActive {
 		statusBar.Append(ui.Spacer, ui.NewText("Wait for key..."))
 	}
 
@@ -284,54 +217,132 @@ func (r *root) Layout(x, y, w, h int) *ui.LayoutNode {
 		ui.PadH(statusBar, 1),
 	)
 
-	n := ui.NewLayoutNode(r, x, y, w, h)
+	n := ui.NewLayoutNode(a, x, y, w, h)
 	n.Children = []*ui.LayoutNode{mainStack.Layout(x, y, w, h)}
 	return n
 }
 
 // setStatus sets the status text and clears it after a delay.
-func (r *root) setStatus(msg string, delay time.Duration) {
-	r.status = msg
+func (a *EditorApp) setStatus(msg string, delay time.Duration) {
+	a.status = msg
 	time.AfterFunc(delay, func() {
 		// Only clear if the current message is still the one we set.
 		// (Avoid clearing a newer, different message).
-		if r.status == msg {
-			r.status = ""
-			ui.Default().Post()
+		if a.status == msg {
+			a.status = ""
+			app.Refresh()
 		}
 	})
 }
 
-func (r *root) Render(ui.Screen, ui.Rect) {
+func (a *EditorApp) Render(ui.Screen, ui.Rect) {
 	// no-op
 }
 
-func (r *root) FocusTarget() ui.Element {
-	if len(r.tabs) == 0 {
-		return r
-	}
-	return r.tabs[r.active].body
+// a convenient method to request focus back to the app.
+func (a *EditorApp) requestFocus() {
+	app.SetFocus(a)
 }
 
-func (r *root) OnFocus()                          {}
-func (r *root) OnBlur()                           {}
-func (r *root) HandleKey(ev *tcell.EventKey) bool { return false }
-func (r *root) getEditor() *Editor {
-	if len(r.tabs) == 0 {
+// delegates focus to the active tab's editor.
+func (a *EditorApp) FocusTarget() ui.Element {
+	if len(a.tabs) == 0 {
+		return a
+	}
+	return a.tabs[a.active].body
+}
+
+func (a *EditorApp) OnFocus() {}
+func (a *EditorApp) OnBlur()  {}
+
+// handles app-level commands
+func (a *EditorApp) handleGlobalKey(ev *tcell.EventKey) bool {
+	switch strings.ToLower(ev.Name()) {
+	case "ctrl+s":
+		a.saveFile()
+		return true
+	case "ctrl+w":
+		a.closeTab(a.active)
+		return true
+	case "ctrl+f":
+		a.showSearch = true
+		sb := a.searchBar
+		sb.matches = nil
+		sb.activeIndex = -1
+		query := sb.input.Text()
+		if e := a.getEditor(); e != nil {
+			if s := e.SelectedText(); s != "" {
+				query = s
+				sb.input.SetText(s)
+			}
+		}
+		sb.input.Select(0, len([]rune(query)))
+		app.SetFocus(sb)
+		return true
+	case "ctrl+k":
+		a.activateLeader()
+		return true
+	case "ctrl+p":
+		if a.leaderKeyActive {
+			a.leaderKeyActive = false
+			if a.leaderTimer != nil {
+				a.leaderTimer.Stop()
+			}
+			a.showPalette(">") // Ctrl+K Ctrl+P command mode
+		} else {
+			a.showPalette("") // default file search mode
+		}
+		return true
+	case "ctrl+r":
+		a.showPalette("@")
+		return true
+	case "ctrl+o":
+		e := ui.NewTextInput()
+		e.SetPlaceholder("Open file path: ")
+		e.OnCommit(func() {
+			if e.Text() != "" {
+				if err := a.openFile(e.Text()); err != nil {
+					log.Print(err)
+					a.setStatus(err.Error(), 3*time.Second)
+				}
+			}
+			a.requestFocus()
+		})
+		view := ui.Border(ui.Frame(e, 60, 1))
+		app.Overlay(view, "top")
+		return true
+	case "ctrl+t":
+		a.newTab("untitled")
+		a.requestFocus()
+		return true
+	case "esc":
+		if a.showSearch {
+			a.showSearch = false
+			a.requestFocus()
+			return true
+		}
+		app.CloseOverlay()
+		return true
+	}
+	return false
+}
+
+func (a *EditorApp) getEditor() *Editor {
+	if len(a.tabs) == 0 {
 		return nil
 	}
-	return r.tabs[r.active].body
+	return a.tabs[a.active].body
 }
-func (r *root) showPalette(prefix string) {
+func (a *EditorApp) showPalette(prefix string) {
 	p := NewPalette()
 	p.input.OnChange(func() {
-		text := p.input.String()
+		text := p.input.Text()
 		p.list.Clear()
 		p.list.Selected = 0
 
 		switch {
 		case strings.HasPrefix(text, ":"):
-			editor := r.getEditor()
+			editor := a.getEditor()
 			if editor == nil {
 				return
 			}
@@ -347,7 +358,7 @@ func (r *root) showPalette(prefix string) {
 			p.list.Append(fmt.Sprintf("Go to Line %d", line), func() {
 				editor.SetCursor(line-1, 0)
 				editor.CenterRow(line - 1)
-				ui.Default().Focus(r)
+				a.requestFocus()
 			})
 
 		case strings.HasPrefix(text, "@"):
@@ -357,7 +368,7 @@ func (r *root) showPalette(prefix string) {
 			words := strings.FieldsFunc(query, func(r rune) bool {
 				return r == ' ' || r == '.'
 			})
-			editor := r.getEditor()
+			editor := a.getEditor()
 			if editor == nil {
 				return
 			}
@@ -378,25 +389,25 @@ func (r *root) showPalette(prefix string) {
 					p.list.Append(s.Signature, func() {
 						editor.SetCursor(s.Line, 0)
 						editor.CenterRow(s.Line)
-						ui.Default().Focus(r)
+						a.requestFocus()
 					})
 				}
 			}
 
 		case strings.HasPrefix(text, ">"):
 			// 3. Command Mode
-			r.fillCommandMode(p, text[1:])
+			a.fillCommandMode(p, text[1:])
 		default:
 			// 4. File Search Mode (Default)
-			r.fillFileSearchMode(p, text)
+			a.fillFileSearchMode(p, text)
 		}
 	})
 
 	p.input.SetText(prefix)
-	ui.Default().Overlay(p, "top")
+	app.Overlay(p, "top")
 }
 
-func (r *root) fillCommandMode(p *Palette, query string) {
+func (a *EditorApp) fillCommandMode(p *Palette, query string) {
 	words := strings.Fields(query)
 	commands := []struct {
 		name   string
@@ -405,13 +416,13 @@ func (r *root) fillCommandMode(p *Palette, query string) {
 		{"Color Theme: Breaks", func() { ui.Theme = ui.NewBreakersTheme() }},
 		{"Color Theme: Mariana", func() { ui.Theme = ui.NewMarianaTheme() }},
 		{"Goto Definition", func() {
-			if e := r.getEditor(); e != nil {
+			if e := a.getEditor(); e != nil {
 				e.gotoDefinition()
 			}
 		}},
-		{"Goto Symbol", func() { r.showPalette("@") }},
-		{"New File", func() { r.newTab("untitled"); ui.Default().Focus(r) }},
-		{"Quit", ui.Default().Close},
+		{"Goto Symbol", func() { a.showPalette("@") }},
+		{"New File", func() { a.newTab("untitled"); a.requestFocus() }},
+		{"Quit", app.Stop},
 	}
 	for _, cmd := range commands {
 		ok := true
@@ -427,20 +438,20 @@ func (r *root) fillCommandMode(p *Palette, query string) {
 		if ok {
 			p.list.Append(cmd.name, func() {
 				cmd.action()
-				ui.Default().Focus(r)
+				a.requestFocus()
 			})
 		}
 	}
 }
 
-func (r *root) fillFileSearchMode(p *Palette, query string) {
+func (a *EditorApp) fillFileSearchMode(p *Palette, query string) {
 	query = strings.ToLower(query)
 	filter := make(map[string]bool)
-	for i, t := range r.tabs {
+	for i, t := range a.tabs {
 		if query == "" || strings.Contains(strings.ToLower(t.label), query) {
 			p.list.Append(t.label, func() {
-				r.active = i
-				ui.Default().Focus(r)
+				a.active = i
+				a.requestFocus()
 			})
 			filter[t.label] = true
 			if len(p.list.Items) >= 10 {
@@ -459,8 +470,8 @@ func (r *root) fillFileSearchMode(p *Palette, query string) {
 			continue
 		}
 		p.list.Append(name, func() {
-			r.openFile(name)
-			ui.Default().Focus(r)
+			a.openFile(name)
+			a.requestFocus()
 		})
 		if len(p.list.Items) >= 10 {
 			return
@@ -468,11 +479,11 @@ func (r *root) fillFileSearchMode(p *Palette, query string) {
 	}
 }
 
-func (r *root) openFile(name string) error {
+func (a *EditorApp) openFile(name string) error {
 	// tab existed, just switch
-	for i, tab := range r.tabs {
+	for i, tab := range a.tabs {
 		if tab.label == filepath.Base(name) {
-			r.active = i
+			a.active = i
 			return nil
 		}
 	}
@@ -482,30 +493,30 @@ func (r *root) openFile(name string) error {
 		return err
 	}
 
-	r.newTab(filepath.Base(name))
-	r.getEditor().SetText(string(bs))
+	a.newTab(filepath.Base(name))
+	a.getEditor().SetText(string(bs))
 	return nil
 }
 
-func (r *root) saveFile() {
-	if len(r.tabs) == 0 {
+func (a *EditorApp) saveFile() {
+	if len(a.tabs) == 0 {
 		return
 	}
-	tab := r.tabs[r.active]
+	tab := a.tabs[a.active]
 	editor := tab.body
 	if !editor.Dirty {
-		ui.Default().Focus(r)
+		a.requestFocus()
 		return
 	}
 
 	if path := tab.label; path != "untitled" {
-		if err := r.writeFile(path, editor); err != nil {
+		if err := a.writeFile(path, editor); err != nil {
 			log.Print(err)
-			r.setStatus(err.Error(), 5*time.Second)
+			a.setStatus(err.Error(), 5*time.Second)
 			return
 		}
-		r.setStatus("Saved "+path, 2*time.Second)
-		ui.Default().Focus(r)
+		a.setStatus("Saved "+path, 2*time.Second)
+		a.requestFocus()
 		return
 	}
 
@@ -513,18 +524,18 @@ func (r *root) saveFile() {
 		if path == "" {
 			return
 		}
-		if err := r.writeFile(path, editor); err != nil {
+		if err := a.writeFile(path, editor); err != nil {
 			log.Print(err)
-			r.setStatus(err.Error(), 5*time.Second)
+			a.setStatus(err.Error(), 5*time.Second)
 			return
 		}
 		tab.label = path
-		ui.Default().Focus(r)
+		a.requestFocus()
 	})
-	ui.Default().Overlay(sa, "center")
+	app.Overlay(sa, "center")
 }
 
-func (r *root) writeFile(path string, e *Editor) error {
+func (a *EditorApp) writeFile(path string, e *Editor) error {
 	bs := []byte(e.String())
 
 	// Only format if it's a Go file
@@ -538,7 +549,7 @@ func (r *root) writeFile(path string, e *Editor) error {
 		} else {
 			// If formatting fails (e.g., syntax error), we still save
 			// but notify the user via status bar.
-			r.setStatus(fmt.Sprintf("Format error: %v", err), 5*time.Second)
+			a.setStatus(fmt.Sprintf("Format error: %v", err), 5*time.Second)
 		}
 	}
 
@@ -552,7 +563,7 @@ func (r *root) writeFile(path string, e *Editor) error {
 }
 
 type tab struct {
-	root     *root
+	a        *EditorApp
 	label    string
 	btnClose *ui.Button
 	body     *Editor
@@ -560,15 +571,15 @@ type tab struct {
 	style    ui.Style
 }
 
-func newTab(root *root, label string) *tab {
+func newTab(root *EditorApp, label string) *tab {
 	t := &tab{
-		root:  root,
+		a:     root,
 		label: label,
 	}
 	t.btnClose = ui.NewButton("x", func() {
 		for i, tab := range root.tabs {
 			if tab == t {
-				t.root.closeTab(i)
+				t.a.closeTab(i)
 				return
 			}
 		}
@@ -596,7 +607,7 @@ func (t *tab) Layout(x, y, w, h int) *ui.LayoutNode {
 }
 func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 	var st ui.Style
-	if t == t.root.tabs[t.root.active] {
+	if t == t.a.tabs[t.a.active] {
 		st.FontUnderline = true
 		st = t.style.Merge(st)
 	} else if t.hovered {
@@ -618,10 +629,10 @@ func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 
 func (t *tab) OnMouseDown(lx, ly int) {
 	// like Sublime Text, instant react on clicking tab, not waiting the mouse up
-	for i, tab := range t.root.tabs {
+	for i, tab := range t.a.tabs {
 		if tab == t {
-			t.root.active = i
-			ui.Default().Focus(t.root)
+			t.a.active = i
+			app.SetFocus(t.a)
 		}
 	}
 }
@@ -684,13 +695,13 @@ func (p *Palette) HandleKey(ev *tcell.EventKey) bool {
 	consumed := true
 	switch ev.Key() {
 	case tcell.KeyESC:
-		ui.Default().CloseOverlay()
+		app.CloseOverlay()
 	case tcell.KeyDown, tcell.KeyCtrlN:
-		p.list.Next()
+		p.list.SelectNext()
 	case tcell.KeyUp, tcell.KeyCtrlP:
-		p.list.Prev()
+		p.list.SelectPrev()
 	case tcell.KeyEnter:
-		p.list.Act()
+		p.list.Activate()
 	default:
 		p.input.HandleKey(ev)
 		consumed = false
@@ -711,15 +722,15 @@ func NewSaveAs(action func(string)) *SaveAs {
 	input := new(ui.TextInput)
 	commit := func() {
 		if action != nil {
-			action(input.String())
+			action(input.Text())
 		}
-		ui.Default().CloseOverlay()
+		app.CloseOverlay()
 	}
 	input.OnCommit(commit)
 	btnCancel := ui.NewButton("Cancel", func() {
-		ui.Default().CloseOverlay()
+		app.CloseOverlay()
 	})
-	btnOK := ui.NewButton("OK", commit).Background(ui.Theme.Selection)
+	btnOK := ui.NewButton("OK", commit).SetBackground(ui.Theme.Selection)
 
 	view := ui.Frame(
 		ui.Border(ui.VStack(
@@ -814,7 +825,7 @@ func extractSymbols(content string) []symbol {
 }
 
 type SearchBar struct {
-	root        *root
+	a           *EditorApp
 	input       *proxyInput
 	btnPrev     *ui.Button
 	btnNext     *ui.Button
@@ -822,15 +833,15 @@ type SearchBar struct {
 	activeIndex int // -1 表示尚未進行導航定位
 }
 
-func NewSearchBar(r *root) *SearchBar {
-	sb := &SearchBar{root: r, activeIndex: -1}
+func NewSearchBar(r *EditorApp) *SearchBar {
+	sb := &SearchBar{a: r, activeIndex: -1}
 	sb.input = &proxyInput{
 		TextInput: ui.NewTextInput(),
 		parent:    sb,
 	}
 	// Lazy Evaluation:
 	// 當文字改變時，僅標記狀態為「需要重新掃描」，但不立即掃描
-	// 真正的計算成本被推遲到了使用者按下 Enter、Next 或 Prev 的那一刻
+	// 真正的計算成本被推遲到了使用者按下 Enter、SelectNext 或 SelectPrev 的那一刻
 	sb.input.OnChange(func() {
 		sb.matches = nil
 		sb.activeIndex = -1
@@ -845,12 +856,12 @@ func (sb *SearchBar) updateMatches() {
 	sb.matches = nil
 	sb.activeIndex = -1
 
-	query := strings.ToLower(sb.input.String())
+	query := strings.ToLower(sb.input.Text())
 	if query == "" {
 		return
 	}
 
-	editor := sb.root.getEditor()
+	editor := sb.a.getEditor()
 	if editor == nil {
 		return
 	}
@@ -900,7 +911,7 @@ func (sb *SearchBar) setInitialActiveIndex() {
 		return
 	}
 
-	tab := sb.root.tabs[sb.root.active]
+	tab := sb.a.tabs[sb.a.active]
 	e := tab.body
 
 	// 尋找第一個在游標位置之後的匹配項
@@ -947,11 +958,11 @@ func (sb *SearchBar) navigate(forward bool) {
 
 func (sb *SearchBar) syncEditor() {
 	m := sb.matches[sb.activeIndex]
-	editor := sb.root.getEditor()
+	editor := sb.a.getEditor()
 	if editor == nil {
 		return
 	}
-	queryLen := utf8.RuneCountInString(sb.input.String())
+	queryLen := utf8.RuneCountInString(sb.input.Text())
 	editor.CenterRow(m.Row)
 	editor.SetSelection(m, ui.Pos{Row: m.Row, Col: m.Col + queryLen})
 }
@@ -996,8 +1007,8 @@ func (sb *SearchBar) HandleKey(ev *tcell.EventKey) bool {
 	case tcell.KeyESC:
 		// leave this as a backup, but the global
 		// binding will likely catch ESC first
-		sb.root.showSearch = false
-		ui.Default().Focus(sb.root)
+		sb.a.showSearch = false
+		app.SetFocus(sb.a)
 	default:
 		sb.input.HandleKey(ev)
 		consumed = false
@@ -1028,27 +1039,27 @@ func (p *proxyInput) FocusTarget() ui.Element {
 	return p.parent
 }
 
-func (r *root) activateLeader() {
-	r.leaderKeyActive = true
-	if r.leaderTimer != nil {
-		r.leaderTimer.Stop()
+func (a *EditorApp) activateLeader() {
+	a.leaderKeyActive = true
+	if a.leaderTimer != nil {
+		a.leaderTimer.Stop()
 	}
 	// 2 秒後自動重置狀態
-	r.leaderTimer = time.AfterFunc(2*time.Second, func() {
-		r.leaderKeyActive = false
-		ui.Default().Post()
+	a.leaderTimer = time.AfterFunc(2*time.Second, func() {
+		a.leaderKeyActive = false
+		app.Refresh()
 	})
 }
 
 type Editor struct {
 	*ui.TextEditor
-	r *root
+	a *EditorApp
 }
 
-func NewEditor(r *root) *Editor {
+func NewEditor(r *EditorApp) *Editor {
 	return &Editor{
 		TextEditor: ui.NewTextEditor(),
-		r:          r,
+		a:          r,
 	}
 }
 
@@ -1068,26 +1079,26 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		s := e.SelectedText()
 		if s == "" {
 			// copy current line by default
-			e.r.copyStr = string(e.Line(e.Pos.Row))
+			e.a.copyStr = string(e.Line(e.Pos.Row))
 			return true
 		}
-		e.r.copyStr = s
+		e.a.copyStr = s
 	case "ctrl+x":
 		start, end, ok := e.Selection()
 		if !ok {
 			// cut line by default
-			e.r.copyStr = string(e.Line(e.Pos.Row)) + "\n"
+			e.a.copyStr = string(e.Line(e.Pos.Row)) + "\n"
 			e.DeleteRange(ui.Pos{Row: e.Pos.Row}, ui.Pos{Row: e.Pos.Row + 1})
 			return true
 		}
 
-		e.r.copyStr = e.SelectedText()
+		e.a.copyStr = e.SelectedText()
 		e.DeleteRange(start, end)
 	case "ctrl+v":
-		if e.r.copyStr == "" {
+		if e.a.copyStr == "" {
 			return true
 		}
-		e.InsertText(e.r.copyStr)
+		e.InsertText(e.a.copyStr)
 	case "ctrl+n":
 		e.autoComplete()
 	case "ctrl+d":
@@ -1129,8 +1140,13 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 			e.ClearSelection()
 			return true
 		}
-		return false
+		// Bubble event to parent
+		return e.a.handleGlobalKey(ev)
 	default:
+		// Try parent for global shortcuts first
+		if e.a.handleGlobalKey(ev) {
+			return true
+		}
 		return e.TextEditor.HandleKey(ev)
 	}
 	return true
