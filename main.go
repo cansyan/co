@@ -698,28 +698,28 @@ func (p *Palette) HandleKey(ev *tcell.EventKey) bool {
 	return consumed
 }
 
-func (p *Palette) FocusTarget() ui.Element { return p }
-func (p *Palette) OnFocus()                { p.input.OnFocus() }
-func (p *Palette) OnBlur()                 { p.input.OnBlur() }
+func (p *Palette) OnFocus() { p.input.OnFocus() }
+func (p *Palette) OnBlur()  { p.input.OnBlur() }
 
 type SaveAs struct {
 	child ui.Element
-	btnOK *ui.Button
 	input *ui.TextInput
 }
 
 func NewSaveAs(action func(string)) *SaveAs {
 	msg := ui.NewText("Save as: ")
 	input := new(ui.TextInput)
-	btnCancel := ui.NewButton("Cancel", func() {
-		ui.Default().CloseOverlay()
-	})
-	btnOK := ui.NewButton("OK", func() {
+	commit := func() {
 		if action != nil {
 			action(input.String())
 		}
 		ui.Default().CloseOverlay()
-	}).Background(ui.Theme.Selection)
+	}
+	input.OnCommit(commit)
+	btnCancel := ui.NewButton("Cancel", func() {
+		ui.Default().CloseOverlay()
+	})
+	btnOK := ui.NewButton("OK", commit).Background(ui.Theme.Selection)
 
 	view := ui.Frame(
 		ui.Border(ui.VStack(
@@ -739,7 +739,6 @@ func NewSaveAs(action func(string)) *SaveAs {
 
 	return &SaveAs{
 		child: view,
-		btnOK: btnOK,
 		input: input,
 	}
 }
@@ -759,31 +758,13 @@ func (m *SaveAs) Layout(x, y, w, h int) *ui.LayoutNode {
 
 func (m *SaveAs) Render(s ui.Screen, r ui.Rect) {}
 
-func (m *SaveAs) HandleKey(ev *tcell.EventKey) bool {
-	consumed := true
-	switch ev.Key() {
-	case tcell.KeyESC:
-		ui.Default().CloseOverlay()
-	case tcell.KeyEnter:
-		m.btnOK.OnClick()
-		ui.Default().CloseOverlay()
-	default:
-		m.input.HandleKey(ev)
-		consumed = false
-	}
-	return consumed
-}
-
 func (m *SaveAs) FocusTarget() ui.Element {
-	return m
+	return m.input
 }
-
-func (m *SaveAs) OnFocus() { m.input.OnFocus() }
-func (m *SaveAs) OnBlur()  {}
 
 type symbol struct {
-	Name      string // 原始識別碼 (e.g., "saveFile"), 用於程式碼補全
-	Signature string // 完整定義 (e.g., "(*root).saveFile"), 用於 Palette 顯示
+	Name      string // identifier, for example "saveFile"
+	Signature string // readable definition, for example "(*root).saveFile"
 	Line      int    // line number
 	Kind      string // func, type
 }
@@ -1024,7 +1005,6 @@ func (sb *SearchBar) HandleKey(ev *tcell.EventKey) bool {
 	return consumed
 }
 
-func (sb *SearchBar) FocusTarget() ui.Element { return sb }
 func (sb *SearchBar) OnFocus() {
 	// make TextInput show cursor
 	sb.input.OnFocus()
@@ -1077,10 +1057,6 @@ func (e *Editor) Layout(x, y, w, h int) *ui.LayoutNode {
 		Element: e,
 		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
 	}
-}
-
-func (e *Editor) FocusTarget() ui.Element {
-	return e
 }
 
 func (e *Editor) HandleKey(ev *tcell.EventKey) bool {

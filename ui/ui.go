@@ -68,14 +68,18 @@ type Scrollable interface {
 
 // Focusable represents an element that can receive focus.
 type Focusable interface {
-	// FocusTarget determines whom should actually receive focus.
-	// Can be used to retain or delegate focus.
-	FocusTarget() Element
-	// OnFocus is called when the element receives focus.
 	OnFocus()
-	// OnBlur is called when the element loses focus.
 	OnBlur()
-	HandleKey(ev *tcell.EventKey) bool // Return true if consumed
+}
+
+// FocusDelegate allows an element to delegate focus to another element.
+type FocusDelegate interface {
+	FocusTarget() Element
+}
+
+// KeyHandler represents an element that can handle keyboard events.
+type KeyHandler interface {
+	HandleKey(ev *tcell.EventKey) bool
 }
 
 type LayoutNode struct {
@@ -416,12 +420,9 @@ func (t *TextInput) Render(s Screen, rect Rect) {
 	}
 }
 
-func (t *TextInput) FocusTarget() Element { return t }
-func (t *TextInput) OnFocus()             { t.focused = true }
-func (t *TextInput) OnBlur()              { t.focused = false }
-
+func (t *TextInput) OnFocus() { t.focused = true }
+func (t *TextInput) OnBlur()  { t.focused = false }
 func (t *TextInput) HandleKey(ev *tcell.EventKey) bool {
-	// 簡單邏輯：按下任何非 Shift 的移動鍵就重置選取起點
 	resetSelection := true
 	consumed := true
 	switch ev.Key() {
@@ -667,12 +668,9 @@ func (e *TextEditor) String() string {
 	var sb strings.Builder
 	for i, line := range e.buf {
 		sb.WriteString(string(line))
-		if i != len(e.buf)-1 {
-			sb.WriteByte('\n')
+		if i == len(e.buf)-1 && len(line) == 0 {
+			continue
 		}
-	}
-	// append final newline
-	if len(e.buf) > 0 && len(e.buf[len(e.buf)-1]) != 0 {
 		sb.WriteByte('\n')
 	}
 	return sb.String()
@@ -916,9 +914,8 @@ func (e *TextEditor) Render(s Screen, rect Rect) {
 		}
 	}
 }
-func (e *TextEditor) FocusTarget() Element { return e }
-func (e *TextEditor) OnFocus()             { e.focused = true }
-func (e *TextEditor) OnBlur()              { e.focused = false }
+func (e *TextEditor) OnFocus() { e.focused = true }
+func (e *TextEditor) OnBlur()  { e.focused = false }
 
 func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 	keepVisualCol := false
@@ -1352,9 +1349,10 @@ func (e *TextEditor) findClosingBracket(openRow, openCol int, openCh rune) (clos
 
 		for c := cStart; c < len(e.buf[r]); c++ {
 			char := e.buf[r][c]
-			if char == openCh {
+			switch char {
+			case openCh:
 				depth++
-			} else if char == closeCh {
+			case closeCh:
 				if depth == 0 {
 					return r, c
 				}
@@ -1724,9 +1722,8 @@ func (l *ListView) OnMouseMove(rx, ry int) {
 
 func (l *ListView) OnMouseLeave() { l.hovered = -1 }
 
-func (l *ListView) FocusTarget() Element { return l }
-func (l *ListView) OnFocus()             {}
-func (l *ListView) OnBlur()              {}
+func (l *ListView) OnFocus() {}
+func (l *ListView) OnBlur()  {}
 func (l *ListView) HandleKey(ev *tcell.EventKey) bool {
 	consumed := true
 	switch ev.Key() {
@@ -2028,13 +2025,6 @@ func (s layoutSpec) OnBlur() {
 	if f, ok := s.Element.(Focusable); ok {
 		f.OnBlur()
 	}
-}
-
-func (s layoutSpec) HandleKey(ev *tcell.EventKey) bool {
-	if f, ok := s.Element.(Focusable); ok {
-		return f.HandleKey(ev)
-	}
-	return false
 }
 
 // get or build spec
@@ -2542,7 +2532,7 @@ func (a *App) resolveFocus(e Element) Element {
 		}
 		visited[e] = true
 
-		f, ok := e.(Focusable)
+		f, ok := e.(FocusDelegate)
 		if !ok {
 			return e
 		}
@@ -2623,8 +2613,8 @@ func (a *App) handleKey(ev *tcell.EventKey) {
 	log.Printf("key %s", ev.Name())
 	// Try to let the focused element handle it first
 	if a.focused != nil {
-		if f, ok := a.focused.(Focusable); ok {
-			if f.HandleKey(ev) {
+		if h, ok := a.focused.(KeyHandler); ok {
+			if h.HandleKey(ev) {
 				return
 			}
 		}
