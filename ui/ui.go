@@ -2013,12 +2013,31 @@ func (s layoutSpec) Render(screen Screen, rect Rect) {
 	// 這裡不需要處理 Padding 的 Render，因為 Layout 已經把子組件限縮在裡面了
 }
 
-func (s layoutSpec) FocusTarget() Element   { return s.Element }
-func (s layoutSpec) OnFocus()               {}
-func (s layoutSpec) OnBlur()                {}
-func (s layoutSpec) HandleKey(*tcell.EventKey) bool {return false}
+// Add FocusTarget to layoutSpec to enable focus delegation through decorators
+func (s layoutSpec) FocusTarget() Element {
+	return s.Element
+}
 
-// 輔助函數：取得或建立 spec
+func (s layoutSpec) OnFocus() {
+	if f, ok := s.Element.(Focusable); ok {
+		f.OnFocus()
+	}
+}
+
+func (s layoutSpec) OnBlur() {
+	if f, ok := s.Element.(Focusable); ok {
+		f.OnBlur()
+	}
+}
+
+func (s layoutSpec) HandleKey(ev *tcell.EventKey) bool {
+	if f, ok := s.Element.(Focusable); ok {
+		return f.HandleKey(ev)
+	}
+	return false
+}
+
+// get or build spec
 func getSpec(e Element) layoutSpec {
 	if s, ok := e.(layoutSpec); ok {
 		return s
@@ -2456,6 +2475,10 @@ func (a *App) Focused() Element {
 }
 
 func (a *App) Focus(e Element) {
+	defer func(prev Element) {
+		log.Printf("Focus changed: %T -> %T", prev, a.focused)
+	}(a.focused)
+
 	if e == nil {
 		if a.focused != nil {
 			if f, ok := a.focused.(Focusable); ok {
@@ -2479,18 +2502,17 @@ func (a *App) Focus(e Element) {
 	}
 
 	e = a.resolveFocus(e)
-	fe, ok := e.(Focusable)
-	if !ok {
-		a.focused = nil
-	} else {
+	if fe, ok := e.(Focusable); ok {
 		fe.OnFocus()
 		a.focused = e
+	} else {
+		a.focused = nil
 	}
-	log.Printf("focused: %T", a.focused)
 
-	// dismiss overlay when clicking outside of it
-	if node := findNode(a.tree, a.overlay); node != nil {
-		if found := findNode(node, e); found == nil {
+	// If the overlay exists but the focused element is not part of it,
+	// remove the overlay.
+	if n := findNode(a.tree, a.overlay); n != nil {
+		if findNode(n, e) == nil {
 			a.overlay = nil
 		}
 	}
@@ -2512,13 +2534,20 @@ func findNode(n *LayoutNode, target Element) *LayoutNode {
 }
 
 func (a *App) resolveFocus(e Element) Element {
+	visited := make(map[Element]bool)
 	for {
+		if visited[e] {
+			log.Printf("Circular focus delegation detected for %T", e)
+			return e
+		}
+		visited[e] = true
+
 		f, ok := e.(Focusable)
 		if !ok {
 			return e
 		}
 		t := f.FocusTarget()
-		if t == e {
+		if t == e || t == nil {
 			return e
 		}
 		e = t

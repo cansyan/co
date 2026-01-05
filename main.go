@@ -436,10 +436,10 @@ func (r *root) fillCommandMode(p *Palette, query string) {
 func (r *root) fillFileSearchMode(p *Palette, query string) {
 	query = strings.ToLower(query)
 	filter := make(map[string]bool)
-	for _, t := range r.tabs {
+	for i, t := range r.tabs {
 		if query == "" || strings.Contains(strings.ToLower(t.label), query) {
 			p.list.Append(t.label, func() {
-				r.openFile(t.label)
+				r.active = i
 				ui.Default().Focus(r)
 			})
 			filter[t.label] = true
@@ -453,6 +453,9 @@ func (r *root) fillFileSearchMode(p *Palette, query string) {
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || filter[name] {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(name), query) {
 			continue
 		}
 		p.list.Append(name, func() {
