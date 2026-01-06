@@ -377,19 +377,18 @@ func (o *overlay) MinSize() (int, int) {
 }
 
 func (o *overlay) Layout(x, y, w, h int) *LayoutNode {
-	mw, mh := o.child.MinSize()
+	cw, ch := o.child.MinSize()
 	switch o.align {
-	case "top":
-		x = x + (w-mw)/2
 	case "center":
-		fallthrough
-	default:
-		x = x + (w-mw)/2
-		y = y + (h-mh)/2
+		x = x + (w-cw)/2
+		y = y + (h-ch)/2
+	case "top":
+		x = x + (w-cw)/2
+		y = 1 // Small offset from top
 	}
 
-	node := NewLayoutNode(o, x, y, mw, mh)
-	node.Children = []*LayoutNode{o.child.Layout(x, y, mw, mh)}
+	node := NewLayoutNode(o, x, y, cw, ch)
+	node.Children = []*LayoutNode{o.child.Layout(x, y, cw, ch)}
 	return node
 }
 

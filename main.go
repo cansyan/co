@@ -38,6 +38,9 @@ func main() {
 	defer f.Close()
 	log.SetOutput(f)
 
+	app = ui.NewApp()
+	app.BindKey("Ctrl+Q", app.Stop)
+
 	editorApp := newEditorApp()
 	if path := flag.Arg(0); path != "" {
 		err := editorApp.openFile(path)
@@ -48,11 +51,9 @@ func main() {
 	} else {
 		editorApp.newTab("untitled")
 	}
-
-	app = ui.NewApp(editorApp)
 	app.SetFocus(editorApp)
-	app.BindKey("Ctrl+Q", app.Stop)
-	if err := app.Run(); err != nil {
+
+	if err := app.Run(editorApp); err != nil {
 		log.Print(err)
 		return
 	}
@@ -298,18 +299,19 @@ func (a *EditorApp) handleGlobalKey(ev *tcell.EventKey) bool {
 		a.showPalette("@")
 		return true
 	case "ctrl+o":
-		e := ui.NewTextInput()
-		e.SetPlaceholder("Open file path: ")
-		e.OnCommit(func() {
-			if e.Text() != "" {
-				if err := a.openFile(e.Text()); err != nil {
+		input := ui.NewTextInput()
+		input.SetPlaceholder("Open file path: ")
+		input.OnCommit(func() {
+			if text := input.Text(); text != "" {
+				if err := a.openFile(text); err != nil {
 					log.Print(err)
 					a.setStatus(err.Error(), 3*time.Second)
 				}
 			}
+			app.CloseOverlay()
 			a.requestFocus()
 		})
-		view := ui.Border(ui.Frame(e, 60, 1))
+		view := ui.Border(ui.Frame(input, 60, 1))
 		app.Overlay(view, "top")
 		return true
 	case "ctrl+t":
@@ -322,7 +324,6 @@ func (a *EditorApp) handleGlobalKey(ev *tcell.EventKey) bool {
 			a.requestFocus()
 			return true
 		}
-		app.CloseOverlay()
 		return true
 	}
 	return false
@@ -695,8 +696,6 @@ func (p *Palette) Render(ui.Screen, ui.Rect) {
 func (p *Palette) HandleKey(ev *tcell.EventKey) bool {
 	consumed := true
 	switch ev.Key() {
-	case tcell.KeyESC:
-		app.CloseOverlay()
 	case tcell.KeyDown, tcell.KeyCtrlN:
 		p.list.SelectNext()
 	case tcell.KeyUp, tcell.KeyCtrlP:
@@ -1006,8 +1005,6 @@ func (sb *SearchBar) HandleKey(ev *tcell.EventKey) bool {
 	case tcell.KeyDown, tcell.KeyCtrlN:
 		sb.navigate(true)
 	case tcell.KeyESC:
-		// leave this as a backup, but the global
-		// binding will likely catch ESC first
 		sb.a.showSearch = false
 		app.SetFocus(sb.a)
 	default:

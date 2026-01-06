@@ -343,8 +343,7 @@ type TextInput struct {
 }
 
 func NewTextInput() *TextInput {
-	t := &TextInput{}
-	return t
+	return &TextInput{}
 }
 
 // Text returns the current text content
@@ -802,9 +801,8 @@ type App struct {
 	overlay    *overlay // for temporary display
 }
 
-func NewApp(root Element) *App {
+func NewApp() *App {
 	a := &App{
-		root:     root,
 		done:     make(chan struct{}),
 		bindings: make(map[string]func()),
 	}
@@ -956,7 +954,8 @@ func (a *App) Refresh() {
 }
 
 // Run starts the main event loop
-func (a *App) Run() error {
+func (a *App) Run(root Element) error {
+	a.root = root
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return err
@@ -1013,7 +1012,7 @@ func (a *App) BindKey(key string, action func()) {
 
 func (a *App) handleKey(ev *tcell.EventKey) {
 	log.Printf("key %s", ev.Name())
-	// Try to let the focused element handle it first
+	// 1. Give the focused element first chance to handle the key event
 	if a.focused != nil {
 		if h, ok := a.focused.(KeyHandler); ok {
 			if h.HandleKey(ev) {
@@ -1022,7 +1021,13 @@ func (a *App) handleKey(ev *tcell.EventKey) {
 		}
 	}
 
-	// If not consumed, fallback to global key bindings
+	// 2. Framework-level automatic dismissal
+	if ev.Key() == tcell.KeyESC && a.overlay != nil {
+		a.CloseOverlay()
+		return
+	}
+
+	// 3. Fallback to global bindings
 	key := strings.ToLower(ev.Name())
 	if action, ok := a.bindings[key]; ok {
 		action()
