@@ -1,11 +1,5 @@
 package ui
 
-var Theme ColorTheme
-
-func init() {
-	Theme = NewMarianaTheme()
-}
-
 type ColorTheme struct {
 	Foreground string
 	Background string
@@ -56,6 +50,8 @@ func NewBreakersTheme() ColorTheme {
 		},
 	}
 }
+
+var Theme = NewMarianaTheme()
 
 func NewMarianaTheme() ColorTheme {
 	return ColorTheme{
