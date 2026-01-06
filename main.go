@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"go/format"
+	"go/token"
 	"log"
 	"os"
 	"path/filepath"
@@ -586,7 +587,7 @@ func newTab(root *EditorApp, label string) *tab {
 	})
 	e := NewEditor(root)
 	if filepath.Ext(label) == ".go" {
-		e.SetLanguage("go")
+		e.SetHighlighter(highlightGo)
 	}
 	t.body = e
 	return t
@@ -1194,4 +1195,107 @@ func (e *Editor) autoComplete() {
 			return
 		}
 	}
+}
+
+const (
+	stateDefault = iota
+	stateInString
+	stateInRawString
+	stateInComment
+)
+
+func highlightGo(line []rune) []ui.StyleSpan {
+	var spans []ui.StyleSpan
+	state := stateDefault
+	start := 0
+
+	for i := 0; i < len(line); {
+		r := line[i]
+		switch state {
+		case stateDefault:
+			switch r {
+			case '"':
+				state = stateInString
+				start = i
+			case '`':
+				state = stateInRawString
+				start = i
+			case '/':
+				if i+1 < len(line) && line[i+1] == '/' {
+					state = stateInComment
+					start = i
+				}
+			default:
+				if isAlphaNumeric(r) {
+					j := i + 1
+					for j < len(line) && isAlphaNumeric(line[j]) {
+						j++
+					}
+					word := string(line[i:j])
+
+					if token.IsKeyword(word) {
+						spans = append(spans, ui.StyleSpan{
+							Start: i,
+							End:   j,
+							Style: ui.Theme.Syntax.Keyword,
+						})
+						i = j
+						continue
+					}
+
+					if j < len(line) && line[j] == '(' {
+						style := ui.Theme.Syntax.FunctionCall
+						if i-5 >= 0 && string(line[i-5:i]) == "func " {
+							style = ui.Theme.Syntax.FunctionName
+						}
+						spans = append(spans, ui.StyleSpan{
+							Start: i,
+							End:   j,
+							Style: style,
+						})
+						i = j
+						continue
+					}
+
+					isNumber := true
+					for _, c := range word {
+						if !unicode.IsDigit(c) {
+							isNumber = false
+							break
+						}
+					}
+					if isNumber {
+						spans = append(spans, ui.StyleSpan{
+							Start: i,
+							End:   j,
+							Style: ui.Theme.Syntax.Number,
+						})
+						i = j
+						continue
+					}
+					i = j
+					continue
+				}
+			}
+		case stateInString:
+			if r == '"' {
+				spans = append(spans, ui.StyleSpan{Start: start, End: i + 1, Style: ui.Theme.Syntax.String})
+				state = stateDefault
+			}
+		case stateInRawString:
+			if r == '`' {
+				spans = append(spans, ui.StyleSpan{Start: start, End: i + 1, Style: ui.Theme.Syntax.String})
+				state = stateDefault
+			}
+		case stateInComment:
+			spans = append(spans, ui.StyleSpan{Start: start, End: len(line), Style: ui.Theme.Syntax.Comment})
+			return spans
+		}
+		i++
+	}
+	return spans
+}
+
+func isAlphaNumeric(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }

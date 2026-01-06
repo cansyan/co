@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"go/token"
 	"slices"
 	"strconv"
 	"strings"
@@ -11,6 +10,9 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
 )
+
+// Highlighter defines a function that returns syntax spans for a line of text.
+type Highlighter func(line []rune) []StyleSpan
 
 // TextEditor is a multi-line editable text area.
 type TextEditor struct {
@@ -28,8 +30,9 @@ type TextEditor struct {
 	focused bool
 	pressed bool // mouse pressed
 
-	style Style
-	lang  string
+	style       Style
+	lang        string
+	highlighter Highlighter
 
 	onChange func()
 	Dirty    bool
@@ -42,8 +45,8 @@ func NewTextEditor() *TextEditor {
 	return e
 }
 
-func (e *TextEditor) SetLanguage(l string) {
-	e.lang = l
+func (e *TextEditor) SetHighlighter(h Highlighter) {
+	e.highlighter = h
 }
 
 func (e *TextEditor) Foreground(c string) *TextEditor {
@@ -276,15 +279,20 @@ func (e *TextEditor) Render(s Screen, rect Rect) {
 		DrawString(s, rect.X, rect.Y+i, lineNumWidth, numStr, lnStyle.Apply())
 
 		// draw line content
-		var spans []StyleSpan
-		if e.lang == "go" {
-			spans = highlightGo(line)
+		var styles []Style
+		if e.highlighter != nil {
+			spans := e.highlighter(line)
+			styles = expandStyles(spans, e.style, len(line))
 		}
-		styles := expandStyles(spans, e.style, len(line))
+
 		visualCol := 0
 		y := rect.Y + i
 		for col, r := range line {
-			charStyle := styles[col]
+			charStyle := e.style
+			if styles != nil {
+				charStyle = styles[col]
+			}
+
 			if e.isSelected(Pos{Row: row, Col: col}) {
 				charStyle.BG = Theme.Selection
 			}
@@ -1023,136 +1031,10 @@ func (e *TextEditor) DeleteRange(start, end Pos) {
 	}
 }
 
-const (
-	stateDefault = iota
-	stateInString
-	stateInRawString
-	stateInComment
-)
-
 type StyleSpan struct {
 	Start int
 	End   int // exclusive
 	Style Style
-}
-
-func highlightGo(line []rune) []StyleSpan {
-	var spans []StyleSpan
-	state := stateDefault
-	start := 0
-
-	for i := 0; i < len(line); {
-		r := line[i]
-		switch state {
-		case stateDefault:
-			switch r {
-			case '"':
-				state = stateInString
-				start = i
-			case '`':
-				state = stateInRawString
-				start = i
-			case '/':
-				if i+1 < len(line) && line[i+1] == '/' {
-					state = stateInComment
-					start = i
-				}
-			default:
-				if isAlphaNumeric(r) {
-					j := i + 1
-					// Extract word
-					for j < len(line) && isAlphaNumeric(line[j]) {
-						j++
-					}
-					word := string(line[i:j])
-
-					if token.IsKeyword(word) {
-						spans = append(spans, StyleSpan{
-							Start: i,
-							End:   j,
-							Style: Theme.Syntax.Keyword,
-						})
-						i = j // skip over the keyword in the loop
-						continue
-					}
-
-					// function
-					if j < len(line) && line[j] == '(' {
-						if i-5 >= 0 && string(line[i-5:i]) == "func " {
-							spans = append(spans, StyleSpan{
-								Start: i,
-								End:   j,
-								Style: Theme.Syntax.FunctionName,
-							})
-						} else {
-							spans = append(spans, StyleSpan{
-								Start: i,
-								End:   j,
-								Style: Theme.Syntax.FunctionCall,
-							})
-						}
-						i = j
-						continue
-					}
-
-					isNumber := true
-					for _, c := range word {
-						if !unicode.IsDigit(c) {
-							isNumber = false
-							break
-						}
-					}
-					if isNumber {
-						spans = append(spans, StyleSpan{
-							Start: i,
-							End:   j,
-							Style: Theme.Syntax.Number,
-						})
-						i = j
-						continue
-					}
-
-					i = j // skip over the keyword in the loop
-					continue
-				}
-			}
-
-		case stateInString:
-			if r == '"' {
-				spans = append(spans, StyleSpan{
-					Start: start,
-					End:   i + 1,
-					Style: Theme.Syntax.String,
-				})
-				state = stateDefault
-			}
-		case stateInRawString:
-			if r == '`' {
-				spans = append(spans, StyleSpan{
-					Start: start,
-					End:   i + 1,
-					Style: Theme.Syntax.String,
-				})
-				state = stateDefault
-			}
-		case stateInComment:
-			spans = append(spans, StyleSpan{
-				Start: start,
-				End:   len(line),
-				Style: Theme.Syntax.Comment,
-			})
-			i = len(line)
-			continue
-		}
-		i++
-	}
-
-	return spans
-}
-
-// isAlphaNumeric 檢查字元是否為字母、數字或底線
-func isAlphaNumeric(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }
 
 func expandStyles(spans []StyleSpan, base Style, n int) []Style {
