@@ -37,6 +37,7 @@ func main() {
 	}
 	defer f.Close()
 	log.SetOutput(f)
+	ui.Logger = log.Default()
 
 	app = ui.NewApp()
 	app.BindKey("Ctrl+Q", app.Stop)
@@ -466,7 +467,7 @@ func (a *EditorApp) fillFileSearchMode(p *Palette, query string) {
 	entries, _ := os.ReadDir(".")
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || filter[name] {
+		if entry.IsDir() || filter[name] || strings.HasPrefix(name, ".") {
 			continue
 		}
 		if query != "" && !strings.Contains(strings.ToLower(name), query) {
@@ -496,7 +497,7 @@ func (a *EditorApp) openFile(name string) error {
 		return err
 	}
 
-	a.newTab(filepath.Base(name))
+	a.newTab(name)
 	a.getEditor().SetText(string(bs))
 	return nil
 }
@@ -595,7 +596,7 @@ func newTab(root *EditorApp, label string) *tab {
 	return t
 }
 
-const tabItemWidth = 15
+const tabItemWidth = 18
 
 func (t *tab) MinSize() (int, int) { return tabItemWidth, 1 }
 func (t *tab) Layout(x, y, w, h int) *ui.LayoutNode {
@@ -618,15 +619,14 @@ func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 		st = t.style.Merge(st)
 	}
 
-	format := " %s"
 	labelWidth := tabItemWidth - 3 - 1 // minus button and padding
-	var label string
-	if runewidth.StringWidth(t.label) <= labelWidth {
-		label = runewidth.FillRight(t.label, labelWidth)
+	label := filepath.Base(t.label)
+	if runewidth.StringWidth(label) <= labelWidth {
+		label = runewidth.FillRight(label, labelWidth)
 	} else {
-		label = runewidth.Truncate(t.label, labelWidth, "…")
+		label = runewidth.Truncate(label, labelWidth, "…")
 	}
-	label = fmt.Sprintf(format, label)
+	label = fmt.Sprintf(" %s", label)
 	ui.DrawString(screen, r.X, r.Y, r.W, label, st.Apply())
 }
 

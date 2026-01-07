@@ -4,6 +4,7 @@ package ui
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"slices"
 	"strings"
@@ -13,6 +14,10 @@ import (
 )
 
 type Screen = tcell.Screen
+
+// Logger is intended for debugging,
+// discards all logs by default, until configured otherwise.
+var Logger = log.New(io.Discard, "", 0)
 
 // Element is the interface implemented by all UI elements.
 type Element interface {
@@ -869,7 +874,7 @@ func hitTest(n *LayoutNode, p Point) (Element, Point) {
 
 func (a *App) SetFocus(e Element) {
 	defer func(prev Element) {
-		log.Printf("Focus changed: %T -> %T", prev, a.focused)
+		Logger.Printf("Focus changed: %T -> %T", prev, a.focused)
 	}(a.focused)
 
 	if e == nil {
@@ -930,7 +935,7 @@ func (a *App) resolveFocus(e Element) Element {
 	visited := make(map[Element]bool)
 	for {
 		if visited[e] {
-			log.Printf("Circular focus delegation detected for %T", e)
+			Logger.Printf("Circular focus delegation detected for %T", e)
 			return e
 		}
 		visited[e] = true
@@ -1011,7 +1016,7 @@ func (a *App) BindKey(key string, action func()) {
 }
 
 func (a *App) handleKey(ev *tcell.EventKey) {
-	log.Printf("key %s", ev.Name())
+	Logger.Printf("key %s", ev.Name())
 	// 1. Give the focused element first chance to handle the key event
 	if a.focused != nil {
 		if h, ok := a.focused.(KeyHandler); ok {
