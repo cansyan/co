@@ -365,7 +365,8 @@ func ResetRect(s Screen, rect Rect, style Style) {
 	}
 }
 
-// overlay is an container that appears over the main UI.
+// overlay is a transient container that displays a child element
+// over the existing content, typically used for modals or pop-ups.
 type overlay struct {
 	child     Element
 	align     string
