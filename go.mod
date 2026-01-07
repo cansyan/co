@@ -1,4 +1,4 @@
-module tui
+module edit
 
 go 1.23.3
 

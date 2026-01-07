@@ -9,13 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
-	"tui/ui"
 	"unicode"
 	"unicode/utf8"
 
-	"slices"
+	"edit/ui"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
@@ -79,6 +79,7 @@ type EditorApp struct {
 
 func newEditorApp() *EditorApp {
 	r := &EditorApp{}
+	// disable the menu button's feedback, less noise
 	r.btnNew = ui.NewButton("New", func() {
 		r.newTab("untitled")
 		app.SetFocus(r)
@@ -144,7 +145,7 @@ func (a *EditorApp) closeTab(i int) {
 					}
 					a.deleteTab(i)
 				})
-				app.Overlay(sa, "center")
+				app.Overlay(sa, "top")
 			}).SetBackground(ui.Theme.Selection),
 		), 2),
 	).Spacing(1))
@@ -534,7 +535,7 @@ func (a *EditorApp) saveFile() {
 		tab.label = path
 		a.requestFocus()
 	})
-	app.Overlay(sa, "center")
+	app.Overlay(sa, "top")
 }
 
 func (a *EditorApp) writeFile(path string, e *Editor) error {
@@ -745,7 +746,7 @@ func NewSaveAs(action func(string)) *SaveAs {
 				btnOK,
 			), 4),
 		).Spacing(1)),
-		28, 0,
+		40, 0,
 	)
 
 	return &SaveAs{
