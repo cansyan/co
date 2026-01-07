@@ -102,7 +102,7 @@ func (a *EditorApp) closeTab(i int) {
 		return
 	}
 	tab := a.tabs[i]
-	editor := tab.body
+	editor := tab.editor
 	if !editor.Dirty {
 		a.deleteTab(i)
 		a.requestFocus()
@@ -124,7 +124,7 @@ func (a *EditorApp) closeTab(i int) {
 			}), 2),
 
 			ui.NewButton("Save", func() {
-				if path := tab.label; path != "untitled" {
+				if path := tab.path; path != "untitled" {
 					if err := a.writeFile(path, editor); err != nil {
 						log.Print(err)
 						a.setStatus(err.Error(), 5*time.Second)
@@ -173,7 +173,7 @@ func (a *EditorApp) deleteTab(i int) {
 func (a *EditorApp) MinSize() (int, int) {
 	var maxW, maxH int
 	for _, t := range a.tabs {
-		w, h := t.body.MinSize()
+		w, h := t.editor.MinSize()
 		if w > maxW {
 			maxW = w
 		}
@@ -198,7 +198,7 @@ func (a *EditorApp) Layout(x, y, w, h int) *ui.LayoutNode {
 		ui.HStack(ui.Grow(tabLabels), a.btnNew, a.btnSave, a.btnQuit),
 	)
 	if len(a.tabs) > 0 {
-		mainStack.Append(ui.Grow(a.tabs[a.active].body))
+		mainStack.Append(ui.Grow(a.tabs[a.active].editor))
 	}
 	if a.showSearch {
 		mainStack.Append(ui.Divider(), a.searchBar)
@@ -253,7 +253,7 @@ func (a *EditorApp) FocusTarget() ui.Element {
 	if len(a.tabs) == 0 {
 		return a
 	}
-	return a.tabs[a.active].body
+	return a.tabs[a.active].editor
 }
 
 func (a *EditorApp) OnFocus() {}
@@ -335,7 +335,7 @@ func (a *EditorApp) getEditor() *Editor {
 	if len(a.tabs) == 0 {
 		return nil
 	}
-	return a.tabs[a.active].body
+	return a.tabs[a.active].editor
 }
 func (a *EditorApp) showPalette(prefix string) {
 	p := NewPalette()
@@ -451,19 +451,31 @@ func (a *EditorApp) fillCommandMode(p *Palette, query string) {
 func (a *EditorApp) fillFileSearchMode(p *Palette, query string) {
 	query = strings.ToLower(query)
 	filter := make(map[string]bool)
+	currentDir, _ := os.Getwd()
+
+	// list opened tabs first
 	for i, t := range a.tabs {
-		if query == "" || strings.Contains(strings.ToLower(t.label), query) {
-			p.list.Append(t.label, func() {
+		path := t.path
+		// show relative path if possible
+		if filepath.IsAbs(t.path) {
+			if rel, err := filepath.Rel(currentDir, t.path); err == nil && !strings.HasPrefix(rel, "..") {
+				path = rel
+			}
+		}
+
+		if query == "" || strings.Contains(strings.ToLower(path), query) {
+			p.list.Append(path, func() {
 				a.active = i
 				a.requestFocus()
 			})
-			filter[t.label] = true
+			filter[path] = true
 			if len(p.list.Items) >= 10 {
 				return
 			}
 		}
 	}
 
+	// list files in current directory
 	entries, _ := os.ReadDir(".")
 	for _, entry := range entries {
 		name := entry.Name()
@@ -484,20 +496,25 @@ func (a *EditorApp) fillFileSearchMode(p *Palette, query string) {
 }
 
 func (a *EditorApp) openFile(name string) error {
+	abs, err := filepath.Abs(name)
+	if err != nil {
+		return err
+	}
+
 	// tab existed, just switch
 	for i, tab := range a.tabs {
-		if tab.label == filepath.Base(name) {
+		if tab.path == abs {
 			a.active = i
 			return nil
 		}
 	}
 
-	bs, err := os.ReadFile(name)
+	bs, err := os.ReadFile(abs)
 	if err != nil {
 		return err
 	}
 
-	a.newTab(name)
+	a.newTab(abs)
 	a.getEditor().SetText(string(bs))
 	return nil
 }
@@ -507,13 +524,13 @@ func (a *EditorApp) saveFile() {
 		return
 	}
 	tab := a.tabs[a.active]
-	editor := tab.body
+	editor := tab.editor
 	if !editor.Dirty {
 		a.requestFocus()
 		return
 	}
 
-	if path := tab.label; path != "untitled" {
+	if path := tab.path; path != "untitled" {
 		if err := a.writeFile(path, editor); err != nil {
 			log.Print(err)
 			a.setStatus(err.Error(), 5*time.Second)
@@ -528,12 +545,18 @@ func (a *EditorApp) saveFile() {
 		if path == "" {
 			return
 		}
-		if err := a.writeFile(path, editor); err != nil {
+		abs, err := filepath.Abs(path)
+		if err != nil {
 			log.Print(err)
 			a.setStatus(err.Error(), 5*time.Second)
 			return
 		}
-		tab.label = path
+		if err := a.writeFile(abs, editor); err != nil {
+			log.Print(err)
+			a.setStatus(err.Error(), 5*time.Second)
+			return
+		}
+		tab.path = abs
 		a.requestFocus()
 	})
 	app.Overlay(sa, "top")
@@ -567,23 +590,23 @@ func (a *EditorApp) writeFile(path string, e *Editor) error {
 }
 
 type tab struct {
-	a        *EditorApp
-	label    string
-	btnClose *ui.Button
-	body     *Editor
+	app      *EditorApp
+	path     string
+	closeBtn *ui.Button
+	editor   *Editor
 	hovered  bool
 	style    ui.Style
 }
 
 func newTab(root *EditorApp, label string) *tab {
 	t := &tab{
-		a:     root,
-		label: label,
+		app:  root,
+		path: label,
 	}
-	t.btnClose = ui.NewButton("x", func() {
+	t.closeBtn = ui.NewButton("x", func() {
 		for i, tab := range root.tabs {
 			if tab == t {
-				t.a.closeTab(i)
+				t.app.closeTab(i)
 				return
 			}
 		}
@@ -592,7 +615,7 @@ func newTab(root *EditorApp, label string) *tab {
 	if filepath.Ext(label) == ".go" {
 		e.SetHighlighter(highlightGo)
 	}
-	t.body = e
+	t.editor = e
 	return t
 }
 
@@ -600,18 +623,18 @@ const tabItemWidth = 18
 
 func (t *tab) MinSize() (int, int) { return tabItemWidth, 1 }
 func (t *tab) Layout(x, y, w, h int) *ui.LayoutNode {
-	bw, bh := t.btnClose.MinSize()
+	bw, bh := t.closeBtn.MinSize()
 	return &ui.LayoutNode{
 		Element: t,
 		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
 		Children: []*ui.LayoutNode{
-			t.btnClose.Layout(x+tabItemWidth-3, y, bw, bh),
+			t.closeBtn.Layout(x+tabItemWidth-3, y, bw, bh),
 		},
 	}
 }
 func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 	var st ui.Style
-	if t == t.a.tabs[t.a.active] {
+	if t == t.app.tabs[t.app.active] {
 		st.FontUnderline = true
 		st = t.style.Merge(st)
 	} else if t.hovered {
@@ -620,7 +643,7 @@ func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 	}
 
 	labelWidth := tabItemWidth - 3 - 1 // minus button and padding
-	label := filepath.Base(t.label)
+	label := filepath.Base(t.path)
 	if runewidth.StringWidth(label) <= labelWidth {
 		label = runewidth.FillRight(label, labelWidth)
 	} else {
@@ -632,10 +655,10 @@ func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 
 func (t *tab) OnMouseDown(lx, ly int) {
 	// like Sublime Text, instant react on clicking tab, not waiting the mouse up
-	for i, tab := range t.a.tabs {
+	for i, tab := range t.app.tabs {
 		if tab == t {
-			t.a.active = i
-			app.SetFocus(t.a)
+			t.app.active = i
+			app.SetFocus(t.app)
 		}
 	}
 }
@@ -913,7 +936,7 @@ func (sb *SearchBar) setInitialActiveIndex() {
 	}
 
 	tab := sb.a.tabs[sb.a.active]
-	e := tab.body
+	e := tab.editor
 
 	// 尋找第一個在游標位置之後的匹配項
 	for i, m := range sb.matches {
