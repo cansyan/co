@@ -31,7 +31,6 @@ type TextEditor struct {
 	pressed bool // mouse pressed
 
 	style       Style
-	lang        string
 	highlighter Highlighter
 
 	onChange func()

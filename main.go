@@ -63,16 +63,16 @@ func main() {
 var _ ui.Focusable = (*EditorApp)(nil)
 
 type EditorApp struct {
-	tabs    []*tab
-	active  int
-	btnNew  *ui.Button
-	btnSave *ui.Button
-	btnQuit *ui.Button
-	status  string
+	tabs      []*tab
+	activeTab int
+	newBtn    *ui.Button
+	saveBtn   *ui.Button
+	quitBtn   *ui.Button
+	status    string
 
 	searchBar  *SearchBar
 	showSearch bool
-	copyStr    string
+	clipboard  string
 
 	leaderKeyActive bool
 	leaderTimer     *time.Timer
@@ -81,19 +81,19 @@ type EditorApp struct {
 func newEditorApp() *EditorApp {
 	r := &EditorApp{}
 	// disable the menu button's feedback, less noise
-	r.btnNew = ui.NewButton("New", func() {
+	r.newBtn = ui.NewButton("New", func() {
 		r.newTab("untitled")
 		app.SetFocus(r)
 	}).DisableFeedback()
-	r.btnSave = ui.NewButton("Save", r.saveFile).DisableFeedback()
-	r.btnQuit = ui.NewButton("Quit", app.Stop).DisableFeedback()
+	r.saveBtn = ui.NewButton("Save", r.saveFile).DisableFeedback()
+	r.quitBtn = ui.NewButton("Quit", app.Stop).DisableFeedback()
 	r.searchBar = NewSearchBar(r)
 	return r
 }
 
 func (a *EditorApp) newTab(label string) {
 	a.tabs = append(a.tabs, newTab(a, label))
-	a.active = len(a.tabs) - 1
+	a.activeTab = len(a.tabs) - 1
 }
 
 // closeTab closes the tab at index i, prompting to save if there are unsaved changes.
@@ -159,10 +159,10 @@ func (a *EditorApp) deleteTab(i int) {
 	}
 
 	a.tabs = slices.Delete(a.tabs, i, i+1)
-	if i < a.active {
-		a.active--
-	} else if i == a.active {
-		a.active = max(0, len(a.tabs)-1)
+	if i < a.activeTab {
+		a.activeTab--
+	} else if i == a.activeTab {
+		a.activeTab = max(0, len(a.tabs)-1)
 	}
 
 	if len(a.tabs) == 0 {
@@ -195,10 +195,10 @@ func (a *EditorApp) Layout(x, y, w, h int) *ui.LayoutNode {
 
 	mainStack := ui.VStack()
 	mainStack.Append(
-		ui.HStack(ui.Grow(tabLabels), a.btnNew, a.btnSave, a.btnQuit),
+		ui.HStack(ui.Grow(tabLabels), a.newBtn, a.saveBtn, a.quitBtn),
 	)
 	if len(a.tabs) > 0 {
-		mainStack.Append(ui.Grow(a.tabs[a.active].editor))
+		mainStack.Append(ui.Grow(a.tabs[a.activeTab].editor))
 	}
 	if a.showSearch {
 		mainStack.Append(ui.Divider(), a.searchBar)
@@ -253,7 +253,7 @@ func (a *EditorApp) FocusTarget() ui.Element {
 	if len(a.tabs) == 0 {
 		return a
 	}
-	return a.tabs[a.active].editor
+	return a.tabs[a.activeTab].editor
 }
 
 func (a *EditorApp) OnFocus() {}
@@ -266,7 +266,7 @@ func (a *EditorApp) handleGlobalKey(ev *tcell.EventKey) bool {
 		a.saveFile()
 		return true
 	case "ctrl+w":
-		a.closeTab(a.active)
+		a.closeTab(a.activeTab)
 		return true
 	case "ctrl+f":
 		a.showSearch = true
@@ -335,7 +335,7 @@ func (a *EditorApp) getEditor() *Editor {
 	if len(a.tabs) == 0 {
 		return nil
 	}
-	return a.tabs[a.active].editor
+	return a.tabs[a.activeTab].editor
 }
 func (a *EditorApp) showPalette(prefix string) {
 	p := NewPalette()
@@ -465,7 +465,7 @@ func (a *EditorApp) fillFileSearchMode(p *Palette, query string) {
 
 		if query == "" || strings.Contains(strings.ToLower(path), query) {
 			p.list.Append(path, func() {
-				a.active = i
+				a.activeTab = i
 				a.requestFocus()
 			})
 			filter[path] = true
@@ -504,7 +504,7 @@ func (a *EditorApp) openFile(name string) error {
 	// tab existed, just switch
 	for i, tab := range a.tabs {
 		if tab.path == abs {
-			a.active = i
+			a.activeTab = i
 			return nil
 		}
 	}
@@ -523,7 +523,7 @@ func (a *EditorApp) saveFile() {
 	if len(a.tabs) == 0 {
 		return
 	}
-	tab := a.tabs[a.active]
+	tab := a.tabs[a.activeTab]
 	editor := tab.editor
 	if !editor.Dirty {
 		a.requestFocus()
@@ -634,7 +634,7 @@ func (t *tab) Layout(x, y, w, h int) *ui.LayoutNode {
 }
 func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 	var st ui.Style
-	if t == t.app.tabs[t.app.active] {
+	if t == t.app.tabs[t.app.activeTab] {
 		st.FontUnderline = true
 		st = t.style.Merge(st)
 	} else if t.hovered {
@@ -657,7 +657,7 @@ func (t *tab) OnMouseDown(lx, ly int) {
 	// like Sublime Text, instant react on clicking tab, not waiting the mouse up
 	for i, tab := range t.app.tabs {
 		if tab == t {
-			t.app.active = i
+			t.app.activeTab = i
 			app.SetFocus(t.app)
 		}
 	}
@@ -935,7 +935,7 @@ func (sb *SearchBar) setInitialActiveIndex() {
 		return
 	}
 
-	tab := sb.a.tabs[sb.a.active]
+	tab := sb.a.tabs[sb.a.activeTab]
 	e := tab.editor
 
 	// 尋找第一個在游標位置之後的匹配項
@@ -1101,26 +1101,23 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		s := e.SelectedText()
 		if s == "" {
 			// copy current line by default
-			e.a.copyStr = string(e.Line(e.Pos.Row))
+			e.a.clipboard = string(e.Line(e.Pos.Row))
 			return true
 		}
-		e.a.copyStr = s
+		e.a.clipboard = s
 	case "ctrl+x":
 		start, end, ok := e.Selection()
 		if !ok {
 			// cut line by default
-			e.a.copyStr = string(e.Line(e.Pos.Row)) + "\n"
+			e.a.clipboard = string(e.Line(e.Pos.Row)) + "\n"
 			e.DeleteRange(ui.Pos{Row: e.Pos.Row}, ui.Pos{Row: e.Pos.Row + 1})
 			return true
 		}
 
-		e.a.copyStr = e.SelectedText()
+		e.a.clipboard = e.SelectedText()
 		e.DeleteRange(start, end)
 	case "ctrl+v":
-		if e.a.copyStr == "" {
-			return true
-		}
-		e.InsertText(e.a.copyStr)
+		e.InsertText(e.a.clipboard)
 	case "ctrl+n":
 		e.autoComplete()
 	case "ctrl+d":

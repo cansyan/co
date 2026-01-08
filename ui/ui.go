@@ -1097,7 +1097,8 @@ func (a *App) Stop() {
 	close(a.done)
 }
 
-// Overlay displays an overlay element over the main layout.
+// Overlay displays an overlay element over the main layout
+// with the given alignment, and sets focus to it.
 func (a *App) Overlay(e Element, align string) {
 	a.overlay = &overlay{
 		child: e,
@@ -1109,7 +1110,7 @@ func (a *App) Overlay(e Element, align string) {
 	a.SetFocus(e)
 }
 
-// CloseOverlay dismiss the overlay.
+// CloseOverlay dismiss the overlay, restore previous focus.
 func (a *App) CloseOverlay() {
 	if a.overlay != nil {
 		a.SetFocus(a.overlay.prevFocus)
