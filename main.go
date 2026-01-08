@@ -40,6 +40,7 @@ func main() {
 	ui.Logger = log.Default()
 
 	app = ui.NewApp()
+	app.BindKey("Ctrl+C", nil) // reset default behavior
 	app.BindKey("Ctrl+Q", app.Stop)
 
 	editorApp := newEditorApp()
@@ -259,6 +260,42 @@ func (a *EditorApp) FocusTarget() ui.Element {
 func (a *EditorApp) OnFocus() {}
 func (a *EditorApp) OnBlur()  {}
 
+func (a *EditorApp) resetFind() {
+	a.showSearch = true
+	sb := a.searchBar
+	sb.matches = nil
+	sb.activeIndex = -1
+
+	// reuse previous query or selected text, but select all for easy replacement
+	query := sb.input.Text()
+	if e := a.getEditor(); e != nil {
+		if s := e.SelectedText(); s != "" {
+			query = s
+			sb.input.SetText(s)
+		}
+	}
+	sb.input.Select(0, len([]rune(query)))
+
+	app.SetFocus(sb)
+}
+
+func (a *EditorApp) openFileDialog() {
+	input := ui.NewTextInput()
+	input.SetPlaceholder("Open file path: ")
+	input.OnCommit(func() {
+		if text := input.Text(); text != "" {
+			if err := a.openFile(text); err != nil {
+				log.Print(err)
+				a.setStatus(err.Error(), 3*time.Second)
+			}
+		}
+		app.CloseOverlay()
+		a.requestFocus()
+	})
+	view := ui.Border(ui.Frame(input, 60, 1))
+	app.Overlay(view, "top")
+}
+
 // handles app-level commands
 func (a *EditorApp) handleGlobalKey(ev *tcell.EventKey) bool {
 	switch strings.ToLower(ev.Name()) {
@@ -269,19 +306,7 @@ func (a *EditorApp) handleGlobalKey(ev *tcell.EventKey) bool {
 		a.closeTab(a.activeTab)
 		return true
 	case "ctrl+f":
-		a.showSearch = true
-		sb := a.searchBar
-		sb.matches = nil
-		sb.activeIndex = -1
-		query := sb.input.Text()
-		if e := a.getEditor(); e != nil {
-			if s := e.SelectedText(); s != "" {
-				query = s
-				sb.input.SetText(s)
-			}
-		}
-		sb.input.Select(0, len([]rune(query)))
-		app.SetFocus(sb)
+		a.resetFind()
 		return true
 	case "ctrl+k":
 		a.activateLeader()
@@ -301,20 +326,7 @@ func (a *EditorApp) handleGlobalKey(ev *tcell.EventKey) bool {
 		a.showPalette("@")
 		return true
 	case "ctrl+o":
-		input := ui.NewTextInput()
-		input.SetPlaceholder("Open file path: ")
-		input.OnCommit(func() {
-			if text := input.Text(); text != "" {
-				if err := a.openFile(text); err != nil {
-					log.Print(err)
-					a.setStatus(err.Error(), 3*time.Second)
-				}
-			}
-			app.CloseOverlay()
-			a.requestFocus()
-		})
-		view := ui.Border(ui.Frame(input, 60, 1))
-		app.Overlay(view, "top")
+		a.openFileDialog()
 		return true
 	case "ctrl+t":
 		a.newTab("untitled")
@@ -1075,13 +1087,13 @@ func (a *EditorApp) activateLeader() {
 
 type Editor struct {
 	*ui.TextEditor
-	a *EditorApp
+	app *EditorApp
 }
 
 func NewEditor(r *EditorApp) *Editor {
 	return &Editor{
 		TextEditor: ui.NewTextEditor(),
-		a:          r,
+		app:        r,
 	}
 }
 
@@ -1092,6 +1104,8 @@ func (e *Editor) Layout(x, y, w, h int) *ui.LayoutNode {
 	}
 }
 
+// HandleKey customized key handling for the editor.
+// If the key is not handled here, it will bubble up to the app level.
 func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 	switch strings.ToLower(ev.Name()) {
 	case "ctrl+a":
@@ -1101,23 +1115,23 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		s := e.SelectedText()
 		if s == "" {
 			// copy current line by default
-			e.a.clipboard = string(e.Line(e.Pos.Row))
+			e.app.clipboard = string(e.Line(e.Pos.Row))
 			return true
 		}
-		e.a.clipboard = s
+		e.app.clipboard = s
 	case "ctrl+x":
 		start, end, ok := e.Selection()
 		if !ok {
 			// cut line by default
-			e.a.clipboard = string(e.Line(e.Pos.Row)) + "\n"
+			e.app.clipboard = string(e.Line(e.Pos.Row)) + "\n"
 			e.DeleteRange(ui.Pos{Row: e.Pos.Row}, ui.Pos{Row: e.Pos.Row + 1})
 			return true
 		}
 
-		e.a.clipboard = e.SelectedText()
+		e.app.clipboard = e.SelectedText()
 		e.DeleteRange(start, end)
 	case "ctrl+v":
-		e.InsertText(e.a.clipboard)
+		e.InsertText(e.app.clipboard)
 	case "ctrl+n":
 		e.autoComplete()
 	case "ctrl+d":
@@ -1148,25 +1162,22 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		for i, char := range e.Line(e.Pos.Row) {
 			if !unicode.IsSpace(char) {
 				e.SetCursor(e.Pos.Row, i)
-				return true
+				break
 			}
 		}
 	case "alt+right": // goto the end of line
 		e.ClearSelection()
 		e.SetCursor(e.Pos.Row, len(e.Line(e.Pos.Row)))
 	case "esc":
-		if _, _, ok := e.Selection(); ok {
-			e.ClearSelection()
-			return true
+		if _, _, ok := e.Selection(); !ok {
+			return e.app.handleGlobalKey(ev)
 		}
-		// Bubble event to parent
-		return e.a.handleGlobalKey(ev)
+		e.ClearSelection()
 	default:
-		// Try parent for global shortcuts first
-		if e.a.handleGlobalKey(ev) {
-			return true
+		if !e.TextEditor.HandleKey(ev) {
+			// Bubble event to parent
+			return e.app.handleGlobalKey(ev)
 		}
-		return e.TextEditor.HandleKey(ev)
 	}
 	return true
 }
