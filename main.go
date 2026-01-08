@@ -81,13 +81,18 @@ type EditorApp struct {
 
 func newEditorApp() *EditorApp {
 	r := &EditorApp{}
-	// disable the menu button's feedback, less noise
-	r.newBtn = ui.NewButton("New", func() {
-		r.newTab("untitled")
-		app.SetFocus(r)
-	}).DisableFeedback()
-	r.saveBtn = ui.NewButton("Save", r.saveFile).DisableFeedback()
-	r.quitBtn = ui.NewButton("Quit", app.Stop).DisableFeedback()
+	r.newBtn = &ui.Button{
+		Text: "New",
+		OnClick: func() {
+			r.newTab("untitled")
+			app.SetFocus(r)
+		},
+		// disable the menu button's feedback, less noise
+		NoFeedback: true,
+	}
+
+	r.saveBtn = &ui.Button{Text: "Save", OnClick: r.saveFile, NoFeedback: true}
+	r.quitBtn = &ui.Button{Text: "Quit", OnClick: app.Stop, NoFeedback: true}
 	r.searchBar = NewSearchBar(r)
 	return r
 }
@@ -280,7 +285,7 @@ func (a *EditorApp) resetFind() {
 }
 
 func (a *EditorApp) openFileDialog() {
-	input := ui.NewTextInput()
+	input := new(ui.TextInput)
 	input.SetPlaceholder("Open file path: ")
 	input.OnCommit(func() {
 		if text := input.Text(); text != "" {
@@ -691,7 +696,7 @@ type Palette struct {
 
 func NewPalette() *Palette {
 	p := &Palette{
-		input: ui.NewTextInput(),
+		input: new(ui.TextInput),
 		list:  ui.NewListView(),
 	}
 	return p
@@ -872,7 +877,7 @@ type SearchBar struct {
 func NewSearchBar(r *EditorApp) *SearchBar {
 	sb := &SearchBar{a: r, activeIndex: -1}
 	sb.input = &proxyInput{
-		TextInput: ui.NewTextInput(),
+		TextInput: new(ui.TextInput),
 		parent:    sb,
 	}
 	// Lazy Evaluation:

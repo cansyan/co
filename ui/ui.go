@@ -254,26 +254,20 @@ func (t *Text) Render(s Screen, rect Rect) {
 
 type Button struct {
 	Style   Style
-	text    string
-	onClick func()
+	Text    string
+	OnClick func()
 
 	hovered    bool
 	pressed    bool
-	noFeedback bool
+	NoFeedback bool // disables visual feedback for hover/press states
 }
 
 // NewButton creates a new button element with the given label.
 func NewButton(text string, onClick func()) *Button {
-	return &Button{text: text, onClick: onClick}
+	return &Button{Text: text, OnClick: onClick}
 }
 
-// DisableFeedback disables visual feedback for hover/press states (chainable)
-func (b *Button) DisableFeedback() *Button {
-	b.noFeedback = true
-	return b
-}
-
-func (b *Button) MinSize() (int, int) { return runewidth.StringWidth(b.text) + 2, 1 }
+func (b *Button) MinSize() (int, int) { return runewidth.StringWidth(b.Text) + 2, 1 }
 func (b *Button) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: b,
@@ -282,13 +276,13 @@ func (b *Button) Layout(x, y, w, h int) *LayoutNode {
 }
 func (b *Button) Render(s Screen, rect Rect) {
 	st := b.Style
-	if !b.noFeedback && b.hovered {
+	if !b.NoFeedback && b.hovered {
 		st.BG = Theme.Hover
 	}
-	if !b.noFeedback && b.pressed {
+	if !b.NoFeedback && b.pressed {
 		st.BG = Theme.Selection
 	}
-	label := " " + b.text + " "
+	label := " " + b.Text + " "
 	DrawString(s, rect.X, rect.Y, rect.W, label, st.Apply())
 }
 
@@ -308,8 +302,8 @@ func (b *Button) OnMouseDown(x, y int) {
 func (b *Button) OnMouseUp(x, y int) {
 	if b.pressed && b.hovered {
 		// real click
-		if b.onClick != nil {
-			b.onClick()
+		if b.OnClick != nil {
+			b.OnClick()
 		}
 	}
 	b.pressed = false
@@ -317,8 +311,8 @@ func (b *Button) OnMouseUp(x, y int) {
 
 // Trigger invokes the button's click action programmatically
 func (b *Button) Trigger() {
-	if b.onClick != nil {
-		b.onClick()
+	if b.OnClick != nil {
+		b.OnClick()
 	}
 }
 
@@ -334,7 +328,8 @@ func (b *Button) SetBackground(color string) *Button {
 	return b
 }
 
-// TextInput is a single-line editable text input field.
+// TextInput is a single-line text input field.
+// The zero value for TextInput is ready to use.
 type TextInput struct {
 	text        []rune
 	cursor      int // cursor position; also selection end
@@ -345,10 +340,6 @@ type TextInput struct {
 	anchor      int // selection anchor (rune index)
 	pressed     bool
 	onCommit    func()
-}
-
-func NewTextInput() *TextInput {
-	return &TextInput{}
 }
 
 // Text returns the current text content
