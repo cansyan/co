@@ -1104,7 +1104,7 @@ func (e *Editor) Layout(x, y, w, h int) *ui.LayoutNode {
 	}
 }
 
-// HandleKey customized key handling for the editor.
+// HandleKey handles editor-specific keybindings.
 // If the key is not handled here, it will bubble up to the app level.
 func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 	switch strings.ToLower(ev.Name()) {
