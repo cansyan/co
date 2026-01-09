@@ -462,7 +462,9 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 		e.Pos.Col = lead
 		e.ScrollTo(e.Pos.Row)
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
-		e.SaveEdit()
+		if !e.MergeNext {
+			e.SaveEdit()
+		}
 		e.MergeNext = true
 		defer onChange()
 		e.Dirty = true
@@ -484,7 +486,9 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 			e.ScrollTo(e.Pos.Row)
 		}
 	case tcell.KeyRune:
-		e.SaveEdit()
+		if !e.MergeNext {
+			e.SaveEdit()
+		}
 		e.MergeNext = true
 		defer onChange()
 		e.Dirty = true
@@ -1052,7 +1056,6 @@ func (e *TextEditor) DeleteRange(start, end Pos) {
 }
 
 // SaveEdit saves the current buffer state to the undo stack.
-// If MergeNext is true, it replaces the last undo entry instead of adding a new one.
 func (e *TextEditor) SaveEdit() {
 	// Create a deep copy of the buffer
 	bufCopy := make([][]rune, len(e.buf))
@@ -1067,12 +1070,7 @@ func (e *TextEditor) SaveEdit() {
 		selecting: e.selecting,
 	}
 
-	if e.MergeNext && len(e.undoStack) > 0 {
-		// Replace the last undo entry (merge consecutive edits)
-		e.undoStack[len(e.undoStack)-1] = record
-	} else {
-		e.undoStack = append(e.undoStack, record)
-	}
+	e.undoStack = append(e.undoStack, record)
 
 	// Clear redo stack when new edit is made
 	e.redoStack = nil
