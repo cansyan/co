@@ -802,7 +802,6 @@ func NewApp() *App {
 		done:     make(chan struct{}),
 		bindings: make(map[string]func()),
 	}
-	a.bindings["Ctrl+C"] = a.Stop
 	return a
 }
 
@@ -984,7 +983,7 @@ func (a *App) Run(root Element) error {
 		ev := screen.PollEvent()
 		switch ev := ev.(type) {
 		case *tcell.EventInterrupt:
-			// 被 PostEvent 喚醒
+			// waken by Refresh()
 		case *tcell.EventResize:
 			draw()
 			screen.Sync()

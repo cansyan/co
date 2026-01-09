@@ -40,7 +40,6 @@ func main() {
 	ui.Logger = log.Default()
 
 	app = ui.NewApp()
-	app.BindKey("Ctrl+C", nil) // reset default behavior
 	app.BindKey("Ctrl+Q", app.Stop)
 
 	editorApp := newEditorApp()
@@ -870,6 +869,7 @@ type SearchBar struct {
 	input       *proxyInput
 	btnPrev     *ui.Button
 	btnNext     *ui.Button
+	closeBtn    *ui.Button
 	matches     []ui.Pos
 	activeIndex int // -1 表示尚未進行導航定位
 }
@@ -888,8 +888,12 @@ func NewSearchBar(r *EditorApp) *SearchBar {
 		sb.activeIndex = -1
 	})
 
-	sb.btnPrev = ui.NewButton("< Prev", func() { sb.navigate(false) })
-	sb.btnNext = ui.NewButton("Next >", func() { sb.navigate(true) })
+	sb.btnPrev = ui.NewButton("<", func() { sb.navigate(false) })
+	sb.btnNext = ui.NewButton(">", func() { sb.navigate(true) })
+	sb.closeBtn = ui.NewButton("x", func() {
+		sb.a.showSearch = false
+		sb.a.requestFocus()
+	})
 	return sb
 }
 
@@ -1025,6 +1029,7 @@ func (sb *SearchBar) Layout(x, y, w, h int) *ui.LayoutNode {
 		ui.PadH(ui.NewText(countStr), 1),
 		sb.btnPrev,
 		sb.btnNext,
+		sb.closeBtn,
 	)
 	node.Children = []*ui.LayoutNode{view.Layout(x, y, w, h)}
 	return node
