@@ -14,6 +14,14 @@ import (
 // Highlighter defines a function that returns syntax spans for a line of text.
 type Highlighter func(line []rune) []StyleSpan
 
+// editRecord represents a single edit operation that can be undone/redone.
+type editRecord struct {
+	buf       [][]rune // snapshot of buffer state
+	pos       Pos      // cursor position after edit
+	anchor    Pos      // selection anchor
+	selecting bool     // selection state
+}
+
 // TextEditor is a multi-line editable text area.
 type TextEditor struct {
 	buf     [][]rune // row-major text buffer
@@ -35,6 +43,11 @@ type TextEditor struct {
 
 	onChange func()
 	Dirty    bool
+
+	// Undo/redo support
+	undoStack []editRecord
+	redoStack []editRecord
+	MergeNext bool // whether to merge next edit with current one
 }
 
 func NewTextEditor() *TextEditor {
@@ -418,6 +431,8 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 			e.ScrollTo(e.Pos.Row)
 		}
 	case tcell.KeyEnter:
+		e.SaveEdit()
+		e.MergeNext = false
 		defer onChange()
 		e.Dirty = true
 		if start, end, ok := e.Selection(); ok {
@@ -447,6 +462,10 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 		e.Pos.Col = lead
 		e.ScrollTo(e.Pos.Row)
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
+		if !e.MergeNext {
+			e.SaveEdit()
+		}
+		e.MergeNext = true
 		defer onChange()
 		e.Dirty = true
 		if start, end, ok := e.Selection(); ok {
@@ -467,6 +486,10 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 			e.ScrollTo(e.Pos.Row)
 		}
 	case tcell.KeyRune:
+		if !e.MergeNext {
+			e.SaveEdit()
+		}
+		e.MergeNext = true
 		defer onChange()
 		e.Dirty = true
 		// 如果有選取，先刪除選取範圍，再插入字元
@@ -478,6 +501,8 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 		e.buf[e.Pos.Row] = slices.Insert(e.buf[e.Pos.Row], e.Pos.Col, r)
 		e.Pos.Col++
 	case tcell.KeyTAB:
+		e.SaveEdit()
+		e.MergeNext = false
 		defer onChange()
 		e.Dirty = true
 		if start, end, ok := e.Selection(); ok {
@@ -1025,6 +1050,97 @@ func (e *TextEditor) DeleteRange(start, end Pos) {
 
 	e.ScrollTo(e.Pos.Row)
 	e.Dirty = true
+	if e.onChange != nil {
+		e.onChange()
+	}
+}
+
+// SaveEdit saves the current buffer state to the undo stack.
+func (e *TextEditor) SaveEdit() {
+	// Create a deep copy of the buffer
+	bufCopy := make([][]rune, len(e.buf))
+	for i := range e.buf {
+		bufCopy[i] = slices.Clone(e.buf[i])
+	}
+
+	record := editRecord{
+		buf:       bufCopy,
+		pos:       e.Pos,
+		anchor:    e.anchor,
+		selecting: e.selecting,
+	}
+
+	e.undoStack = append(e.undoStack, record)
+
+	// Clear redo stack when new edit is made
+	e.redoStack = nil
+}
+
+// Undo reverts the last edit operation.
+func (e *TextEditor) Undo() {
+	if len(e.undoStack) == 0 {
+		return
+	}
+
+	// Save current state to redo stack
+	bufCopy := make([][]rune, len(e.buf))
+	for i := range e.buf {
+		bufCopy[i] = slices.Clone(e.buf[i])
+	}
+	e.redoStack = append(e.redoStack, editRecord{
+		buf:       bufCopy,
+		pos:       e.Pos,
+		anchor:    e.anchor,
+		selecting: e.selecting,
+	})
+
+	// Restore previous state
+	record := e.undoStack[len(e.undoStack)-1]
+	e.undoStack = e.undoStack[:len(e.undoStack)-1]
+
+	e.buf = record.buf
+	e.Pos = record.pos
+	e.anchor = record.anchor
+	e.selecting = record.selecting
+
+	e.adjustCol()
+	e.ScrollTo(e.Pos.Row)
+	e.MergeNext = false
+	if e.onChange != nil {
+		e.onChange()
+	}
+}
+
+// Redo reapplies an undone edit operation.
+func (e *TextEditor) Redo() {
+	if len(e.redoStack) == 0 {
+		return
+	}
+
+	// Save current state to undo stack
+	bufCopy := make([][]rune, len(e.buf))
+	for i := range e.buf {
+		bufCopy[i] = slices.Clone(e.buf[i])
+	}
+	e.undoStack = append(e.undoStack, editRecord{
+		buf:       bufCopy,
+		pos:       e.Pos,
+		anchor:    e.anchor,
+		selecting: e.selecting,
+	})
+
+	// Restore redo state
+	record := e.redoStack[len(e.redoStack)-1]
+	e.redoStack = e.redoStack[:len(e.redoStack)-1]
+
+	e.buf = record.buf
+	e.Pos = record.pos
+	e.anchor = record.anchor
+	e.selecting = record.selecting
+
+	e.adjustCol()
+	e.ScrollTo(e.Pos.Row)
+	e.MergeNext = false
 	if e.onChange != nil {
 		e.onChange()
 	}
