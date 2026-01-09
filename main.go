@@ -1113,6 +1113,12 @@ func (e *Editor) Layout(x, y, w, h int) *ui.LayoutNode {
 // If the key is not handled here, it will bubble up to the app level.
 func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 	switch strings.ToLower(ev.Name()) {
+	case "ctrl+z":
+		e.TextEditor.Undo()
+		return true
+	case "ctrl+y":
+		e.TextEditor.Redo()
+		return true
 	case "ctrl+a":
 		lastLine := e.Line(e.Len() - 1)
 		e.SetSelection(ui.Pos{}, ui.Pos{Row: e.Len() - 1, Col: len(lastLine)})
@@ -1125,6 +1131,8 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		}
 		e.app.clipboard = s
 	case "ctrl+x":
+		e.TextEditor.SaveEdit()
+		e.MergeNext = false
 		start, end, ok := e.Selection()
 		if !ok {
 			// cut line by default
@@ -1136,6 +1144,8 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		e.app.clipboard = e.SelectedText()
 		e.DeleteRange(start, end)
 	case "ctrl+v":
+		e.TextEditor.SaveEdit()
+		e.MergeNext = false
 		e.InsertText(e.app.clipboard)
 	case "ctrl+n":
 		e.autoComplete()
@@ -1211,6 +1221,9 @@ func (e *Editor) autoComplete() {
 		return
 	}
 	word := string(e.Line(e.Pos.Row)[start:end])
+
+	e.TextEditor.SaveEdit()
+	e.MergeNext = false
 
 	symbols := extractSymbols(e.String())
 	for _, s := range symbols {
