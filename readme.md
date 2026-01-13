@@ -81,7 +81,7 @@ go build -o co main.go
 
 ## Architecture
 
-The editor is built on a custom TUI framework (`co/ui`) with:
+The editor is built on a custom TUI package (`co/ui`) with:
 - Component-based layout system
 - Event-driven input handling
 - Efficient screen rendering with `tcell`

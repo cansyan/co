@@ -54,7 +54,9 @@ func main() {
 			return
 		}
 		if line > 0 {
-			editorApp.gotoLine(line)
+			if e := editorApp.getEditor(); e != nil {
+				e.gotoLine(line)
+			}
 		}
 	} else {
 		editorApp.newTab("untitled")
@@ -85,6 +87,8 @@ type EditorApp struct {
 	newBtn    *ui.Button
 	saveBtn   *ui.Button
 	quitBtn   *ui.Button
+	backBtn   *ui.Button
+	fwdBtn    *ui.Button
 	status    string
 
 	searchBar  *SearchBar
@@ -93,22 +97,31 @@ type EditorApp struct {
 
 	leaderKeyActive bool
 	leaderTimer     *time.Timer
+
+	history        []historyEntry
+	historyPos     int
+	navigatingHist bool
+}
+
+type historyEntry struct {
+	path string
+	pos  ui.Pos
 }
 
 func newEditorApp(uiApp *ui.App) *EditorApp {
-	r := &EditorApp{app: uiApp}
+	r := &EditorApp{app: uiApp, historyPos: -1}
 	r.newBtn = &ui.Button{
-		Text: "New",
+		Text: "＋",
 		OnClick: func() {
 			r.newTab("untitled")
 			uiApp.SetFocus(r)
 		},
-		// disable the menu button's feedback, less noise
-		NoFeedback: true,
 	}
 
-	r.saveBtn = &ui.Button{Text: "Save", OnClick: r.saveFile, NoFeedback: true}
-	r.quitBtn = &ui.Button{Text: "Quit", OnClick: uiApp.Stop, NoFeedback: true}
+	r.backBtn = &ui.Button{Text: "←", OnClick: r.goBack}
+	r.fwdBtn = &ui.Button{Text: "→", OnClick: r.goForward}
+	r.saveBtn = &ui.Button{Text: "Save", OnClick: r.saveFile}
+	r.quitBtn = &ui.Button{Text: "Quit", OnClick: uiApp.Stop}
 	r.searchBar = NewSearchBar(r)
 	return r
 }
@@ -216,7 +229,7 @@ func (a *EditorApp) Layout(x, y, w, h int) *ui.LayoutNode {
 
 	mainStack := ui.VStack()
 	mainStack.Append(
-		ui.HStack(ui.Grow(tabLabels), a.newBtn, a.saveBtn, a.quitBtn),
+		ui.HStack(ui.Grow(tabLabels), a.backBtn, a.fwdBtn, a.newBtn, a.saveBtn, a.quitBtn),
 	)
 	if len(a.tabs) > 0 {
 		mainStack.Append(ui.Grow(a.tabs[a.activeTab].editor))
@@ -370,21 +383,6 @@ func (a *EditorApp) getEditor() *Editor {
 	return a.tabs[a.activeTab].editor
 }
 
-func (a *EditorApp) gotoLine(line int) {
-	editor := a.getEditor()
-	if editor == nil {
-		return
-	}
-	if line < 1 {
-		line = 1
-	}
-	if line > editor.Len() {
-		line = editor.Len()
-	}
-	editor.SetCursor(line-1, 0)
-	editor.CenterRow(line - 1)
-}
-
 func (a *EditorApp) showPalette(prefix string) {
 	p := NewPalette()
 	p.input.OnChange(func() {
@@ -402,7 +400,9 @@ func (a *EditorApp) showPalette(prefix string) {
 			}
 
 			p.list.Append(fmt.Sprintf("Go to Line %d", n), func() {
-				a.gotoLine(n)
+				if e := a.getEditor(); e != nil {
+					e.gotoLine(n)
+				}
 				a.requestFocus()
 			})
 
@@ -432,8 +432,7 @@ func (a *EditorApp) showPalette(prefix string) {
 				}
 				if ok {
 					p.list.Append(s.Signature, func() {
-						editor.SetCursor(s.Line, 0)
-						editor.CenterRow(s.Line)
+						editor.gotoLine(s.Line + 1)
 						a.requestFocus()
 					})
 				}
@@ -546,6 +545,7 @@ func (a *EditorApp) openFile(name string) error {
 	for i, tab := range a.tabs {
 		if tab.path == abs {
 			a.activeTab = i
+			a.recordJump()
 			return nil
 		}
 	}
@@ -557,7 +557,74 @@ func (a *EditorApp) openFile(name string) error {
 
 	a.newTab(abs)
 	a.getEditor().SetText(string(bs))
+	a.recordJump()
 	return nil
+}
+
+// pushHistory tracks significant cursor movements
+// (like jumping to definitions, jumping between files, large jumps within a file),
+// not every single cursor movement
+func (a *EditorApp) pushHistory(path string, pos ui.Pos) {
+	if a.navigatingHist {
+		return
+	}
+	entry := historyEntry{path: path, pos: pos}
+	// truncate forward history when pushing new entry
+	if a.historyPos >= 0 && a.historyPos < len(a.history)-1 {
+		a.history = a.history[:a.historyPos+1]
+	}
+	// avoid duplicate consecutive entries with same location
+	if len(a.history) > 0 {
+		last := a.history[len(a.history)-1]
+		if last.path == path && last.pos.Row == pos.Row {
+			return
+		}
+	}
+	a.history = append(a.history, entry)
+	a.historyPos = len(a.history) - 1
+}
+
+func (a *EditorApp) recordJump() {
+	if e := a.getEditor(); e != nil && a.tabs[a.activeTab].path != "" {
+		a.pushHistory(a.tabs[a.activeTab].path, e.Pos)
+	}
+}
+
+func (a *EditorApp) goBack() {
+	defer a.requestFocus()
+	if a.historyPos <= 0 {
+		return
+	}
+	a.historyPos--
+	a.navigateToHistory()
+}
+
+func (a *EditorApp) goForward() {
+	defer a.requestFocus()
+	if a.historyPos >= len(a.history)-1 {
+		return
+	}
+	a.historyPos++
+	a.navigateToHistory()
+}
+
+func (a *EditorApp) navigateToHistory() {
+	if a.historyPos < 0 || a.historyPos >= len(a.history) {
+		return
+	}
+	a.navigatingHist = true
+	defer func() { a.navigatingHist = false }()
+
+	entry := a.history[a.historyPos]
+	if err := a.openFile(entry.path); err != nil {
+		log.Print(err)
+		a.setStatus(err.Error(), 3*time.Second)
+		return
+	}
+	if e := a.getEditor(); e != nil {
+		e.SetCursor(entry.pos.Row, entry.pos.Col)
+		e.CenterRow(entry.pos.Row)
+	}
 }
 
 func (a *EditorApp) saveFile() {
@@ -671,7 +738,7 @@ func newTab(root *EditorApp, label string) *tab {
 		a:    root,
 		path: label,
 	}
-	t.closeBtn = ui.NewButton("x", func() {
+	t.closeBtn = ui.NewButton("✕", func() {
 		for i, tab := range root.tabs {
 			if tab == t {
 				t.a.closeTab(i)
@@ -883,9 +950,9 @@ func NewSearchBar(r *EditorApp) *SearchBar {
 		sb.activeIndex = -1
 	})
 
-	sb.btnPrev = ui.NewButton("<", func() { sb.navigate(false) })
-	sb.btnNext = ui.NewButton(">", func() { sb.navigate(true) })
-	sb.closeBtn = ui.NewButton("x", func() {
+	sb.btnPrev = ui.NewButton("↑", func() { sb.navigate(false) })
+	sb.btnNext = ui.NewButton("↓", func() { sb.navigate(true) })
+	sb.closeBtn = ui.NewButton("✕", func() {
 		sb.a.showSearch = false
 		sb.a.requestFocus()
 	})
@@ -1168,11 +1235,9 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 	case "ctrl+g":
 		e.gotoDefinition()
 	case "alt+up": // goto first line
-		e.SetCursor(0, 0)
-		e.CenterRow(0)
+		e.gotoLine(1)
 	case "alt+down": // goto last line
-		e.SetCursor(e.Len()-1, 0)
-		e.CenterRow(e.Len() - 1)
+		e.gotoLine(e.Len())
 	case "alt+left": // goto the first non-whitespace character
 		e.ClearSelection()
 		for i, char := range e.Line(e.Pos.Row) {
@@ -1198,6 +1263,18 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 	return true
 }
 
+func (e *Editor) gotoLine(line int) {
+	if line < 1 {
+		line = 1
+	}
+	if line > e.Len() {
+		line = e.Len()
+	}
+	e.SetCursor(line-1, 0)
+	e.CenterRow(line - 1)
+	e.app.recordJump()
+}
+
 func (e *Editor) gotoDefinition() {
 	start, end, ok := e.WordRangeAtCursor()
 	if !ok {
@@ -1208,9 +1285,7 @@ func (e *Editor) gotoDefinition() {
 	symbols := extractSymbols(e.String())
 	for _, s := range symbols {
 		if s.Name == word {
-			// Move the cursor to the symbol's definition
-			e.SetCursor(s.Line, 0)
-			e.CenterRow(s.Line)
+			e.gotoLine(s.Line + 1)
 			return
 		}
 	}
@@ -1243,6 +1318,11 @@ func (e *Editor) autoComplete() {
 			return
 		}
 	}
+}
+
+func (e *Editor) OnMouseDown(lx, ly int) {
+	e.TextEditor.OnMouseDown(lx, ly)
+	e.app.recordJump()
 }
 
 const (
