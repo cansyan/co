@@ -1155,6 +1155,7 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 
 		e.app.clipboard = e.SelectedText()
 		e.DeleteRange(start, end)
+		e.ClearSelection()
 	case "ctrl+v":
 		e.TextEditor.SaveEdit()
 		e.MergeNext = false

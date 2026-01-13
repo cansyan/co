@@ -863,46 +863,46 @@ func hitTest(n *LayoutNode, p Point) (Element, Point) {
 }
 
 func (a *App) SetFocus(e Element) {
-	defer func(prev Element) {
-		Logger.Printf("Focus changed: %T -> %T", prev, a.focused)
-	}(a.focused)
-
-	if e == nil {
-		if a.focused != nil {
-			if f, ok := a.focused.(Focusable); ok {
-				f.OnBlur()
-			}
-			a.screen.HideCursor()
-		}
-		a.focused = nil
-		return
-	}
-
 	if e == a.focused {
 		return
 	}
 
-	if a.focused != nil {
-		if f, ok := a.focused.(Focusable); ok {
-			f.OnBlur()
-		}
-		a.screen.HideCursor()
+	prev := a.focused
+	defer func() {
+		Logger.Printf("Focus changed: %T -> %T", prev, a.focused)
+	}()
+
+	a.blurCurrent()
+
+	if e == nil {
+		a.focused = nil
+		return
 	}
 
 	e = a.resolveFocus(e)
 	if fe, ok := e.(Focusable); ok {
 		fe.OnFocus()
 		a.focused = e
+		a.clearOverlayIfFocusOutside(e)
 	} else {
 		a.focused = nil
 	}
+}
 
-	// If the overlay exists but the focused element is not part of it,
-	// remove the overlay.
-	if n := findNode(a.tree, a.overlay); n != nil {
-		if findNode(n, e) == nil {
-			a.overlay = nil
-		}
+func (a *App) blurCurrent() {
+	if a.focused == nil {
+		return
+	}
+	if f, ok := a.focused.(Focusable); ok {
+		f.OnBlur()
+	}
+	a.screen.HideCursor()
+}
+
+func (a *App) clearOverlayIfFocusOutside(e Element) {
+	overlayNode := findNode(a.tree, a.overlay)
+	if overlayNode != nil && findNode(overlayNode, e) == nil {
+		a.overlay = nil
 	}
 }
 
