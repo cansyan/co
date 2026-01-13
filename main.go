@@ -394,22 +394,15 @@ func (a *EditorApp) showPalette(prefix string) {
 
 		switch {
 		case strings.HasPrefix(text, ":"):
-			editor := a.getEditor()
-			if editor == nil {
-				return
-			}
-
 			// 1. Go to Line
 			lineStr := text[1:]
-			line := 1
-			if _, err := fmt.Sscanf(lineStr, "%d", &line); err != nil || line < 1 {
-				p.list.Append(fmt.Sprintf("type line number between 1 and %d", editor.Len()), nil)
+			n, err := strconv.Atoi(lineStr)
+			if err != nil || n < 1 {
 				return
 			}
 
-			p.list.Append(fmt.Sprintf("Go to Line %d", line), func() {
-				editor.SetCursor(line-1, 0)
-				editor.CenterRow(line - 1)
+			p.list.Append(fmt.Sprintf("Go to Line %d", n), func() {
+				a.gotoLine(n)
 				a.requestFocus()
 			})
 

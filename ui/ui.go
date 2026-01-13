@@ -709,11 +709,17 @@ func (l *ListView) OnBlur()  {}
 
 // SelectNext moves selection to the next item
 func (l *ListView) SelectNext() {
+	if len(l.Items) == 0 {
+		return
+	}
 	l.Selected = (l.Selected + 1) % len(l.Items)
 }
 
 // SelectPrev moves selection to the previous item
 func (l *ListView) SelectPrev() {
+	if len(l.Items) == 0 {
+		return
+	}
 	l.Selected = (l.Selected - 1 + len(l.Items)) % len(l.Items)
 }
 
