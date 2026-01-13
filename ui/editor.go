@@ -106,34 +106,32 @@ func (e *TextEditor) SetCursor(row, col int) {
 	e.adjustCol()
 }
 
-// CenterRow 僅負責將特定行移動到螢幕中心，提供最大上下視野
-// mainly for jumping to search result, symbol
+// CenterRow centers the given row vertically in the viewport.
+// Used for jump operations (goto line, search results) where you want
+// the target line in the middle of the screen for context.
 func (e *TextEditor) CenterRow(row int) {
-	if e.viewH <= 0 {
-		return
-	}
-
 	e.offsetY = row - (e.viewH / 2)
-	e.clampScroll() // 抽離出的邊界檢查邏輯
+	e.clampScroll()
 }
 
-// ScrollTo adjusts offsetY to ensures the row is visible on the screen,
-// does minimal scrolling, and mainly for arrow key movement and typing.
-func (e *TextEditor) ScrollTo(row int) {
+// EnsureVisible ensures the current cursor row is visible with minimal scrolling.
+// Used for normal navigation (arrow keys, typing) where you want smooth,
+// minimal viewport movement - only scrolls if cursor goes out of bounds.
+func (e *TextEditor) EnsureVisible(row int) {
 	if e.viewH <= 0 {
 		return
 	}
 
-	const scrolloff = 1 // 預留 1 行邊距，體驗更好
+	const scrolloff = 1
 
-	// 處理下方出界
-	if e.Pos.Row >= e.offsetY+e.viewH-scrolloff {
-		e.offsetY = e.Pos.Row - e.viewH + 1 + scrolloff
+	// Scroll down if row goes below viewport
+	if row >= e.offsetY+e.viewH-scrolloff {
+		e.offsetY = row - e.viewH + 1 + scrolloff
 	}
 
-	// 處理上方出界
-	if e.Pos.Row < e.offsetY+scrolloff {
-		e.offsetY = e.Pos.Row - scrolloff
+	// Scroll up if row goes above viewport
+	if row < e.offsetY+scrolloff {
+		e.offsetY = row - scrolloff
 	}
 
 	e.clampScroll()
@@ -354,7 +352,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 		e.ClearSelection()
 		if ev.Modifiers()&tcell.ModMeta != 0 {
 			e.Pos.Row, e.Pos.Col = 0, 0
-			e.ScrollTo(e.Pos.Row)
+			e.EnsureVisible(e.Pos.Row)
 			return
 		}
 
@@ -366,13 +364,13 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 			e.Pos.Row--
 			e.Pos.Col = visualColToLine(e.buf[e.Pos.Row], e.goalCol)
 			e.adjustCol()
-			e.ScrollTo(e.Pos.Row)
+			e.EnsureVisible(e.Pos.Row)
 		}
 	case tcell.KeyDown:
 		e.ClearSelection()
 		if ev.Modifiers()&tcell.ModMeta != 0 {
 			e.Pos.Row, e.Pos.Col = len(e.buf)-1, 0
-			e.ScrollTo(e.Pos.Row)
+			e.EnsureVisible(e.Pos.Row)
 			return
 		}
 
@@ -384,7 +382,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 			e.Pos.Row++
 			e.Pos.Col = visualColToLine(e.buf[e.Pos.Row], e.goalCol)
 			e.adjustCol()
-			e.ScrollTo(e.Pos.Row)
+			e.EnsureVisible(e.Pos.Row)
 		}
 	case tcell.KeyLeft:
 		if ev.Modifiers()&tcell.ModMeta != 0 {
@@ -410,7 +408,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 		} else if e.Pos.Row > 0 {
 			e.Pos.Row--
 			e.Pos.Col = len(e.buf[e.Pos.Row]) // End of previous line
-			e.ScrollTo(e.Pos.Row)
+			e.EnsureVisible(e.Pos.Row)
 		}
 	case tcell.KeyRight:
 		if ev.Modifiers()&tcell.ModMeta != 0 {
@@ -428,7 +426,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 		} else if e.Pos.Row < len(e.buf)-1 {
 			e.Pos.Row++
 			e.Pos.Col = 0 // Start of next line
-			e.ScrollTo(e.Pos.Row)
+			e.EnsureVisible(e.Pos.Row)
 		}
 	case tcell.KeyEnter:
 		e.SaveEdit()
@@ -460,7 +458,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 
 		e.Pos.Row++
 		e.Pos.Col = lead
-		e.ScrollTo(e.Pos.Row)
+		e.EnsureVisible(e.Pos.Row)
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
 		if !e.MergeNext {
 			e.SaveEdit()
@@ -483,7 +481,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 
 			e.buf = slices.Delete(e.buf, e.Pos.Row, e.Pos.Row+1)
 			e.Pos.Row--
-			e.ScrollTo(e.Pos.Row)
+			e.EnsureVisible(e.Pos.Row)
 		}
 	case tcell.KeyRune:
 		if !e.MergeNext {
@@ -960,7 +958,7 @@ func (e *TextEditor) InsertText(s string) {
 	e.Pos = e.Pos.Advance(rs)
 
 	// UI side effects
-	e.ScrollTo(e.Pos.Row)
+	e.EnsureVisible(e.Pos.Row)
 	e.Dirty = true
 	if e.onChange != nil {
 		e.onChange()
@@ -1048,7 +1046,7 @@ func (e *TextEditor) DeleteRange(start, end Pos) {
 	e.Pos.Row = start.Row
 	e.Pos.Col = len(head)
 
-	e.ScrollTo(e.Pos.Row)
+	e.EnsureVisible(e.Pos.Row)
 	e.Dirty = true
 	if e.onChange != nil {
 		e.onChange()
@@ -1104,7 +1102,7 @@ func (e *TextEditor) Undo() {
 	e.selecting = record.selecting
 
 	e.adjustCol()
-	e.ScrollTo(e.Pos.Row)
+	e.EnsureVisible(e.Pos.Row)
 	e.MergeNext = false
 	if e.onChange != nil {
 		e.onChange()
@@ -1139,7 +1137,7 @@ func (e *TextEditor) Redo() {
 	e.selecting = record.selecting
 
 	e.adjustCol()
-	e.ScrollTo(e.Pos.Row)
+	e.EnsureVisible(e.Pos.Row)
 	e.MergeNext = false
 	if e.onChange != nil {
 		e.onChange()

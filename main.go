@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -22,8 +23,6 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-var app *ui.App
-
 var verbose = flag.Bool("v", false, "enable verbose logging")
 
 func main() {
@@ -31,7 +30,8 @@ func main() {
 
 	if *verbose {
 		log.SetFlags(log.LstdFlags | log.Lshortfile)
-		f, err := os.OpenFile("/tmp/co.log", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+		path := filepath.Join(os.TempDir(), "co.log")
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -42,20 +42,24 @@ func main() {
 		log.SetOutput(io.Discard)
 	}
 
-	app = ui.NewApp()
+	app := ui.NewApp()
 	app.BindKey("Ctrl+Q", app.Stop)
 
-	editorApp := newEditorApp()
-	if path := flag.Arg(0); path != "" {
+	editorApp := newEditorApp(app)
+	if arg := flag.Arg(0); arg != "" {
+		path, line := parseFileArg(arg)
 		err := editorApp.openFile(path)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return
 		}
+		if line > 0 {
+			editorApp.gotoLine(line)
+		}
 	} else {
 		editorApp.newTab("untitled")
 	}
-	app.SetFocus(editorApp)
+	editorApp.requestFocus()
 
 	if err := app.Run(editorApp); err != nil {
 		log.Print(err)
@@ -63,9 +67,19 @@ func main() {
 	}
 }
 
+func parseFileArg(arg string) (path string, line int) {
+	parts := strings.Split(arg, ":")
+	path = parts[0]
+	if len(parts) > 1 {
+		line, _ = strconv.Atoi(parts[1])
+	}
+	return path, line
+}
+
 var _ ui.Focusable = (*EditorApp)(nil)
 
 type EditorApp struct {
+	app       *ui.App
 	tabs      []*tab
 	activeTab int
 	newBtn    *ui.Button
@@ -81,20 +95,20 @@ type EditorApp struct {
 	leaderTimer     *time.Timer
 }
 
-func newEditorApp() *EditorApp {
-	r := &EditorApp{}
+func newEditorApp(uiApp *ui.App) *EditorApp {
+	r := &EditorApp{app: uiApp}
 	r.newBtn = &ui.Button{
 		Text: "New",
 		OnClick: func() {
 			r.newTab("untitled")
-			app.SetFocus(r)
+			uiApp.SetFocus(r)
 		},
 		// disable the menu button's feedback, less noise
 		NoFeedback: true,
 	}
 
 	r.saveBtn = &ui.Button{Text: "Save", OnClick: r.saveFile, NoFeedback: true}
-	r.quitBtn = &ui.Button{Text: "Quit", OnClick: app.Stop, NoFeedback: true}
+	r.quitBtn = &ui.Button{Text: "Quit", OnClick: uiApp.Stop, NoFeedback: true}
 	r.searchBar = NewSearchBar(r)
 	return r
 }
@@ -123,12 +137,12 @@ func (a *EditorApp) closeTab(i int) {
 		ui.PadH(ui.HStack(
 			ui.NewButton("Don't Save", func() {
 				a.deleteTab(i)
-				app.CloseOverlay()
+				a.app.CloseOverlay()
 				a.requestFocus()
 			}),
 
 			ui.PadH(ui.NewButton("Cancel", func() {
-				app.CloseOverlay()
+				a.app.CloseOverlay()
 			}), 2),
 
 			ui.NewButton("Save", func() {
@@ -139,11 +153,11 @@ func (a *EditorApp) closeTab(i int) {
 						return
 					}
 					a.deleteTab(i)
-					app.CloseOverlay()
+					a.app.CloseOverlay()
 					return
 				}
 
-				sa := NewSaveAs(func(path string) {
+				a.promptSaveAs(func(path string) {
 					if path == "" {
 						return
 					}
@@ -154,11 +168,10 @@ func (a *EditorApp) closeTab(i int) {
 					}
 					a.deleteTab(i)
 				})
-				app.Overlay(sa, "top")
 			}).SetBackground(ui.Theme.Selection),
 		), 2),
 	).Spacing(1))
-	app.Overlay(view, "top")
+	a.app.Overlay(view, "top")
 }
 
 func (a *EditorApp) deleteTab(i int) {
@@ -174,7 +187,7 @@ func (a *EditorApp) deleteTab(i int) {
 	}
 
 	if len(a.tabs) == 0 {
-		app.Stop()
+		a.app.Stop()
 	}
 }
 
@@ -242,7 +255,7 @@ func (a *EditorApp) setStatus(msg string, delay time.Duration) {
 		// (Avoid clearing a newer, different message).
 		if a.status == msg {
 			a.status = ""
-			app.Refresh()
+			a.app.Refresh()
 		}
 	})
 }
@@ -253,7 +266,7 @@ func (a *EditorApp) Render(ui.Screen, ui.Rect) {
 
 // a convenient method to request focus back to the app.
 func (a *EditorApp) requestFocus() {
-	app.SetFocus(a)
+	a.app.SetFocus(a)
 }
 
 // delegates focus to the active tab's editor.
@@ -283,7 +296,7 @@ func (a *EditorApp) resetFind() {
 	}
 	sb.input.Select(0, len([]rune(query)))
 
-	app.SetFocus(sb)
+	a.app.SetFocus(sb)
 }
 
 func (a *EditorApp) openFileDialog() {
@@ -296,11 +309,11 @@ func (a *EditorApp) openFileDialog() {
 				a.setStatus(err.Error(), 3*time.Second)
 			}
 		}
-		app.CloseOverlay()
+		a.app.CloseOverlay()
 		a.requestFocus()
 	})
 	view := ui.Border(ui.Frame(input, 60, 1))
-	app.Overlay(view, "top")
+	a.app.Overlay(view, "top")
 }
 
 // handles app-level commands
@@ -356,6 +369,22 @@ func (a *EditorApp) getEditor() *Editor {
 	}
 	return a.tabs[a.activeTab].editor
 }
+
+func (a *EditorApp) gotoLine(line int) {
+	editor := a.getEditor()
+	if editor == nil {
+		return
+	}
+	if line < 1 {
+		line = 1
+	}
+	if line > editor.Len() {
+		line = editor.Len()
+	}
+	editor.SetCursor(line-1, 0)
+	editor.CenterRow(line - 1)
+}
+
 func (a *EditorApp) showPalette(prefix string) {
 	p := NewPalette()
 	p.input.OnChange(func() {
@@ -427,7 +456,7 @@ func (a *EditorApp) showPalette(prefix string) {
 	})
 
 	p.input.SetText(prefix)
-	app.Overlay(p, "top")
+	a.app.Overlay(p, "top")
 }
 
 func (a *EditorApp) fillCommandMode(p *Palette, query string) {
@@ -445,7 +474,7 @@ func (a *EditorApp) fillCommandMode(p *Palette, query string) {
 		}},
 		{"Goto Symbol", func() { a.showPalette("@") }},
 		{"New File", func() { a.newTab("untitled"); a.requestFocus() }},
-		{"Quit", app.Stop},
+		{"Quit", a.app.Stop},
 	}
 	for _, cmd := range commands {
 		ok := true
@@ -560,7 +589,7 @@ func (a *EditorApp) saveFile() {
 		return
 	}
 
-	sa := NewSaveAs(func(path string) {
+	a.promptSaveAs(func(path string) {
 		if path == "" {
 			return
 		}
@@ -578,7 +607,34 @@ func (a *EditorApp) saveFile() {
 		tab.path = abs
 		a.requestFocus()
 	})
-	app.Overlay(sa, "top")
+}
+
+func (a *EditorApp) promptSaveAs(commit func(path string)) {
+	input := new(ui.TextInput)
+	onCommit := func() {
+		if commit != nil {
+			commit(input.Text())
+		}
+		a.app.CloseOverlay()
+	}
+	input.OnCommit(onCommit)
+	dialog := ui.Frame(
+		ui.Border(ui.VStack(
+			ui.PadH(ui.HStack(
+				ui.NewText("Save as: "),
+				ui.Grow(input),
+			), 1),
+
+			ui.PadH(ui.HStack(
+				ui.NewButton("Cancel", a.app.CloseOverlay),
+				ui.Spacer,
+				ui.NewButton("OK", onCommit).SetBackground(ui.Theme.Selection),
+			), 4),
+		).Spacing(1)),
+		40, 0,
+	)
+	a.app.Overlay(dialog, "top")
+	a.app.SetFocus(input)
 }
 
 func (a *EditorApp) writeFile(path string, e *Editor) error {
@@ -609,7 +665,7 @@ func (a *EditorApp) writeFile(path string, e *Editor) error {
 }
 
 type tab struct {
-	app      *EditorApp
+	a        *EditorApp
 	path     string
 	closeBtn *ui.Button
 	editor   *Editor
@@ -619,13 +675,13 @@ type tab struct {
 
 func newTab(root *EditorApp, label string) *tab {
 	t := &tab{
-		app:  root,
+		a:    root,
 		path: label,
 	}
 	t.closeBtn = ui.NewButton("x", func() {
 		for i, tab := range root.tabs {
 			if tab == t {
-				t.app.closeTab(i)
+				t.a.closeTab(i)
 				return
 			}
 		}
@@ -657,7 +713,7 @@ func (t *tab) Layout(x, y, w, h int) *ui.LayoutNode {
 }
 func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 	var st ui.Style
-	if t == t.app.tabs[t.app.activeTab] {
+	if t == t.a.tabs[t.a.activeTab] {
 		st.FontUnderline = true
 		st = t.style.Merge(st)
 	} else if t.hovered {
@@ -678,10 +734,10 @@ func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 
 func (t *tab) OnMouseDown(lx, ly int) {
 	// like Sublime Text, instant react on clicking tab, not waiting the mouse up
-	for i, tab := range t.app.tabs {
+	for i, tab := range t.a.tabs {
 		if tab == t {
-			t.app.activeTab = i
-			app.SetFocus(t.app)
+			t.a.activeTab = i
+			t.a.app.SetFocus(t.a)
 		}
 	}
 }
@@ -758,67 +814,6 @@ func (p *Palette) HandleKey(ev *tcell.EventKey) bool {
 
 func (p *Palette) OnFocus() { p.input.OnFocus() }
 func (p *Palette) OnBlur()  { p.input.OnBlur() }
-
-type SaveAs struct {
-	child ui.Element
-	input *ui.TextInput
-}
-
-func NewSaveAs(action func(string)) *SaveAs {
-	msg := ui.NewText("Save as: ")
-	input := new(ui.TextInput)
-	commit := func() {
-		if action != nil {
-			action(input.Text())
-		}
-		app.CloseOverlay()
-	}
-	input.OnCommit(commit)
-	btnCancel := ui.NewButton("Cancel", func() {
-		app.CloseOverlay()
-	})
-	btnOK := ui.NewButton("OK", commit).SetBackground(ui.Theme.Selection)
-
-	view := ui.Frame(
-		ui.Border(ui.VStack(
-			ui.PadH(ui.HStack(
-				msg,
-				ui.Grow(input),
-			), 1),
-
-			ui.PadH(ui.HStack(
-				btnCancel,
-				ui.Spacer,
-				btnOK,
-			), 4),
-		).Spacing(1)),
-		40, 0,
-	)
-
-	return &SaveAs{
-		child: view,
-		input: input,
-	}
-}
-
-func (m *SaveAs) MinSize() (int, int) {
-	return m.child.MinSize()
-}
-
-func (m *SaveAs) Layout(x, y, w, h int) *ui.LayoutNode {
-	node := &ui.LayoutNode{
-		Element: m,
-		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
-	}
-	node.Children = append(node.Children, m.child.Layout(x, y, w, h))
-	return node
-}
-
-func (m *SaveAs) Render(s ui.Screen, r ui.Rect) {}
-
-func (m *SaveAs) FocusTarget() ui.Element {
-	return m.input
-}
 
 type symbol struct {
 	Name      string // identifier, for example "saveFile"
@@ -1059,7 +1054,7 @@ func (sb *SearchBar) HandleKey(ev *tcell.EventKey) bool {
 		sb.navigate(true)
 	case tcell.KeyESC:
 		sb.a.showSearch = false
-		app.SetFocus(sb.a)
+		sb.a.app.SetFocus(sb.a)
 	default:
 		sb.input.HandleKey(ev)
 		consumed = false
@@ -1098,7 +1093,7 @@ func (a *EditorApp) activateLeader() {
 	// 2 秒後自動重置狀態
 	a.leaderTimer = time.AfterFunc(2*time.Second, func() {
 		a.leaderKeyActive = false
-		app.Refresh()
+		a.app.Refresh()
 	})
 }
 
