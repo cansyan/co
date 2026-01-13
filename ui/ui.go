@@ -1051,11 +1051,11 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		}
 	case tcell.WheelUp:
 		if i, ok := hit.(Scrollable); ok {
-			i.OnScroll(-1)
+			i.OnScroll(-2)
 		}
 	case tcell.WheelDown:
 		if i, ok := hit.(Scrollable); ok {
-			i.OnScroll(1)
+			i.OnScroll(2)
 		}
 	default:
 		// mouse up

@@ -1,4 +1,4 @@
-module tui
+module github.com/cansyan/co
 
 go 1.23.3
 

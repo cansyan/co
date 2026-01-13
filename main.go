@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/format"
 	"go/token"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -15,29 +16,31 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"tui/ui"
+	"github.com/cansyan/co/ui"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
 )
 
-var light = flag.Bool("light", false, "use light color theme")
 var app *ui.App
+
+var verbose = flag.Bool("v", false, "enable verbose logging")
 
 func main() {
 	flag.Parse()
-	if *light {
-		ui.Theme = ui.NewBreakersTheme()
-	}
 
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	f, err := os.OpenFile("/tmp/tui.log", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
-	if err != nil {
-		log.Fatal(err)
+	if *verbose {
+		log.SetFlags(log.LstdFlags | log.Lshortfile)
+		f, err := os.OpenFile("/tmp/co.log", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
+		log.SetOutput(f)
+		ui.Logger = log.Default()
+	} else {
+		log.SetOutput(io.Discard)
 	}
-	defer f.Close()
-	log.SetOutput(f)
-	ui.Logger = log.Default()
 
 	app = ui.NewApp()
 	app.BindKey("Ctrl+Q", app.Stop)
@@ -628,8 +631,12 @@ func newTab(root *EditorApp, label string) *tab {
 		}
 	})
 	e := NewEditor(root)
-	if filepath.Ext(label) == ".go" {
+	ext := filepath.Ext(label)
+	switch ext {
+	case ".go":
 		e.SetHighlighter(highlightGo)
+	case ".md", ".markdown":
+		e.SetHighlighter(highlightMarkdown)
 	}
 	t.editor = e
 	return t
@@ -1350,4 +1357,142 @@ func highlightGo(line []rune) []ui.StyleSpan {
 
 func isAlphaNumeric(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+}
+
+func highlightMarkdown(line []rune) []ui.StyleSpan {
+	var spans []ui.StyleSpan
+	if len(line) == 0 {
+		return spans
+	}
+
+	// Headers: # ## ### etc.
+	if line[0] == '#' {
+		spans = append(spans, ui.StyleSpan{
+			Start: 0,
+			End:   len(line),
+			Style: ui.Theme.Syntax.Keyword,
+		})
+		return spans
+	}
+
+	// List items: -, *, or digits followed by .
+	trimmed := 0
+	for trimmed < len(line) && unicode.IsSpace(line[trimmed]) {
+		trimmed++
+	}
+	if trimmed < len(line) {
+		if line[trimmed] == '-' || line[trimmed] == '*' {
+			if trimmed+1 >= len(line) || unicode.IsSpace(line[trimmed+1]) {
+				spans = append(spans, ui.StyleSpan{
+					Start: trimmed,
+					End:   trimmed + 1,
+					Style: ui.Theme.Syntax.Keyword,
+				})
+			}
+		} else if unicode.IsDigit(line[trimmed]) {
+			j := trimmed + 1
+			for j < len(line) && unicode.IsDigit(line[j]) {
+				j++
+			}
+			if j < len(line) && line[j] == '.' {
+				spans = append(spans, ui.StyleSpan{
+					Start: trimmed,
+					End:   j + 1,
+					Style: ui.Theme.Syntax.Keyword,
+				})
+			}
+		}
+	}
+
+	// Inline code: `code`
+	for i := 0; i < len(line); i++ {
+		if line[i] == '`' {
+			start := i
+			i++
+			for i < len(line) && line[i] != '`' {
+				i++
+			}
+			if i < len(line) {
+				spans = append(spans, ui.StyleSpan{
+					Start: start,
+					End:   i + 1,
+					Style: ui.Theme.Syntax.String,
+				})
+			}
+		}
+	}
+
+	// Bold: **text**
+	for i := 0; i < len(line)-1; i++ {
+		if line[i] == '*' && line[i+1] == '*' {
+			start := i
+			i += 2
+			for i < len(line)-1 {
+				if line[i] == '*' && line[i+1] == '*' {
+					spans = append(spans, ui.StyleSpan{
+						Start: start,
+						End:   i + 2,
+						Style: ui.Style{FontBold: true},
+					})
+					i++
+					break
+				}
+				i++
+			}
+		}
+	}
+
+	// Italic: *text* (but not **)
+	for i := 0; i < len(line); i++ {
+		if line[i] == '*' {
+			if i > 0 && line[i-1] == '*' {
+				continue
+			}
+			if i+1 < len(line) && line[i+1] == '*' {
+				continue
+			}
+			start := i
+			i++
+			for i < len(line) {
+				if line[i] == '*' {
+					if i+1 < len(line) && line[i+1] == '*' {
+						break
+					}
+					spans = append(spans, ui.StyleSpan{
+						Start: start,
+						End:   i + 1,
+						Style: ui.Style{FontItalic: true},
+					})
+					break
+				}
+				i++
+			}
+		}
+	}
+
+	// Links: [text](url)
+	for i := 0; i < len(line); i++ {
+		if line[i] == '[' {
+			start := i
+			i++
+			for i < len(line) && line[i] != ']' {
+				i++
+			}
+			if i < len(line) && i+1 < len(line) && line[i+1] == '(' {
+				i += 2
+				for i < len(line) && line[i] != ')' {
+					i++
+				}
+				if i < len(line) {
+					spans = append(spans, ui.StyleSpan{
+						Start: start,
+						End:   i + 1,
+						Style: ui.Theme.Syntax.FunctionCall,
+					})
+				}
+			}
+		}
+	}
+
+	return spans
 }

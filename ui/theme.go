@@ -1,5 +1,35 @@
 package ui
 
+import (
+	"os"
+	"strings"
+)
+
+var Theme = selectTheme()
+
+func selectTheme() ColorTheme {
+	if detectLightTerminal() {
+		return NewBreakersTheme()
+	}
+	return NewMarianaTheme()
+}
+
+// detectLightTerminal detects if terminal has a light background via COLORFGBG.
+// iTerm2 and other terminals set this as "foreground;background".
+// Background 7 or 15 indicates light, 0-6 and 8 indicate dark.
+func detectLightTerminal() bool {
+	colorfgbg := os.Getenv("COLORFGBG")
+	if colorfgbg == "" {
+		return false
+	}
+	parts := strings.Split(colorfgbg, ";")
+	if len(parts) != 2 {
+		return false
+	}
+	bg := parts[1]
+	return bg == "7" || bg == "15"
+}
+
 type ColorTheme struct {
 	Foreground string
 	Background string
@@ -50,8 +80,6 @@ func NewBreakersTheme() ColorTheme {
 		},
 	}
 }
-
-var Theme = NewMarianaTheme()
 
 func NewMarianaTheme() ColorTheme {
 	return ColorTheme{
