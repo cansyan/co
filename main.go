@@ -423,8 +423,7 @@ func (a *EditorApp) showPalette(prefix string) {
 				return
 			}
 
-			symbols := extractSymbols(editor.String())
-			for _, s := range symbols {
+			for _, s := range editor.symbols {
 				ok := true
 				for _, word := range words {
 					if word == "" {
@@ -561,7 +560,9 @@ func (a *EditorApp) openFile(name string) error {
 	}
 
 	a.newTab(abs)
-	a.getEditor().SetText(string(bs))
+	editor := a.getEditor()
+	editor.SetText(string(bs))
+	editor.updateSymbols()
 	a.recordJump()
 	return nil
 }
@@ -738,6 +739,7 @@ func (a *EditorApp) writeFile(path string, e *Editor) error {
 	}
 
 	e.Dirty = false
+	e.updateSymbols()
 	return nil
 }
 
@@ -1174,14 +1176,29 @@ func (a *EditorApp) activateLeader() {
 
 type Editor struct {
 	*ui.TextEditor
-	app *EditorApp
+	app     *EditorApp
+	symbols []symbol
 }
 
 func NewEditor(r *EditorApp) *Editor {
-	return &Editor{
+	e := &Editor{
 		TextEditor: ui.NewTextEditor(),
 		app:        r,
 	}
+
+	e.InlineSuggest = true
+	// For now, the suggester just suggests the first matching symbol name.
+	// It can extend to a more advanced one later: multiple results, time constraint,
+	// ignore case, fuzzy match, append () for function, etc.
+	e.Suggester = func(prefix string) string {
+		for _, s := range e.symbols {
+			if len(s.Name) > len(prefix) && strings.HasPrefix(s.Name, prefix) {
+				return s.Name[len(prefix):]
+			}
+		}
+		return ""
+	}
+	return e
 }
 
 func (e *Editor) Layout(x, y, w, h int) *ui.LayoutNode {
@@ -1230,8 +1247,6 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		e.TextEditor.SaveEdit()
 		e.MergeNext = false
 		e.InsertText(e.app.clipboard)
-	case "ctrl+n":
-		e.autoComplete()
 	case "ctrl+d":
 		// if no selection, select the word at current cursor;
 		// if has selection, jump to the next same word, like * in Vim.
@@ -1257,13 +1272,13 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		e.ClearSelection()
 		for i, char := range e.Line(e.Pos.Row) {
 			if !unicode.IsSpace(char) {
-				e.SetCursor(e.Pos.Row, i)
+				e.Pos.Col = i
 				break
 			}
 		}
 	case "alt+right": // goto the end of line
 		e.ClearSelection()
-		e.SetCursor(e.Pos.Row, len(e.Line(e.Pos.Row)))
+		e.Pos.Col = len(e.Line(e.Pos.Row))
 	case "esc":
 		if _, _, ok := e.Selection(); !ok {
 			return e.app.handleGlobalKey(ev)
@@ -1297,8 +1312,7 @@ func (e *Editor) gotoDefinition() {
 	}
 	word := string(e.Line(e.Pos.Row)[start:end])
 
-	symbols := extractSymbols(e.String())
-	for _, s := range symbols {
+	for _, s := range e.symbols {
 		if s.Name == word {
 			e.gotoLine(s.Line + 1)
 			return
@@ -1306,33 +1320,8 @@ func (e *Editor) gotoDefinition() {
 	}
 }
 
-func (e *Editor) autoComplete() {
-	start, end, ok := e.WordRangeAtCursor()
-	if !ok {
-		return
-	}
-	word := string(e.Line(e.Pos.Row)[start:end])
-
-	e.TextEditor.SaveEdit()
-	e.MergeNext = false
-
-	symbols := extractSymbols(e.String())
-	for _, s := range symbols {
-		if strings.HasPrefix(strings.ToLower(s.Name), word) {
-			// 如果補全建議跟現在長得一模一樣，跳過，嘗試下一個
-			if s.Name == word {
-				continue
-			}
-
-			e.DeleteRange(ui.Pos{Row: e.Pos.Row, Col: start}, ui.Pos{Row: e.Pos.Row, Col: end})
-			e.InsertText(s.Name)
-			if s.Kind == "func" {
-				e.InsertText("()")
-				e.SetCursor(e.Pos.Row, e.Pos.Col-1)
-			}
-			return
-		}
-	}
+func (e *Editor) updateSymbols() {
+	e.symbols = extractSymbols(e.String())
 }
 
 func (e *Editor) OnMouseDown(lx, ly int) {

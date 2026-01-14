@@ -48,6 +48,12 @@ type TextEditor struct {
 	undoStack []editRecord
 	redoStack []editRecord
 	MergeNext bool // whether to merge next edit with current one
+
+	// Inline suggestions, like code completions but no dropdown,
+	// accepted with TAB, quietly shown in gray
+	InlineSuggest  bool
+	Suggester      func(prefix string) string
+	currentSuggest string
 }
 
 func NewTextEditor() *TextEditor {
@@ -310,6 +316,19 @@ func (e *TextEditor) Render(s Screen, rect Rect) {
 			visualCol += cells
 		}
 
+		// draw inline suggestion
+		if e.InlineSuggest && row == e.Pos.Row && e.currentSuggest != "" && e.focused {
+			suggestStyle := e.style.Merge(Theme.Syntax.Comment)
+			suggestRunes := []rune(e.currentSuggest)
+			for _, r := range suggestRunes {
+				if visualCol >= contentW {
+					break
+				}
+				cells := e.drawRune(s, contentX+visualCol, y, contentW-visualCol, r, visualCol, suggestStyle)
+				visualCol += cells
+			}
+		}
+
 		// draw line end indicator while selected
 		if e.isSelected(Pos{Row: row, Col: len(line)}) {
 			charStyle := e.style.Merge(Style{BG: Theme.Selection})
@@ -348,8 +367,10 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 	switch ev.Key() {
 	case tcell.KeyESC:
 		e.ClearSelection()
+		e.currentSuggest = ""
 	case tcell.KeyUp:
 		e.ClearSelection()
+		e.currentSuggest = ""
 		if ev.Modifiers()&tcell.ModMeta != 0 {
 			e.Pos.Row, e.Pos.Col = 0, 0
 			e.EnsureVisible(e.Pos.Row)
@@ -368,6 +389,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 		}
 	case tcell.KeyDown:
 		e.ClearSelection()
+		e.currentSuggest = ""
 		if ev.Modifiers()&tcell.ModMeta != 0 {
 			e.Pos.Row, e.Pos.Col = len(e.buf)-1, 0
 			e.EnsureVisible(e.Pos.Row)
@@ -385,6 +407,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 			e.EnsureVisible(e.Pos.Row)
 		}
 	case tcell.KeyLeft:
+		e.currentSuggest = ""
 		if ev.Modifiers()&tcell.ModMeta != 0 {
 			e.ClearSelection()
 			firstNonSpace := 0
@@ -411,6 +434,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 			e.EnsureVisible(e.Pos.Row)
 		}
 	case tcell.KeyRight:
+		e.currentSuggest = ""
 		if ev.Modifiers()&tcell.ModMeta != 0 {
 			e.ClearSelection()
 			e.Pos.Col = len(e.buf[e.Pos.Row])
@@ -429,6 +453,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 			e.EnsureVisible(e.Pos.Row)
 		}
 	case tcell.KeyEnter:
+		e.currentSuggest = ""
 		e.SaveEdit()
 		e.MergeNext = false
 		defer onChange()
@@ -469,11 +494,13 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 		if start, end, ok := e.Selection(); ok {
 			e.DeleteRange(start, end)
 			e.ClearSelection()
+			e.updateInlineSuggest()
 			return
 		}
 		if e.Pos.Col > 0 {
 			e.buf[e.Pos.Row] = slices.Delete(e.buf[e.Pos.Row], e.Pos.Col-1, e.Pos.Col)
 			e.Pos.Col--
+			e.updateInlineSuggest()
 		} else if e.Pos.Row > 0 {
 			prevLine := e.buf[e.Pos.Row-1]
 			e.Pos.Col = len(prevLine)
@@ -482,6 +509,7 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 			e.buf = slices.Delete(e.buf, e.Pos.Row, e.Pos.Row+1)
 			e.Pos.Row--
 			e.EnsureVisible(e.Pos.Row)
+			e.currentSuggest = ""
 		}
 	case tcell.KeyRune:
 		if !e.MergeNext {
@@ -498,7 +526,19 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 		r := ev.Rune()
 		e.buf[e.Pos.Row] = slices.Insert(e.buf[e.Pos.Row], e.Pos.Col, r)
 		e.Pos.Col++
+		e.updateInlineSuggest()
 	case tcell.KeyTAB:
+		// Try to accept inline suggestion first
+		if e.InlineSuggest && e.currentSuggest != "" {
+			e.SaveEdit()
+			e.MergeNext = false
+			defer onChange()
+			e.Dirty = true
+			e.InsertText(e.currentSuggest)
+			e.currentSuggest = ""
+			return true
+		}
+
 		e.SaveEdit()
 		e.MergeNext = false
 		defer onChange()
@@ -533,6 +573,7 @@ func (e *TextEditor) OnMouseUp(x, y int) {
 }
 
 func (e *TextEditor) OnMouseDown(x, y int) {
+	e.currentSuggest = ""
 	// Calculate the target row (relative to content)
 	targetRow := y + e.offsetY
 
@@ -1142,6 +1183,45 @@ func (e *TextEditor) Redo() {
 	if e.onChange != nil {
 		e.onChange()
 	}
+}
+
+// updateInlineSuggest finds and sets the current inline suggestion.
+func (e *TextEditor) updateInlineSuggest() {
+	if !e.InlineSuggest || e.Suggester == nil {
+		return
+	}
+
+	e.currentSuggest = ""
+
+	if e.Pos.Row >= len(e.buf) || e.Pos.Col == 0 {
+		return
+	}
+
+	line := e.buf[e.Pos.Row]
+	if e.Pos.Col > len(line) {
+		return
+	}
+
+	// find word start
+	isWordChar := func(r rune) bool {
+		return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+	}
+
+	wordStart := e.Pos.Col
+	for wordStart > 0 && isWordChar(line[wordStart-1]) {
+		wordStart--
+	}
+
+	if wordStart == e.Pos.Col {
+		return
+	}
+
+	prefix := string(line[wordStart:e.Pos.Col])
+	if len(prefix) == 0 {
+		return
+	}
+
+	e.currentSuggest = e.Suggester(prefix)
 }
 
 type StyleSpan struct {
