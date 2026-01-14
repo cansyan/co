@@ -157,7 +157,7 @@ func (e *TextEditor) adjustCol() {
 }
 
 func (e *TextEditor) MinSize() (int, int) {
-	// Fixed width: 5 columns for line numbers + 20 for content
+	// Fixed width: 5 columns for line numbers, 20 for content
 	return 25, 5
 }
 

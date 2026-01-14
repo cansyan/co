@@ -144,6 +144,37 @@ func (a *EditorApp) closeTab(i int) {
 		return
 	}
 
+	saveBtn := &ui.Button{
+		Text: "Save",
+		OnClick: func() {
+			if path := tab.path; path != "untitled" {
+				if err := a.writeFile(path, editor); err != nil {
+					log.Print(err)
+					a.setStatus(err.Error(), 5*time.Second)
+					return
+				}
+				a.deleteTab(i)
+				a.app.CloseOverlay()
+				a.requestFocus()
+				return
+			}
+
+			a.promptSaveAs(func(path string) {
+				if path == "" {
+					return
+				}
+				if err := a.writeFile(path, editor); err != nil {
+					log.Print(err)
+					a.setStatus(err.Error(), 5*time.Second)
+					return
+				}
+				a.deleteTab(i)
+				a.requestFocus()
+			})
+		},
+		Style: ui.Style{BG: ui.Theme.Selection},
+	}
+
 	// Prompt to save changes.
 	view := ui.Border(ui.VStack(
 		ui.PadH(ui.NewText("Save the changes before closing?"), 1),
@@ -153,35 +184,8 @@ func (a *EditorApp) closeTab(i int) {
 				a.app.CloseOverlay()
 				a.requestFocus()
 			}),
-
-			ui.PadH(ui.NewButton("Cancel", func() {
-				a.app.CloseOverlay()
-			}), 2),
-
-			ui.NewButton("Save", func() {
-				if path := tab.path; path != "untitled" {
-					if err := a.writeFile(path, editor); err != nil {
-						log.Print(err)
-						a.setStatus(err.Error(), 5*time.Second)
-						return
-					}
-					a.deleteTab(i)
-					a.app.CloseOverlay()
-					return
-				}
-
-				a.promptSaveAs(func(path string) {
-					if path == "" {
-						return
-					}
-					if err := a.writeFile(path, editor); err != nil {
-						log.Print(err)
-						a.setStatus(err.Error(), 5*time.Second)
-						return
-					}
-					a.deleteTab(i)
-				})
-			}).SetBackground(ui.Theme.Selection),
+			ui.PadH(ui.NewButton("Cancel", a.app.CloseOverlay), 2),
+			saveBtn,
 		), 2),
 	).Spacing(1))
 	a.app.Overlay(view, "top")
@@ -313,18 +317,19 @@ func (a *EditorApp) resetFind() {
 }
 
 func (a *EditorApp) openFileDialog() {
-	input := new(ui.TextInput)
-	input.SetPlaceholder("Open file path: ")
-	input.OnCommit(func() {
-		if text := input.Text(); text != "" {
-			if err := a.openFile(text); err != nil {
-				log.Print(err)
-				a.setStatus(err.Error(), 3*time.Second)
+	input := &ui.TextInput{
+		Placeholder: "Open file path: ",
+		OnCommit: func(text string) {
+			if text != "" {
+				if err := a.openFile(text); err != nil {
+					log.Print(err)
+					a.setStatus(err.Error(), 3*time.Second)
+				}
 			}
-		}
-		a.app.CloseOverlay()
-		a.requestFocus()
-	})
+			a.app.CloseOverlay()
+			a.requestFocus()
+		},
+	}
 	view := ui.Border(ui.Frame(input, 60, 1))
 	a.app.Overlay(view, "top")
 }
@@ -385,7 +390,7 @@ func (a *EditorApp) getEditor() *Editor {
 
 func (a *EditorApp) showPalette(prefix string) {
 	p := NewPalette()
-	p.input.OnChange(func() {
+	p.input.OnChange = func() {
 		text := p.input.Text()
 		p.list.Clear()
 		p.list.Selected = 0
@@ -445,7 +450,7 @@ func (a *EditorApp) showPalette(prefix string) {
 			// 4. File Search Mode (Default)
 			a.fillFileSearchMode(p, text)
 		}
-	})
+	}
 
 	p.input.SetText(prefix)
 	a.app.Overlay(p, "top")
@@ -670,14 +675,26 @@ func (a *EditorApp) saveFile() {
 }
 
 func (a *EditorApp) promptSaveAs(commit func(path string)) {
-	input := new(ui.TextInput)
-	onCommit := func() {
-		if commit != nil {
-			commit(input.Text())
-		}
-		a.app.CloseOverlay()
+	input := &ui.TextInput{
+		OnCommit: func(text string) {
+			if commit != nil {
+				commit(text)
+			}
+			a.app.CloseOverlay()
+		},
 	}
-	input.OnCommit(onCommit)
+
+	okBtn := &ui.Button{
+		Text: "OK",
+		OnClick: func() {
+			if commit != nil {
+				commit(input.Text())
+			}
+			a.app.CloseOverlay()
+		},
+		Style: ui.Style{BG: ui.Theme.Selection},
+	}
+
 	dialog := ui.Frame(
 		ui.Border(ui.VStack(
 			ui.PadH(ui.HStack(
@@ -688,7 +705,7 @@ func (a *EditorApp) promptSaveAs(commit func(path string)) {
 			ui.PadH(ui.HStack(
 				ui.NewButton("Cancel", a.app.CloseOverlay),
 				ui.Spacer,
-				ui.NewButton("OK", onCommit).SetBackground(ui.Theme.Selection),
+				okBtn,
 			), 4),
 		).Spacing(1)),
 		40, 0,
@@ -730,7 +747,6 @@ type tab struct {
 	closeBtn *ui.Button
 	editor   *Editor
 	hovered  bool
-	style    ui.Style
 }
 
 func newTab(root *EditorApp, label string) *tab {
@@ -772,13 +788,11 @@ func (t *tab) Layout(x, y, w, h int) *ui.LayoutNode {
 	}
 }
 func (t *tab) Render(screen ui.Screen, r ui.Rect) {
-	var st ui.Style
+	var style ui.Style
 	if t == t.a.tabs[t.a.activeTab] {
-		st.FontUnderline = true
-		st = t.style.Merge(st)
+		style.FontUnderline = true
 	} else if t.hovered {
-		st.BG = ui.Theme.Hover
-		st = t.style.Merge(st)
+		style.BG = ui.Theme.Hover
 	}
 
 	labelWidth := tabItemWidth - 3 - 1 // minus button and padding
@@ -789,7 +803,7 @@ func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 		label = runewidth.Truncate(label, labelWidth, "…")
 	}
 	label = fmt.Sprintf(" %s", label)
-	ui.DrawString(screen, r.X, r.Y, r.W, label, st.Apply())
+	ui.DrawString(screen, r.X, r.Y, r.W, label, style.Apply())
 }
 
 func (t *tab) OnMouseDown(lx, ly int) {
@@ -798,6 +812,7 @@ func (t *tab) OnMouseDown(lx, ly int) {
 		if tab == t {
 			t.a.activeTab = i
 			t.a.app.SetFocus(t.a)
+			return
 		}
 	}
 }
@@ -945,10 +960,10 @@ func NewSearchBar(r *EditorApp) *SearchBar {
 	// Lazy Evaluation:
 	// 當文字改變時，僅標記狀態為「需要重新掃描」，但不立即掃描
 	// 真正的計算成本被推遲到了使用者按下 Enter、SelectNext 或 SelectPrev 的那一刻
-	sb.input.OnChange(func() {
+	sb.input.OnChange = func() {
 		sb.matches = nil
 		sb.activeIndex = -1
-	})
+	}
 
 	sb.btnPrev = ui.NewButton("↑", func() { sb.navigate(false) })
 	sb.btnNext = ui.NewButton("↓", func() { sb.navigate(true) })

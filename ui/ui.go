@@ -262,7 +262,7 @@ type Button struct {
 	NoFeedback bool // disables visual feedback for hover/press states
 }
 
-// NewButton creates a new button element with the given label.
+// NewButton creates a new Button with the given label and click handler.
 func NewButton(text string, onClick func()) *Button {
 	return &Button{Text: text, OnClick: onClick}
 }
@@ -331,15 +331,16 @@ func (b *Button) SetBackground(color string) *Button {
 // TextInput is a single-line text input field.
 // The zero value for TextInput is ready to use.
 type TextInput struct {
-	text        []rune
-	cursor      int // cursor position; also selection end
-	focused     bool
+	text    []rune
+	cursor  int // cursor position; also selection end
+	anchor  int // selection start (rune index)
+	pressed bool
+	focused bool
+
+	Placeholder string
+	OnChange    func()
+	OnCommit    func(string) // called when Enter is pressed, with current text
 	Style       Style
-	onChange    func()
-	placeHolder string
-	anchor      int // selection anchor (rune index)
-	pressed     bool
-	onCommit    func()
 }
 
 // Text returns the current text content
@@ -351,23 +352,9 @@ func (t *TextInput) SetText(s string) {
 	t.text = []rune(s)
 	t.cursor = len(t.text)
 	t.anchor = t.cursor
-	if t.onChange != nil {
-		t.onChange()
+	if t.OnChange != nil {
+		t.OnChange()
 	}
-}
-
-func (t *TextInput) OnChange(fn func()) *TextInput {
-	t.onChange = fn
-	return t
-}
-
-func (t *TextInput) OnCommit(fn func()) *TextInput {
-	t.onCommit = fn
-	return t
-}
-
-func (t *TextInput) SetPlaceholder(s string) {
-	t.placeHolder = s
 }
 
 func (t *TextInput) MinSize() (int, int) {
@@ -387,7 +374,7 @@ func (t *TextInput) Render(s Screen, rect Rect) {
 	}
 	// placeholder
 	if len(t.text) == 0 {
-		DrawString(s, rect.X, rect.Y, rect.W, t.placeHolder, Theme.Syntax.Comment.Apply())
+		DrawString(s, rect.X, rect.Y, rect.W, t.Placeholder, Theme.Syntax.Comment.Apply())
 		return
 	}
 
@@ -439,8 +426,8 @@ func (t *TextInput) HandleKey(ev *tcell.EventKey) bool {
 			t.text = slices.Delete(t.text, t.cursor-1, t.cursor)
 			t.cursor--
 		}
-		if t.onChange != nil {
-			t.onChange()
+		if t.OnChange != nil {
+			t.OnChange()
 		}
 	case tcell.KeyRune:
 		start, end, ok := t.selection()
@@ -451,12 +438,12 @@ func (t *TextInput) HandleKey(ev *tcell.EventKey) bool {
 		r := ev.Rune()
 		t.text = slices.Insert(t.text, t.cursor, r)
 		t.cursor++
-		if t.onChange != nil {
-			t.onChange()
+		if t.OnChange != nil {
+			t.OnChange()
 		}
 	case tcell.KeyEnter:
-		if t.onCommit != nil {
-			t.onCommit()
+		if t.OnCommit != nil {
+			t.OnCommit(string(t.text))
 		}
 	default:
 		consumed = false
@@ -485,8 +472,8 @@ func (t *TextInput) OnMouseDown(x, y int) {
 func (t *TextInput) OnMouseMove(x, y int) {
 	if t.pressed {
 		t.cursor = t.clampCursor(x)
-		if t.onChange != nil {
-			t.onChange()
+		if t.OnChange != nil {
+			t.OnChange()
 		}
 	}
 }
