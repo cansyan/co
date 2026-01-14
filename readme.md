@@ -8,10 +8,10 @@ multi-tab support, and powerful navigation features.
 - **Multi-tab Interface** - Work with multiple files simultaneously
 - **Syntax Highlighting** - Go syntax highlighting with keyword, string, comment, and function recognition
 - **Auto-formatting** - Automatic Go code formatting on save using `gofmt`
-- **Smart Search** - Fast incremental search with match navigation
+- **Search** - Search and navigation
 - **Command Palette** - Quick access to files, symbols, and commands
 - **Go-to Definition** - Navigate to symbol definitions within the file
-- **Auto-completion** - Context-aware completion for symbols and functions
+- **Inline Suggestion** - Suggestion for symbols and functions
 - **Undo/Redo** - Full edit history support
 - **Copy/Cut/Paste** - Built-in clipboard operations
 
@@ -53,6 +53,7 @@ go build -o co main.go
 - `Ctrl+L` - Expand selection to line
 - `Ctrl+B` - Expand selection to brackets
 - `Ctrl+D` - Select word or find next occurrence
+- `Tab` - Accept inline suggestion, if exists
 
 ### Search & Navigation
 - `Ctrl+F` - Open search bar
@@ -73,7 +74,6 @@ go build -o co main.go
 
 ### Code Navigation
 - `Ctrl+G` - Go to definition
-- `Ctrl+N` - Auto-complete symbol
 - `Alt+Up` - Go to first line
 - `Alt+Down` - Go to last line
 - `Alt+Left` - Go to first non-space character
