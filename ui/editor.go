@@ -255,13 +255,12 @@ func (e *TextEditor) drawRune(s tcell.Screen, x, y int, maxWidth int, r rune, vi
 func (e *TextEditor) Render(s Screen, rect Rect) {
 	e.viewH = rect.H
 
-	// Dynamic width calculation (for proper right-justification)
+	// Calculate line number column width
 	numLines := len(e.buf)
 	if numLines == 0 {
 		numLines = 1
 	}
-	actualNumDigits := len(strconv.Itoa(numLines))
-	lineNumWidth := actualNumDigits + 2
+	lineNumWidth := len(strconv.Itoa(numLines)) + 2
 	lineNumStyle := Style{FG: "silver"}
 
 	contentX := rect.X + lineNumWidth + 1
@@ -273,7 +272,7 @@ func (e *TextEditor) Render(s Screen, rect Rect) {
 
 	var cursorX, cursorY int
 	cursorFound := false
-	// Loop over visible rows
+
 	for i := range rect.H {
 		row := i + e.offsetY
 		if row >= len(e.buf) {
@@ -281,71 +280,88 @@ func (e *TextEditor) Render(s Screen, rect Rect) {
 		}
 
 		line := e.buf[row]
-		lnStyle := lineNumStyle
+		y := rect.Y + i
+
+		// Track cursor position
 		if row == e.Pos.Row {
 			cursorFound = true
 			cursorX = contentX + visualColFromLine(line, e.Pos.Col)
-			cursorY = rect.Y + i
+			cursorY = y
+		}
+
+		// Draw line number
+		lnStyle := lineNumStyle
+		if row == e.Pos.Row {
 			lnStyle.BG = Theme.Selection
 		}
+		numStr := fmt.Sprintf("%*d  ", lineNumWidth-1, row+1)
+		DrawString(s, rect.X, y, lineNumWidth, numStr, lnStyle.Apply())
 
-		// draw line number
-		lineNum := row + 1
-		numStr := fmt.Sprintf("%*d  ", lineNumWidth-1, lineNum)
-		DrawString(s, rect.X, rect.Y+i, lineNumWidth, numStr, lnStyle.Apply())
-
-		// draw line content
-		var styles []Style
-		if e.highlighter != nil {
-			spans := e.highlighter(line)
-			styles = expandStyles(spans, e.style, len(line))
-		}
-
-		visualCol := 0
-		y := rect.Y + i
-		for col, r := range line {
-			charStyle := e.style
-			if styles != nil {
-				charStyle = styles[col]
-			}
-
-			if e.isSelected(Pos{Row: row, Col: col}) {
-				charStyle.BG = Theme.Selection
-			}
-			cells := e.drawRune(s, contentX+visualCol, y, contentW-visualCol, r, visualCol, charStyle)
-			visualCol += cells
-		}
-
-		// draw inline suggestion
-		if e.InlineSuggest && row == e.Pos.Row && e.currentSuggest != "" && e.focused {
-			suggestStyle := e.style.Merge(Theme.Syntax.Comment)
-			suggestRunes := []rune(e.currentSuggest)
-			for _, r := range suggestRunes {
-				if visualCol >= contentW {
-					break
-				}
-				cells := e.drawRune(s, contentX+visualCol, y, contentW-visualCol, r, visualCol, suggestStyle)
-				visualCol += cells
-			}
-		}
-
-		// draw line end indicator while selected
-		if e.isSelected(Pos{Row: row, Col: len(line)}) {
-			charStyle := e.style.Merge(Style{BG: Theme.Selection})
-			e.drawRune(s, contentX+visualCol, y, contentW-visualCol, ' ', visualCol, charStyle)
-		}
+		// Draw line content
+		e.renderLine(s, contentX, y, contentW, row, line)
 	}
 
-	// Place the cursor
+	// Show cursor if focused
 	if e.focused {
 		if cursorFound {
 			s.ShowCursor(cursorX, cursorY)
 		} else {
-			// Cursor line is not visible, hide cursor
 			s.HideCursor()
 		}
 	}
 }
+
+func (e *TextEditor) renderLine(s Screen, x, y, maxWidth, row int, line []rune) {
+	var styles []Style
+	if e.highlighter != nil {
+		spans := e.highlighter(line)
+		styles = expandStyles(spans, e.style, len(line))
+	}
+
+	visualCol := 0
+	for col, r := range line {
+		// Draw inline suggestion at cursor position (before cursor character)
+		if row == e.Pos.Row && col == e.Pos.Col {
+			visualCol = e.drawInlineSuggestion(s, x, y, maxWidth, visualCol)
+		}
+
+		// Draw character
+		style := e.style
+		if styles != nil {
+			style = styles[col]
+		}
+		if e.isSelected(Pos{Row: row, Col: col}) {
+			style.BG = Theme.Selection
+		}
+		visualCol += e.drawRune(s, x+visualCol, y, maxWidth-visualCol, r, visualCol, style)
+	}
+
+	// Draw inline suggestion at end of line
+	if row == e.Pos.Row && e.Pos.Col >= len(line) {
+		visualCol = e.drawInlineSuggestion(s, x, y, maxWidth, visualCol)
+	}
+
+	// Draw line end selection indicator
+	if e.isSelected(Pos{Row: row, Col: len(line)}) {
+		style := e.style.Merge(Style{BG: Theme.Selection})
+		e.drawRune(s, x+visualCol, y, maxWidth-visualCol, ' ', visualCol, style)
+	}
+}
+
+func (e *TextEditor) drawInlineSuggestion(s Screen, x, y, maxWidth, visualCol int) int {
+	if !e.InlineSuggest || e.currentSuggest == "" || !e.focused {
+		return visualCol
+	}
+
+	for _, r := range e.currentSuggest {
+		if visualCol >= maxWidth {
+			break
+		}
+		visualCol += e.drawRune(s, x+visualCol, y, maxWidth-visualCol, r, visualCol, Theme.Syntax.Comment)
+	}
+	return visualCol
+}
+
 func (e *TextEditor) OnFocus() { e.focused = true }
 func (e *TextEditor) OnBlur()  { e.focused = false }
 
@@ -366,6 +382,10 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 	consumed = true
 	switch ev.Key() {
 	case tcell.KeyESC:
+		if !e.selecting && e.currentSuggest == "" {
+			// nothing to do, bubble event to parent
+			return false
+		}
 		e.ClearSelection()
 		e.currentSuggest = ""
 	case tcell.KeyUp:
@@ -1202,11 +1222,16 @@ func (e *TextEditor) updateInlineSuggest() {
 		return
 	}
 
-	// find word start
 	isWordChar := func(r rune) bool {
 		return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 	}
 
+	// Don't suggest if cursor is in the middle of a word
+	if e.Pos.Col < len(line) && isWordChar(line[e.Pos.Col]) {
+		return
+	}
+
+	// Find word start
 	wordStart := e.Pos.Col
 	for wordStart > 0 && isWordChar(line[wordStart-1]) {
 		wordStart--

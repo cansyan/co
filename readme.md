@@ -76,7 +76,7 @@ go build -o co main.go
 - `Ctrl+N` - Auto-complete symbol
 - `Alt+Up` - Go to first line
 - `Alt+Down` - Go to last line
-- `Alt+Left` - Go to first non-whitespace character
+- `Alt+Left` - Go to first non-space character
 - `Alt+Right` - Go to end of line
 
 ## Architecture

@@ -896,7 +896,7 @@ type symbol struct {
 	Name      string // identifier, for example "saveFile"
 	Signature string // readable definition, for example "(*root).saveFile"
 	Line      int    // line number
-	Kind      string // func, type
+	Kind      string // "type", "func" (for function and method)
 }
 
 func extractSymbols(content string) []symbol {
@@ -1193,6 +1193,9 @@ func NewEditor(r *EditorApp) *Editor {
 	e.Suggester = func(prefix string) string {
 		for _, s := range e.symbols {
 			if len(s.Name) > len(prefix) && strings.HasPrefix(s.Name, prefix) {
+				if s.Kind == "func" {
+					return s.Name[len(prefix):] + "()"
+				}
 				return s.Name[len(prefix):]
 			}
 		}
@@ -1268,7 +1271,7 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		e.gotoLine(1)
 	case "alt+down": // goto last line
 		e.gotoLine(e.Len())
-	case "alt+left": // goto the first non-whitespace character
+	case "alt+left": // goto the first non-space character of line
 		e.ClearSelection()
 		for i, char := range e.Line(e.Pos.Row) {
 			if !unicode.IsSpace(char) {
@@ -1279,11 +1282,6 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 	case "alt+right": // goto the end of line
 		e.ClearSelection()
 		e.Pos.Col = len(e.Line(e.Pos.Row))
-	case "esc":
-		if _, _, ok := e.Selection(); !ok {
-			return e.app.handleGlobalKey(ev)
-		}
-		e.ClearSelection()
 	default:
 		if !e.TextEditor.HandleKey(ev) {
 			// Bubble event to parent
