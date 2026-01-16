@@ -227,7 +227,7 @@ func (a *EditorApp) Layout(x, y, w, h int) *ui.LayoutNode {
 	for i, tab := range a.tabs {
 		tabLabels.Append(tab)
 		if i != len(a.tabs)-1 {
-			tabLabels.Append(ui.Divider())
+			tabLabels.Append(&ui.Divider{})
 		}
 	}
 
@@ -239,7 +239,7 @@ func (a *EditorApp) Layout(x, y, w, h int) *ui.LayoutNode {
 		mainStack.Append(ui.Grow(a.tabs[a.activeTab].editor))
 	}
 	if a.showSearch {
-		mainStack.Append(ui.Divider(), a.searchBar)
+		mainStack.Append(&ui.Divider{}, a.searchBar)
 	}
 
 	statusBar := ui.HStack()
@@ -255,7 +255,7 @@ func (a *EditorApp) Layout(x, y, w, h int) *ui.LayoutNode {
 	}
 
 	mainStack.Append(
-		ui.Divider(),
+		&ui.Divider{},
 		ui.PadH(statusBar, 1),
 	)
 
@@ -513,7 +513,7 @@ func (a *EditorApp) fillFileSearchMode(p *Palette, query string) {
 				a.requestFocus()
 			})
 			filter[path] = true
-			if len(p.list.Items) >= 10 {
+			if p.list.Len() >= 10 {
 				return
 			}
 		}
@@ -533,7 +533,7 @@ func (a *EditorApp) fillFileSearchMode(p *Palette, query string) {
 			a.openFile(name)
 			a.requestFocus()
 		})
-		if len(p.list.Items) >= 10 {
+		if p.list.Len() >= 10 {
 			return
 		}
 	}

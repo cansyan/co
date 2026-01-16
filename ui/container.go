@@ -2,8 +2,6 @@ package ui
 
 import (
 	"math"
-
-	"github.com/mattn/go-runewidth"
 )
 
 // decorator wraps an Element and modifies its layout and rendering.
@@ -116,21 +114,24 @@ func PadV(e Element, amount int) Element {
 	return d
 }
 
-// Spacer fills the remaining space between siblings inside an HStack or VStack.
-var Spacer = Grow(Empty{})
+// Spacer fills the remaining space between siblings inside a layout container.
+var Spacer = Grow(empty{})
 
+// Grow makes the element expand to fill available space in layout container.
 func Grow(e Element) Element {
 	d := getDecorator(e)
 	d.grow = 1
 	return d
 }
 
+// Frame sets the exact width and height of the element.
 func Frame(e Element, w, h int) Element {
 	d := getDecorator(e)
 	d.width, d.height = w, h
 	return d
 }
 
+// Border adds a border around the element.
 func Border(e Element) Element {
 	d := getDecorator(e)
 	d.border = true
@@ -190,7 +191,7 @@ func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
 	// Second pass: layout children
 	used := 0
 	for i, child := range v.children {
-		if d, ok := child.(*divider); ok {
+		if d, ok := child.(*Divider); ok {
 			d.vertical = false
 		}
 		_, ch := child.MinSize()
@@ -285,7 +286,7 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 	// Second pass: layout children
 	used := 0
 	for i, child := range hs.children {
-		if div, ok := child.(*divider); ok {
+		if div, ok := child.(*Divider); ok {
 			div.vertical = true
 		}
 		cw, _ := child.MinSize()
@@ -397,6 +398,7 @@ func (o *overlay) Render(s Screen, rect Rect) {
 	ResetRect(s, rect, Style{})
 }
 
+/*
 type TabItem struct {
 	t       *TabView
 	label   string
@@ -500,7 +502,7 @@ func (t *TabView) Layout(x, y, w, h int) *LayoutNode {
 	for i, item := range t.items {
 		hs.Append(item)
 		if i != len(t.items)-1 {
-			hs.Append(Divider())
+			hs.Append(&Divider{})
 		}
 	}
 	n.Children = append(n.Children, hs.Layout(x, y, w, 1))
@@ -525,3 +527,4 @@ func (t *TabView) FocusTarget() Element {
 
 func (t *TabView) OnFocus() {}
 func (t *TabView) OnBlur()  {}
+*/

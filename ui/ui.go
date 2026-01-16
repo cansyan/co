@@ -220,27 +220,6 @@ func NewText(text string) *Text {
 	return &Text{Content: text}
 }
 
-// SetBold enables bold styling (chainable)
-func (t *Text) SetBold() *Text { t.Style.FontBold = true; return t }
-
-// SetItalic enables italic styling (chainable)
-func (t *Text) SetItalic() *Text { t.Style.FontItalic = true; return t }
-
-// SetUnderline enables underline styling (chainable)
-func (t *Text) SetUnderline() *Text { t.Style.FontUnderline = true; return t }
-
-// SetForeground sets the foreground color (chainable)
-func (t *Text) SetForeground(color string) *Text {
-	t.Style.FG = color
-	return t
-}
-
-// SetBackground sets the background color (chainable)
-func (t *Text) SetBackground(color string) *Text {
-	t.Style.BG = color
-	return t
-}
-
 func (t *Text) MinSize() (int, int) { return runewidth.StringWidth(t.Content), 1 }
 func (t *Text) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
@@ -307,25 +286,6 @@ func (b *Button) OnMouseUp(x, y int) {
 		}
 	}
 	b.pressed = false
-}
-
-// Trigger invokes the button's click action programmatically
-func (b *Button) Trigger() {
-	if b.OnClick != nil {
-		b.OnClick()
-	}
-}
-
-// SetForeground sets the foreground color (chainable)
-func (b *Button) SetForeground(color string) *Button {
-	b.Style.FG = color
-	return b
-}
-
-// SetBackground sets the background color (chainable)
-func (b *Button) SetBackground(color string) *Button {
-	b.Style.BG = color
-	return b
 }
 
 // TextInput is a single-line text input field.
@@ -509,6 +469,7 @@ func (t *TextInput) selection() (int, int, bool) {
 	return start, end, true
 }
 
+/*
 // TextViewer is a non-editable text viewer,
 // supports multiple lines, scrolling and following tail.
 type TextViewer struct {
@@ -596,15 +557,16 @@ func (tv *TextViewer) Write(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
+*/
 
 type ListView struct {
 	Items    []ListItem
 	hovered  int // -1 means nothing hovered
-	Selected int // -1 means nothing selected, changes only on click
+	Selected int // -1 means nothing selected
 }
 
 type ListItem struct {
-	Label  string
+	Text   string
 	Action func()
 }
 
@@ -617,7 +579,7 @@ func NewListView() *ListView {
 }
 
 func (l *ListView) Append(text string, action func()) {
-	l.Items = append(l.Items, ListItem{Label: text, Action: action})
+	l.Items = append(l.Items, ListItem{Text: text, Action: action})
 }
 
 func (l *ListView) Clear() {
@@ -629,7 +591,7 @@ func (l *ListView) Clear() {
 func (l *ListView) MinSize() (int, int) {
 	maxW := 10
 	for _, it := range l.Items {
-		if w := runewidth.StringWidth(it.Label); w > maxW {
+		if w := runewidth.StringWidth(it.Text); w > maxW {
 			maxW = w
 		}
 	}
@@ -657,7 +619,7 @@ func (l *ListView) Render(s Screen, rect Rect) {
 			st.BG = Theme.Hover
 		}
 
-		label := fmt.Sprintf(" %s ", item.Label)
+		label := fmt.Sprintf(" %s ", item.Text)
 		w := runewidth.StringWidth(label)
 		if w > rect.W {
 			label = runewidth.Truncate(label, rect.W, "…")
@@ -693,6 +655,13 @@ func (l *ListView) OnMouseLeave() { l.hovered = -1 }
 
 func (l *ListView) OnFocus() {}
 func (l *ListView) OnBlur()  {}
+
+func (l *ListView) Len() int {
+	if l == nil {
+		return 0
+	}
+	return len(l.Items)
+}
 
 // SelectNext moves selection to the next item
 func (l *ListView) SelectNext() {
@@ -735,24 +704,20 @@ func (l *ListView) HandleKey(ev *tcell.EventKey) bool {
 	return consumed
 }
 
-type divider struct {
+// Divider is a simple horizontal or vertical line separator.
+// It can be used within container layouts like HStack and VStack.
+type Divider struct {
 	vertical bool
 }
 
-// Divider creates a horizontal or vertical divider line.
-// Should be used inside HStack or VStack.
-func Divider() *divider {
-	return &divider{}
-}
-
-func (d *divider) MinSize() (w, h int) { return 1, 1 }
-func (d *divider) Layout(x, y, w, h int) *LayoutNode {
+func (d *Divider) MinSize() (w, h int) { return 1, 1 }
+func (d *Divider) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: d,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 }
-func (d *divider) Render(s Screen, rect Rect) {
+func (d *Divider) Render(s Screen, rect Rect) {
 	style := Style{FG: Theme.Border}
 	if !d.vertical {
 		for i := range rect.W {
@@ -765,13 +730,13 @@ func (d *divider) Render(s Screen, rect Rect) {
 	}
 }
 
-type Empty struct{}
+type empty struct{}
 
-func (e Empty) MinSize() (int, int) { return 0, 0 }
-func (e Empty) Layout(x, y, w, h int) *LayoutNode {
+func (e empty) MinSize() (int, int) { return 0, 0 }
+func (e empty) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{Element: e, Rect: Rect{X: x, Y: y, W: w, H: h}}
 }
-func (e Empty) Render(Screen, Rect) {}
+func (e empty) Render(Screen, Rect) {}
 
 // ---------------------------------------------------------------------
 // APP RUNNER
