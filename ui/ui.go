@@ -559,53 +559,39 @@ func (tv *TextViewer) Write(p []byte) (int, error) {
 }
 */
 
-type ListView struct {
+// List displays a vertical list of items with selection and hover states.
+// The zero value is ready to use.
+type List struct {
 	Items    []ListItem
-	hovered  int // -1 means nothing hovered
-	Selected int // -1 means nothing selected
+	Selected int // -1 means no selection
+	OnSelect func(ListItem)
+
+	hovered int // -1 means no hover
 }
 
 type ListItem struct {
-	Text   string
-	Action func()
+	Label string
+	Value any
 }
 
-func NewListView() *ListView {
-	l := &ListView{
-		hovered:  -1,
-		Selected: -1,
-	}
-	return l
-}
-
-func (l *ListView) Append(text string, action func()) {
-	l.Items = append(l.Items, ListItem{Text: text, Action: action})
-}
-
-func (l *ListView) Clear() {
-	l.Items = nil
-	l.hovered = -1
-	l.Selected = -1
-}
-
-func (l *ListView) MinSize() (int, int) {
+func (l *List) MinSize() (int, int) {
 	maxW := 10
 	for _, it := range l.Items {
-		if w := runewidth.StringWidth(it.Text); w > maxW {
+		if w := runewidth.StringWidth(it.Label); w > maxW {
 			maxW = w
 		}
 	}
-	return maxW + 2, len(l.Items) // a bit of padding + one row per item
+	return maxW + 2, len(l.Items)
 }
 
-func (l *ListView) Layout(x, y, w, h int) *LayoutNode {
+func (l *List) Layout(x, y, w, h int) *LayoutNode {
 	return &LayoutNode{
 		Element: l,
 		Rect:    Rect{X: x, Y: y, W: w, H: h},
 	}
 }
 
-func (l *ListView) Render(s Screen, rect Rect) {
+func (l *List) Render(s Screen, rect Rect) {
 	for i, item := range l.Items {
 		if i >= rect.H {
 			break
@@ -619,7 +605,7 @@ func (l *ListView) Render(s Screen, rect Rect) {
 			st.BG = Theme.Hover
 		}
 
-		label := fmt.Sprintf(" %s ", item.Text)
+		label := fmt.Sprintf(" %s ", item.Label)
 		w := runewidth.StringWidth(label)
 		if w > rect.W {
 			label = runewidth.Truncate(label, rect.W, "…")
@@ -630,78 +616,78 @@ func (l *ListView) Render(s Screen, rect Rect) {
 	}
 }
 
-func (l *ListView) OnMouseDown(x, y int) {
+func (l *List) OnMouseDown(x, y int) {
 	if y >= 0 && y < len(l.Items) {
 		l.Selected = y
-		if l.Items[y].Action != nil {
-			l.Items[y].Action()
+		if l.OnSelect != nil {
+			l.OnSelect(l.Items[y])
 		}
 	}
 }
 
-func (l *ListView) OnMouseUp(x, y int) {}
+func (l *List) OnMouseUp(x, y int) {}
 
-func (l *ListView) OnMouseEnter() {}
-
-func (l *ListView) OnMouseMove(rx, ry int) {
-	if ry < 0 || ry >= len(l.Items) {
+func (l *List) OnMouseMove(x, y int) {
+	if y >= 0 && y < len(l.Items) {
+		l.hovered = y
+	} else {
 		l.hovered = -1
-		return
 	}
-	l.hovered = ry
 }
 
-func (l *ListView) OnMouseLeave() { l.hovered = -1 }
+func (l *List) OnMouseEnter() {}
+func (l *List) OnMouseLeave() { l.hovered = -1 }
+func (l *List) OnFocus()      {}
+func (l *List) OnBlur()       {}
 
-func (l *ListView) OnFocus() {}
-func (l *ListView) OnBlur()  {}
+func (l *List) Append(item ListItem) {
+	l.Items = append(l.Items, item)
+}
 
-func (l *ListView) Len() int {
-	if l == nil {
-		return 0
-	}
+func (l *List) Clear() {
+	l.Items = nil
+	l.Selected = -1
+	l.hovered = -1
+}
+
+func (l *List) Len() int {
 	return len(l.Items)
 }
 
-// SelectNext moves selection to the next item
-func (l *ListView) SelectNext() {
+func (l *List) HandleKey(ev *tcell.EventKey) bool {
+	switch ev.Key() {
+	case tcell.KeyUp, tcell.KeyCtrlP:
+		l.Prev()
+	case tcell.KeyDown, tcell.KeyCtrlN:
+		l.Next()
+	case tcell.KeyEnter:
+		l.Activate()
+	default:
+		return false
+	}
+	return true
+}
+
+func (l *List) Next() {
 	if len(l.Items) == 0 {
 		return
 	}
 	l.Selected = (l.Selected + 1) % len(l.Items)
 }
 
-// SelectPrev moves selection to the previous item
-func (l *ListView) SelectPrev() {
+func (l *List) Prev() {
 	if len(l.Items) == 0 {
 		return
 	}
 	l.Selected = (l.Selected - 1 + len(l.Items)) % len(l.Items)
 }
 
-// Activate invokes the action of the currently selected item
-func (l *ListView) Activate() {
-	if len(l.Items) == 0 || l.Selected < 0 {
-		return
+func (l *List) Activate() {
+	if l.Selected >= 0 && l.Selected < len(l.Items) {
+		if l.OnSelect != nil {
+			l.OnSelect(l.Items[l.Selected])
+		}
 	}
-	if l.Items[l.Selected].Action != nil {
-		l.Items[l.Selected].Action()
-	}
-}
-
-func (l *ListView) HandleKey(ev *tcell.EventKey) bool {
-	consumed := true
-	switch ev.Key() {
-	case tcell.KeyUp, tcell.KeyCtrlP:
-		l.SelectPrev()
-	case tcell.KeyDown, tcell.KeyCtrlN:
-		l.SelectNext()
-	case tcell.KeyEnter:
-		l.Activate()
-	default:
-		consumed = false
-	}
-	return consumed
 }
 
 // Divider is a simple horizontal or vertical line separator.

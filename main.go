@@ -55,7 +55,7 @@ func main() {
 		}
 		if line > 0 {
 			if e := editorApp.getEditor(); e != nil {
-				e.gotoLine(line)
+				e.gotoLine(line - 1)
 			}
 		}
 	} else {
@@ -389,7 +389,10 @@ func (a *EditorApp) getEditor() *Editor {
 }
 
 func (a *EditorApp) showPalette(prefix string) {
-	p := NewPalette()
+	p := &Palette{
+		input: new(ui.TextInput),
+		list:  new(ui.List),
+	}
 	p.input.OnChange = func() {
 		text := p.input.Text()
 		p.list.Clear()
@@ -404,12 +407,14 @@ func (a *EditorApp) showPalette(prefix string) {
 				return
 			}
 
-			p.list.Append(fmt.Sprintf("Go to Line %d", n), func() {
+			p.list.Append(ui.ListItem{Label: "Go to Line " + lineStr, Value: n - 1})
+			p.list.OnSelect = func(item ui.ListItem) {
+				lineNum := item.Value.(int)
 				if e := a.getEditor(); e != nil {
-					e.gotoLine(n)
+					e.gotoLine(lineNum)
 				}
 				a.requestFocus()
-			})
+			}
 
 		case strings.HasPrefix(text, "@"):
 			// 2. Go to Symbol
@@ -422,23 +427,25 @@ func (a *EditorApp) showPalette(prefix string) {
 			if editor == nil {
 				return
 			}
+			p.list.OnSelect = func(item ui.ListItem) {
+				symbolLine := item.Value.(int)
+				editor.gotoLine(symbolLine)
+				a.requestFocus()
+			}
 
-			for _, s := range editor.symbols {
+			for _, sym := range editor.symbols {
 				ok := true
 				for _, word := range words {
 					if word == "" {
 						continue
 					}
-					if !strings.Contains(strings.ToLower(s.Signature), word) {
+					if !strings.Contains(strings.ToLower(sym.FullName), word) {
 						ok = false
 						break
 					}
 				}
 				if ok {
-					p.list.Append(s.Signature, func() {
-						editor.gotoLine(s.Line + 1)
-						a.requestFocus()
-					})
+					p.list.Append(ui.ListItem{Label: sym.FullName, Value: sym.Line})
 				}
 			}
 
@@ -461,17 +468,19 @@ func (a *EditorApp) fillCommandMode(p *Palette, query string) {
 		name   string
 		action func()
 	}{
-		{"Color Theme: Breaks", func() { ui.Theme = ui.NewBreakersTheme() }},
-		{"Color Theme: Mariana", func() { ui.Theme = ui.NewMarianaTheme() }},
+		{"Color Theme: Breaks", func() { ui.Theme = ui.NewBreakersTheme(); a.requestFocus() }},
+		{"Color Theme: Mariana", func() { ui.Theme = ui.NewMarianaTheme(); a.requestFocus() }},
 		{"Goto Definition", func() {
 			if e := a.getEditor(); e != nil {
 				e.gotoDefinition()
 			}
+			a.requestFocus()
 		}},
-		{"Goto Symbol", func() { a.showPalette("@") }},
+		{"Goto Symbol", func() { a.showPalette("@"); a.requestFocus() }},
 		{"New File", func() { a.newTab("untitled"); a.requestFocus() }},
 		{"Quit", a.app.Stop},
 	}
+
 	for _, cmd := range commands {
 		ok := true
 		for _, word := range words {
@@ -484,21 +493,28 @@ func (a *EditorApp) fillCommandMode(p *Palette, query string) {
 			}
 		}
 		if ok {
-			p.list.Append(cmd.name, func() {
-				cmd.action()
-				a.requestFocus()
-			})
+			p.list.Append(ui.ListItem{Label: cmd.name, Value: cmd.action})
 		}
+	}
+
+	p.list.OnSelect = func(item ui.ListItem) {
+		action := item.Value.(func())
+		action()
 	}
 }
 
 func (a *EditorApp) fillFileSearchMode(p *Palette, query string) {
+	p.list.OnSelect = func(item ui.ListItem) {
+		a.openFile(item.Value.(string))
+		a.requestFocus()
+	}
+
 	query = strings.ToLower(query)
 	filter := make(map[string]bool)
 	currentDir, _ := os.Getwd()
 
 	// list opened tabs first
-	for i, t := range a.tabs {
+	for _, t := range a.tabs {
 		path := t.path
 		// show relative path if possible
 		if filepath.IsAbs(t.path) {
@@ -508,10 +524,7 @@ func (a *EditorApp) fillFileSearchMode(p *Palette, query string) {
 		}
 
 		if query == "" || strings.Contains(strings.ToLower(path), query) {
-			p.list.Append(path, func() {
-				a.activeTab = i
-				a.requestFocus()
-			})
+			p.list.Append(ui.ListItem{Label: path, Value: path})
 			filter[path] = true
 			if p.list.Len() >= 10 {
 				return
@@ -529,10 +542,7 @@ func (a *EditorApp) fillFileSearchMode(p *Palette, query string) {
 		if query != "" && !strings.Contains(strings.ToLower(name), query) {
 			continue
 		}
-		p.list.Append(name, func() {
-			a.openFile(name)
-			a.requestFocus()
-		})
+		p.list.Append(ui.ListItem{Label: name, Value: name})
 		if p.list.Len() >= 10 {
 			return
 		}
@@ -830,15 +840,7 @@ func (t *tab) OnMouseMove(rx, ry int) {}
 
 type Palette struct {
 	input *ui.TextInput
-	list  *ui.ListView
-}
-
-func NewPalette() *Palette {
-	p := &Palette{
-		input: new(ui.TextInput),
-		list:  ui.NewListView(),
-	}
-	return p
+	list  *ui.List
 }
 
 func (p *Palette) SetText(text string) {
@@ -877,9 +879,9 @@ func (p *Palette) HandleKey(ev *tcell.EventKey) bool {
 	consumed := true
 	switch ev.Key() {
 	case tcell.KeyDown, tcell.KeyCtrlN:
-		p.list.SelectNext()
+		p.list.Next()
 	case tcell.KeyUp, tcell.KeyCtrlP:
-		p.list.SelectPrev()
+		p.list.Prev()
 	case tcell.KeyEnter:
 		p.list.Activate()
 	default:
@@ -893,10 +895,10 @@ func (p *Palette) OnFocus() { p.input.OnFocus() }
 func (p *Palette) OnBlur()  { p.input.OnBlur() }
 
 type symbol struct {
-	Name      string // identifier, for example "saveFile"
-	Signature string // readable definition, for example "(*root).saveFile"
-	Line      int    // line number
-	Kind      string // "type", "func" (for function and method)
+	Name     string // identifier (e.g., "saveFile")
+	FullName string // fully qualified identifier, for display (e.g., "(*root).saveFile", "type Foo")
+	Line     int    // 0-based line number
+	Kind     string // "type", "func" (for function and method)
 }
 
 func extractSymbols(content string) []symbol {
@@ -912,19 +914,19 @@ func extractSymbols(content string) []symbol {
 			rawRecv := matches[1]
 			name := matches[2]
 
-			sign := name
+			fullName := name
 			if rawRecv != "" {
 				// 提取 Receiver 型別並組合成 (*root).Method 格式
 				parts := strings.Fields(rawRecv)
 				recvType := parts[len(parts)-1]
-				sign = fmt.Sprintf("(%s).%s", recvType, name)
+				fullName = fmt.Sprintf("(%s).%s", recvType, name)
 			}
 
 			symbols = append(symbols, symbol{
-				Name:      name,
-				Signature: sign,
-				Line:      i,
-				Kind:      "func",
+				Name:     name,
+				FullName: fullName,
+				Line:     i,
+				Kind:     "func",
 			})
 			continue
 		}
@@ -933,10 +935,10 @@ func extractSymbols(content string) []symbol {
 		if matches := typeRegex.FindStringSubmatch(line); len(matches) > 1 {
 			name := matches[1]
 			symbols = append(symbols, symbol{
-				Name:      name,
-				Signature: "type " + name,
-				Line:      i,
-				Kind:      "type",
+				Name:     name,
+				FullName: "type " + name,
+				Line:     i,
+				Kind:     "type",
 			})
 		}
 	}
@@ -1268,9 +1270,9 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 	case "ctrl+g":
 		e.gotoDefinition()
 	case "alt+up": // goto first line
-		e.gotoLine(1)
+		e.gotoLine(0)
 	case "alt+down": // goto last line
-		e.gotoLine(e.Len())
+		e.gotoLine(e.Len() - 1)
 	case "alt+left": // goto the first non-space character of line
 		e.ClearSelection()
 		for i, char := range e.Line(e.Pos.Row) {
@@ -1291,15 +1293,17 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 	return true
 }
 
+// gotoLine moves the cursor to the specified 0-based line number
+// and centers the view on that line.
 func (e *Editor) gotoLine(line int) {
-	if line < 1 {
-		line = 1
+	if line < 0 {
+		line = 0
 	}
-	if line > e.Len() {
-		line = e.Len()
+	if line >= e.Len() {
+		line = e.Len() - 1
 	}
-	e.SetCursor(line-1, 0)
-	e.CenterRow(line - 1)
+	e.SetCursor(line, 0)
+	e.CenterRow(line)
 	e.app.recordJump()
 }
 
@@ -1312,7 +1316,7 @@ func (e *Editor) gotoDefinition() {
 
 	for _, s := range e.symbols {
 		if s.Name == word {
-			e.gotoLine(s.Line + 1)
+			e.gotoLine(s.Line)
 			return
 		}
 	}
