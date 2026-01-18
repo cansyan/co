@@ -54,6 +54,8 @@ type TextEditor struct {
 	InlineSuggest  bool
 	Suggester      func(prefix string) string
 	currentSuggest string
+
+	IndentGuide bool // show indent guides
 }
 
 func NewTextEditor() *TextEditor {
@@ -235,6 +237,11 @@ func (e *TextEditor) drawRune(s tcell.Screen, x, y int, maxWidth int, r rune, vi
 			spaces = maxWidth
 		}
 		for i := range spaces {
+			if e.IndentGuide && (i+visualCol)%tabSize == 0 {
+				style = style.Merge(Style{FG: Theme.Border})
+				s.SetContent(x+i, y, vLine, nil, style.Apply())
+				continue
+			}
 			s.SetContent(x+i, y, ' ', nil, style.Apply())
 		}
 		return spaces
