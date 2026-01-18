@@ -407,7 +407,7 @@ func (a *EditorApp) showPalette(prefix string) {
 				return
 			}
 
-			p.list.Append(ui.ListItem{Label: "Go to Line " + lineStr, Value: n - 1})
+			p.list.Append(ui.ListItem{Name: "Go to Line " + lineStr, Value: n - 1})
 			p.list.OnSelect = func(item ui.ListItem) {
 				lineNum := item.Value.(int)
 				if e := a.getEditor(); e != nil {
@@ -445,7 +445,7 @@ func (a *EditorApp) showPalette(prefix string) {
 					}
 				}
 				if ok {
-					p.list.Append(ui.ListItem{Label: sym.FullName, Value: sym.Line})
+					p.list.Append(ui.ListItem{Name: sym.FullName, Value: sym.Line})
 				}
 			}
 
@@ -493,7 +493,7 @@ func (a *EditorApp) fillCommandMode(p *Palette, query string) {
 			}
 		}
 		if ok {
-			p.list.Append(ui.ListItem{Label: cmd.name, Value: cmd.action})
+			p.list.Append(ui.ListItem{Name: cmd.name, Value: cmd.action})
 		}
 	}
 
@@ -524,7 +524,7 @@ func (a *EditorApp) fillFileSearchMode(p *Palette, query string) {
 		}
 
 		if query == "" || strings.Contains(strings.ToLower(path), query) {
-			p.list.Append(ui.ListItem{Label: path, Value: path})
+			p.list.Append(ui.ListItem{Name: path, Value: path})
 			filter[path] = true
 			if p.list.Len() >= 10 {
 				return
@@ -542,7 +542,7 @@ func (a *EditorApp) fillFileSearchMode(p *Palette, query string) {
 		if query != "" && !strings.Contains(strings.ToLower(name), query) {
 			continue
 		}
-		p.list.Append(ui.ListItem{Label: name, Value: name})
+		p.list.Append(ui.ListItem{Name: name, Value: name})
 		if p.list.Len() >= 10 {
 			return
 		}

@@ -570,14 +570,14 @@ type List struct {
 }
 
 type ListItem struct {
-	Label string
+	Name  string
 	Value any
 }
 
 func (l *List) MinSize() (int, int) {
 	maxW := 10
 	for _, it := range l.Items {
-		if w := runewidth.StringWidth(it.Label); w > maxW {
+		if w := runewidth.StringWidth(it.Name); w > maxW {
 			maxW = w
 		}
 	}
@@ -605,7 +605,7 @@ func (l *List) Render(s Screen, rect Rect) {
 			st.BG = Theme.Hover
 		}
 
-		label := fmt.Sprintf(" %s ", item.Label)
+		label := fmt.Sprintf(" %s ", item.Name)
 		w := runewidth.StringWidth(label)
 		if w > rect.W {
 			label = runewidth.Truncate(label, rect.W, "…")
