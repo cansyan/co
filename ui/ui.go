@@ -559,14 +559,12 @@ func (tv *TextViewer) Write(p []byte) (int, error) {
 }
 */
 
-// List displays a vertical list of items with selection and hover states.
+// List displays a vertical list of items.
 // The zero value is ready to use.
 type List struct {
 	Items    []ListItem
-	Selected int // -1 means no selection
+	Index    int // current selected index, -1 means none
 	OnSelect func(ListItem)
-
-	hovered int // -1 means no hover
 }
 
 type ListItem struct {
@@ -598,11 +596,8 @@ func (l *List) Render(s Screen, rect Rect) {
 		}
 
 		var st Style
-		switch i {
-		case l.Selected:
+		if l.Index == i {
 			st.BG = Theme.Selection
-		case l.hovered:
-			st.BG = Theme.Hover
 		}
 
 		label := fmt.Sprintf(" %s ", item.Name)
@@ -618,7 +613,7 @@ func (l *List) Render(s Screen, rect Rect) {
 
 func (l *List) OnMouseDown(x, y int) {
 	if y >= 0 && y < len(l.Items) {
-		l.Selected = y
+		l.Index = y
 		if l.OnSelect != nil {
 			l.OnSelect(l.Items[y])
 		}
@@ -629,14 +624,14 @@ func (l *List) OnMouseUp(x, y int) {}
 
 func (l *List) OnMouseMove(x, y int) {
 	if y >= 0 && y < len(l.Items) {
-		l.hovered = y
+		l.Index = y
 	} else {
-		l.hovered = -1
+		l.Index = -1
 	}
 }
 
 func (l *List) OnMouseEnter() {}
-func (l *List) OnMouseLeave() { l.hovered = -1 }
+func (l *List) OnMouseLeave() { l.Index = -1 }
 func (l *List) OnFocus()      {}
 func (l *List) OnBlur()       {}
 
@@ -646,8 +641,7 @@ func (l *List) Append(item ListItem) {
 
 func (l *List) Clear() {
 	l.Items = nil
-	l.Selected = -1
-	l.hovered = -1
+	l.Index = -1
 }
 
 func (l *List) Len() int {
@@ -672,20 +666,20 @@ func (l *List) Next() {
 	if len(l.Items) == 0 {
 		return
 	}
-	l.Selected = (l.Selected + 1) % len(l.Items)
+	l.Index = (l.Index + 1) % len(l.Items)
 }
 
 func (l *List) Prev() {
 	if len(l.Items) == 0 {
 		return
 	}
-	l.Selected = (l.Selected - 1 + len(l.Items)) % len(l.Items)
+	l.Index = (l.Index - 1 + len(l.Items)) % len(l.Items)
 }
 
 func (l *List) Activate() {
-	if l.Selected >= 0 && l.Selected < len(l.Items) {
+	if l.Index >= 0 && l.Index < len(l.Items) {
 		if l.OnSelect != nil {
-			l.OnSelect(l.Items[l.Selected])
+			l.OnSelect(l.Items[l.Index])
 		}
 	}
 }
@@ -724,11 +718,8 @@ func (e empty) Layout(x, y, w, h int) *LayoutNode {
 }
 func (e empty) Render(Screen, Rect) {}
 
-// ---------------------------------------------------------------------
-// APP RUNNER
-// ---------------------------------------------------------------------
-
-type App struct {
+// Runtime manages the main event loop, rendering, and event dispatching.
+type Runtime struct {
 	screen  Screen
 	root    Element // root element of the UI hierarchy to be rendered
 	focused Element
@@ -741,12 +732,11 @@ type App struct {
 	overlay    *overlay // for temporary display
 }
 
-func NewApp() *App {
-	a := &App{
+func NewRuntime() *Runtime {
+	return &Runtime{
 		done:     make(chan struct{}),
 		bindings: make(map[string]func()),
 	}
-	return a
 }
 
 func drawTree(node *LayoutNode, s Screen) {
@@ -761,14 +751,14 @@ func drawTree(node *LayoutNode, s Screen) {
 }
 
 // Render builds the layout tree then render it to the screen.
-func (a *App) Render() {
-	w, h := a.screen.Size()
-	a.tree = a.root.Layout(0, 0, w, h)
-	if o := a.overlay; o != nil {
+func (r *Runtime) Render() {
+	w, h := r.screen.Size()
+	r.tree = r.root.Layout(0, 0, w, h)
+	if o := r.overlay; o != nil {
 		node := o.Layout(0, 0, w, h)
-		a.tree.Children = append(a.tree.Children, node)
+		r.tree.Children = append(r.tree.Children, node)
 	}
-	drawTree(a.tree, a.screen)
+	drawTree(r.tree, r.screen)
 }
 
 // Point represent a position in the screen coordinate.
@@ -806,47 +796,47 @@ func hitTest(n *LayoutNode, p Point) (Element, Point) {
 	}
 }
 
-func (a *App) SetFocus(e Element) {
-	if e == a.focused {
+func (r *Runtime) SetFocus(e Element) {
+	if e == r.focused {
 		return
 	}
 
-	prev := a.focused
+	prev := r.focused
 	defer func() {
-		Logger.Printf("Focus changed: %T -> %T", prev, a.focused)
+		Logger.Printf("Focus changed: %T -> %T", prev, r.focused)
 	}()
 
-	a.blurCurrent()
+	r.blurCurrent()
 
 	if e == nil {
-		a.focused = nil
+		r.focused = nil
 		return
 	}
 
-	e = a.resolveFocus(e)
+	e = r.resolveFocus(e)
 	if fe, ok := e.(Focusable); ok {
 		fe.OnFocus()
-		a.focused = e
-		a.clearOverlayIfFocusOutside(e)
+		r.focused = e
+		r.clearOverlayIfFocusOutside(e)
 	} else {
-		a.focused = nil
+		r.focused = nil
 	}
 }
 
-func (a *App) blurCurrent() {
-	if a.focused == nil {
+func (r *Runtime) blurCurrent() {
+	if r.focused == nil {
 		return
 	}
-	if f, ok := a.focused.(Focusable); ok {
+	if f, ok := r.focused.(Focusable); ok {
 		f.OnBlur()
 	}
-	a.screen.HideCursor()
+	r.screen.HideCursor()
 }
 
-func (a *App) clearOverlayIfFocusOutside(e Element) {
-	overlayNode := findNode(a.tree, a.overlay)
+func (r *Runtime) clearOverlayIfFocusOutside(e Element) {
+	overlayNode := findNode(r.tree, r.overlay)
 	if overlayNode != nil && findNode(overlayNode, e) == nil {
-		a.overlay = nil
+		r.overlay = nil
 	}
 }
 
@@ -865,7 +855,7 @@ func findNode(n *LayoutNode, target Element) *LayoutNode {
 	return nil
 }
 
-func (a *App) resolveFocus(e Element) Element {
+func (r *Runtime) resolveFocus(e Element) Element {
 	visited := make(map[Element]bool)
 	for {
 		if visited[e] {
@@ -887,19 +877,19 @@ func (a *App) resolveFocus(e Element) Element {
 }
 
 // Refresh requests a redraw of the UI
-func (a *App) Refresh() {
+func (r *Runtime) Refresh() {
 	// sends an empty event, wakes screen.PollEvent()
-	a.screen.PostEvent(tcell.NewEventInterrupt(nil))
+	r.screen.PostEvent(tcell.NewEventInterrupt(nil))
 }
 
-// Run starts the main event loop
-func (a *App) Run(root Element) error {
-	a.root = root
+// Start starts the main event loop
+func (r *Runtime) Start(root Element) error {
+	r.root = root
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return err
 	}
-	a.screen = screen
+	r.screen = screen
 
 	if err := screen.Init(); err != nil {
 		return err
@@ -910,13 +900,13 @@ func (a *App) Run(root Element) error {
 	draw := func() {
 		screen.SetCursorStyle(tcell.CursorStyleSteadyBar, tcell.GetColor(Theme.Cursor))
 		screen.Fill(' ', Style{}.Apply())
-		a.Render()
+		r.Render()
 		screen.Show()
 	}
 
 	for {
 		select {
-		case <-a.done:
+		case <-r.done:
 			return nil
 		default:
 		}
@@ -932,28 +922,33 @@ func (a *App) Run(root Element) error {
 			draw()
 			screen.Sync()
 		case *tcell.EventKey:
-			a.handleKey(ev)
+			r.handleKey(ev)
 		case *tcell.EventMouse:
-			a.handleMouse(ev)
+			r.handleMouse(ev)
 		}
 	}
 }
 
+// Stop stops the main event loop
+func (r *Runtime) Stop() {
+	close(r.done)
+}
+
 // BindKey bind the key to the action globally,
 // key should be form of "ctrl+c".
-func (a *App) BindKey(key string, action func()) {
+func (r *Runtime) BindKey(key string, action func()) {
 	if key == "" || action == nil {
 		return
 	}
 	key = strings.ToLower(key)
-	a.bindings[key] = action
+	r.bindings[key] = action
 }
 
-func (a *App) handleKey(ev *tcell.EventKey) {
+func (r *Runtime) handleKey(ev *tcell.EventKey) {
 	Logger.Printf("key %s", ev.Name())
 	// 1. Give the focused element first chance to handle the key event
-	if a.focused != nil {
-		if h, ok := a.focused.(KeyHandler); ok {
+	if r.focused != nil {
+		if h, ok := r.focused.(KeyHandler); ok {
 			if h.HandleKey(ev) {
 				return
 			}
@@ -961,34 +956,34 @@ func (a *App) handleKey(ev *tcell.EventKey) {
 	}
 
 	// 2. Framework-level automatic dismissal
-	if ev.Key() == tcell.KeyESC && a.overlay != nil {
-		a.CloseOverlay()
+	if ev.Key() == tcell.KeyESC && r.overlay != nil {
+		r.CloseOverlay()
 		return
 	}
 
 	// 3. Fallback to global bindings
 	key := strings.ToLower(ev.Name())
-	if action, ok := a.bindings[key]; ok {
+	if action, ok := r.bindings[key]; ok {
 		action()
 		return
 	}
 }
 
 // hover -> mouse down -> focus -> mouse up -> scroll
-func (a *App) handleMouse(ev *tcell.EventMouse) {
+func (r *Runtime) handleMouse(ev *tcell.EventMouse) {
 	x, y := ev.Position()
-	hit, local := hitTest(a.tree, Point{X: x, Y: y})
+	hit, local := hitTest(r.tree, Point{X: x, Y: y})
 	if hit == nil {
 		return
 	}
 	lx, ly := local.X, local.Y
 
-	a.updateHover(hit, lx, ly)
+	r.updateHover(hit, lx, ly)
 
 	switch ev.Buttons() {
 	case tcell.ButtonPrimary:
-		a.SetFocus(hit)
-		a.clickPoint = Point{X: x, Y: y}
+		r.SetFocus(hit)
+		r.clickPoint = Point{X: x, Y: y}
 		// mouse down
 		if i, ok := hit.(Clickable); ok {
 			i.OnMouseDown(lx, ly)
@@ -1003,7 +998,7 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		}
 	default:
 		// mouse up
-		if x == a.clickPoint.X && y == a.clickPoint.Y {
+		if x == r.clickPoint.X && y == r.clickPoint.Y {
 			if i, ok := hit.(Clickable); ok {
 				i.OnMouseUp(lx, ly)
 			}
@@ -1011,15 +1006,15 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 	}
 }
 
-func (a *App) updateHover(e Element, lx, ly int) {
-	if a.hover != e {
-		if h, ok := a.hover.(Hoverable); ok {
+func (r *Runtime) updateHover(e Element, lx, ly int) {
+	if r.hover != e {
+		if h, ok := r.hover.(Hoverable); ok {
 			h.OnMouseLeave()
 		}
 		if h, ok := e.(Hoverable); ok {
 			h.OnMouseEnter()
 		}
-		a.hover = e
+		r.hover = e
 	}
 
 	if h, ok := e.(Hoverable); ok {
@@ -1027,27 +1022,23 @@ func (a *App) updateHover(e Element, lx, ly int) {
 	}
 }
 
-func (a *App) Stop() {
-	close(a.done)
-}
-
 // Overlay displays an overlay element over the main layout
 // with the given alignment, and sets focus to it.
-func (a *App) Overlay(e Element, align string) {
-	a.overlay = &overlay{
+func (r *Runtime) Overlay(e Element, align string) {
+	r.overlay = &overlay{
 		child: e,
 		align: align,
 	}
-	if a.focused != nil {
-		a.overlay.prevFocus = a.focused
+	if r.focused != nil {
+		r.overlay.prevFocus = r.focused
 	}
-	a.SetFocus(e)
+	r.SetFocus(e)
 }
 
 // CloseOverlay dismiss the overlay, restore previous focus.
-func (a *App) CloseOverlay() {
-	if a.overlay != nil {
-		a.SetFocus(a.overlay.prevFocus)
+func (r *Runtime) CloseOverlay() {
+	if r.overlay != nil {
+		r.SetFocus(r.overlay.prevFocus)
 	}
-	a.overlay = nil
+	r.overlay = nil
 }
