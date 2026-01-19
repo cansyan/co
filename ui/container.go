@@ -36,8 +36,8 @@ func (d decorator) MinSize() (w, h int) {
 	return mw, mh
 }
 
-func (d decorator) Layout(x, y, w, h int) *LayoutNode {
-	ix, iy, iw, ih := x, y, w, h
+func (d decorator) Layout(r Rect) *Node {
+	ix, iy, iw, ih := r.X, r.Y, r.W, r.H
 
 	if d.border {
 		ix, iy, iw, ih = ix+1, iy+1, iw-2, ih-2
@@ -56,8 +56,8 @@ func (d decorator) Layout(x, y, w, h int) *LayoutNode {
 		ih = d.height
 	}
 
-	node := NewLayoutNode(d, x, y, w, h)
-	node.Children = []*LayoutNode{d.Element.Layout(ix, iy, iw, ih)}
+	node := &Node{Element: d, Rect: r}
+	node.Children = []*Node{d.Element.Layout(Rect{X: ix, Y: iy, W: iw, H: ih})}
 	return node
 }
 
@@ -167,8 +167,9 @@ func (v *vstack) MinSize() (int, int) {
 	return maxW, totalH
 }
 
-func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
-	n := NewLayoutNode(v, x, y, w, h)
+func (v *vstack) Layout(r Rect) *Node {
+	n := &Node{Element: v, Rect: r}
+	n.Children = make([]*Node, 0, len(v.children))
 	// First pass: measure children
 	totalH := 0
 	totalGrow := 0
@@ -182,7 +183,7 @@ func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
 	}
 
 	// Compute spare space
-	spare := max(h-totalH-v.spacing*(len(v.children)-1), 0)
+	spare := max(r.H-totalH-v.spacing*(len(v.children)-1), 0)
 	var share float64
 	if totalGrow > 0 {
 		share = float64(spare) / float64(totalGrow)
@@ -203,11 +204,11 @@ func (v *vstack) Layout(x, y, w, h int) *LayoutNode {
 			ch = expand
 			spare -= expand
 		}
-		if used+ch > h {
-			ch = h - used
+		if used+ch > r.H {
+			ch = r.H - used
 		}
 		if ch > 0 {
-			childNode := child.Layout(x, y+used, w, ch)
+			childNode := child.Layout(Rect{X: r.X, Y: r.Y + used, W: r.W, H: ch})
 			n.Children = append(n.Children, childNode)
 		}
 		used += ch
@@ -262,8 +263,9 @@ func (hs *hstack) MinSize() (int, int) {
 	return totalW, maxH
 }
 
-func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
-	n := NewLayoutNode(hs, x, y, w, h)
+func (hs *hstack) Layout(r Rect) *Node {
+	n := &Node{Element: hs, Rect: r}
+	n.Children = make([]*Node, 0, len(hs.children))
 	// First pass: measure children
 	totalWidth := 0
 	totalGrow := 0
@@ -277,7 +279,7 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 	}
 
 	// Compute remaining space
-	remain := max(w-totalWidth-hs.spacing*(len(hs.children)-1), 0)
+	remain := max(r.W-totalWidth-hs.spacing*(len(hs.children)-1), 0)
 	var share float64
 	if totalGrow > 0 {
 		share = float64(remain) / float64(totalGrow)
@@ -295,11 +297,11 @@ func (hs *hstack) Layout(x, y, w, h int) *LayoutNode {
 			cw = expand
 			remain -= expand
 		}
-		if used+cw > w {
-			cw = w - used
+		if used+cw > r.W {
+			cw = r.W - used
 		}
 		if cw > 0 {
-			childNode := child.Layout(x+used, y, cw, h)
+			childNode := child.Layout(Rect{X: r.X + used, Y: r.Y, W: cw, H: r.H})
 			n.Children = append(n.Children, childNode)
 		}
 		used += cw
@@ -378,19 +380,20 @@ func (o *overlay) MinSize() (int, int) {
 	return o.child.MinSize()
 }
 
-func (o *overlay) Layout(x, y, w, h int) *LayoutNode {
+func (o *overlay) Layout(r Rect) *Node {
 	cw, ch := o.child.MinSize()
+	x, y := r.X, r.Y
 	switch o.align {
 	case "center":
-		x = x + (w-cw)/2
-		y = y + (h-ch)/2
+		x = x + (r.W-cw)/2
+		y = y + (r.H-ch)/2
 	case "top":
-		x = x + (w-cw)/2
+		x = x + (r.W-cw)/2
 		y = 1 // Small offset from top
 	}
 
-	node := NewLayoutNode(o, x, y, cw, ch)
-	node.Children = []*LayoutNode{o.child.Layout(x, y, cw, ch)}
+	node := &Node{Element: o, Rect: Rect{X: x, Y: y, W: cw, H: ch}}
+	node.Children = []*Node{o.child.Layout(Rect{X: x, Y: y, W: cw, H: ch})}
 	return node
 }
 
@@ -429,10 +432,10 @@ func (ti *TabItem) MinSize() (int, int) {
 	return runewidth.StringWidth(ti.label), 1
 }
 
-func (ti *TabItem) Layout(x, y, w, h int) *LayoutNode {
+func (ti *TabItem) Layout(r Rect) *LayoutNode {
 	return &LayoutNode{
 		Element: ti,
-		Rect:    Rect{X: x, Y: y, W: w, H: h},
+		Rect:    r,
 	}
 }
 
@@ -492,10 +495,10 @@ func (t *TabView) MinSize() (int, int) {
 	return maxW, maxH + 1 // +1 for tab labels
 }
 
-func (t *TabView) Layout(x, y, w, h int) *LayoutNode {
+func (t *TabView) Layout(r Rect) *LayoutNode {
 	n := &LayoutNode{
 		Element: t,
-		Rect:    Rect{X: x, Y: y, W: w, H: h},
+		Rect:    r,
 	}
 
 	hs := HStack().Spacing(1)
@@ -505,10 +508,10 @@ func (t *TabView) Layout(x, y, w, h int) *LayoutNode {
 			hs.Append(&Divider{})
 		}
 	}
-	n.Children = append(n.Children, hs.Layout(x, y, w, 1))
+	n.Children = append(n.Children, hs.Layout(Rect{X: r.X, Y: r.Y, W: r.W, H: 1}))
 
 	if t.active >= 0 && t.active < len(t.items) {
-		node := t.items[t.active].body.Layout(x, y+1, w, h-1)
+		node := t.items[t.active].body.Layout(Rect{X: r.X, Y: r.Y + 1, W: r.W, H: r.H - 1})
 		n.Children = append(n.Children, node)
 	}
 	return n

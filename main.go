@@ -42,10 +42,10 @@ func main() {
 		log.SetOutput(io.Discard)
 	}
 
-	runtime := ui.NewRuntime()
-	runtime.BindKey("Ctrl+Q", runtime.Stop)
+	manager := ui.NewManager()
+	manager.BindKey("Ctrl+Q", manager.Stop)
 
-	app := newApp(runtime)
+	app := newApp(manager)
 	if arg := flag.Arg(0); arg != "" {
 		path, line := parseFileArg(arg)
 		err := app.openFile(path)
@@ -63,7 +63,7 @@ func main() {
 	}
 	app.requestFocus()
 
-	if err := runtime.Start(app); err != nil {
+	if err := manager.Start(app); err != nil {
 		log.Print(err)
 		return
 	}
@@ -81,7 +81,7 @@ func parseFileArg(arg string) (path string, line int) {
 var _ ui.Focusable = (*App)(nil)
 
 type App struct {
-	runtime   *ui.Runtime
+	manager   *ui.Manager
 	tabs      []*tab
 	activeTab int
 	newBtn    *ui.Button
@@ -108,22 +108,22 @@ type historyEntry struct {
 	pos  ui.Pos
 }
 
-func newApp(runtime *ui.Runtime) *App {
+func newApp(m *ui.Manager) *App {
 	a := &App{
-		runtime:    runtime,
+		manager:    m,
 		historyPos: -1,
 	}
 	a.newBtn = &ui.Button{
 		Text: "＋",
 		OnClick: func() {
 			a.newTab("untitled")
-			a.runtime.SetFocus(a)
+			m.SetFocus(a)
 		},
 	}
 	a.backBtn = &ui.Button{Text: "←", OnClick: a.goBack}
 	a.fwdBtn = &ui.Button{Text: "→", OnClick: a.goForward}
 	a.saveBtn = &ui.Button{Text: "Save", OnClick: a.saveFile}
-	a.quitBtn = &ui.Button{Text: "Quit", OnClick: runtime.Stop}
+	a.quitBtn = &ui.Button{Text: "Quit", OnClick: m.Stop}
 	a.searchBar = NewSearchBar(a)
 	return a
 }
@@ -156,7 +156,7 @@ func (a *App) closeTab(i int) {
 					return
 				}
 				a.deleteTab(i)
-				a.runtime.CloseOverlay()
+				a.manager.CloseOverlay()
 				a.requestFocus()
 				return
 			}
@@ -183,14 +183,14 @@ func (a *App) closeTab(i int) {
 		ui.PadH(ui.HStack(
 			ui.NewButton("Don't Save", func() {
 				a.deleteTab(i)
-				a.runtime.CloseOverlay()
+				a.manager.CloseOverlay()
 				a.requestFocus()
 			}),
-			ui.PadH(ui.NewButton("Cancel", a.runtime.CloseOverlay), 2),
+			ui.PadH(ui.NewButton("Cancel", a.manager.CloseOverlay), 2),
 			saveBtn,
 		), 2),
 	).Spacing(1))
-	a.runtime.Overlay(view, "top")
+	a.manager.Overlay(view, "top")
 }
 
 func (a *App) deleteTab(i int) {
@@ -206,7 +206,7 @@ func (a *App) deleteTab(i int) {
 	}
 
 	if len(a.tabs) == 0 {
-		a.runtime.Stop()
+		a.manager.Stop()
 	}
 }
 
@@ -224,7 +224,7 @@ func (a *App) MinSize() (int, int) {
 	return maxW, maxH + 1 // +1 for tab label
 }
 
-func (a *App) Layout(x, y, w, h int) *ui.LayoutNode {
+func (a *App) Layout(r ui.Rect) *ui.Node {
 	tabLabels := ui.HStack()
 	for i, tab := range a.tabs {
 		tabLabels.Append(tab)
@@ -261,9 +261,11 @@ func (a *App) Layout(x, y, w, h int) *ui.LayoutNode {
 		ui.PadH(statusBar, 1),
 	)
 
-	n := ui.NewLayoutNode(a, x, y, w, h)
-	n.Children = []*ui.LayoutNode{mainStack.Layout(x, y, w, h)}
-	return n
+	return &ui.Node{
+		Element:  a,
+		Rect:     r,
+		Children: []*ui.Node{mainStack.Layout(r)},
+	}
 }
 
 // setStatus sets the status text and clears it after a delay.
@@ -274,7 +276,7 @@ func (a *App) setStatus(msg string, delay time.Duration) {
 		// (Avoid clearing a newer, different message).
 		if a.status == msg {
 			a.status = ""
-			a.runtime.Refresh()
+			a.manager.Refresh()
 		}
 	})
 }
@@ -285,7 +287,7 @@ func (a *App) Render(ui.Screen, ui.Rect) {
 
 // a convenient method to request focus back to the app.
 func (a *App) requestFocus() {
-	a.runtime.SetFocus(a)
+	a.manager.SetFocus(a)
 }
 
 // delegates focus to the active tab's editor.
@@ -315,7 +317,7 @@ func (a *App) resetFind() {
 	}
 	sb.input.Select(0, len([]rune(query)))
 
-	a.runtime.SetFocus(sb)
+	a.manager.SetFocus(sb)
 }
 
 func (a *App) openFileDialog() {
@@ -328,12 +330,12 @@ func (a *App) openFileDialog() {
 					a.setStatus(err.Error(), 3*time.Second)
 				}
 			}
-			a.runtime.CloseOverlay()
+			a.manager.CloseOverlay()
 			a.requestFocus()
 		},
 	}
 	view := ui.Border(ui.Frame(input, 60, 1))
-	a.runtime.Overlay(view, "top")
+	a.manager.Overlay(view, "top")
 }
 
 // handles app-level commands
@@ -461,7 +463,7 @@ func (a *App) showPalette(prefix string) {
 	}
 
 	p.input.SetText(prefix)
-	a.runtime.Overlay(p, "top")
+	a.manager.Overlay(p, "top")
 }
 
 func (a *App) fillCommandMode(p *Palette, query string) {
@@ -480,7 +482,7 @@ func (a *App) fillCommandMode(p *Palette, query string) {
 		}},
 		{"Goto Symbol", func() { a.showPalette("@"); a.requestFocus() }},
 		{"New File", func() { a.newTab("untitled"); a.requestFocus() }},
-		{"Quit", a.runtime.Stop},
+		{"Quit", a.manager.Stop},
 	}
 
 	for _, cmd := range commands {
@@ -693,7 +695,7 @@ func (a *App) promptSaveAs(commit func(path string)) {
 			if commit != nil {
 				commit(text)
 			}
-			a.runtime.CloseOverlay()
+			a.manager.CloseOverlay()
 		},
 	}
 
@@ -703,7 +705,7 @@ func (a *App) promptSaveAs(commit func(path string)) {
 			if commit != nil {
 				commit(input.Text())
 			}
-			a.runtime.CloseOverlay()
+			a.manager.CloseOverlay()
 		},
 		Style: ui.Style{BG: ui.Theme.Selection},
 	}
@@ -716,15 +718,15 @@ func (a *App) promptSaveAs(commit func(path string)) {
 			), 1),
 
 			ui.PadH(ui.HStack(
-				ui.NewButton("Cancel", a.runtime.CloseOverlay),
+				ui.NewButton("Cancel", a.manager.CloseOverlay),
 				ui.Spacer,
 				okBtn,
 			), 4),
 		).Spacing(1)),
 		40, 0,
 	)
-	a.runtime.Overlay(dialog, "top")
-	a.runtime.SetFocus(input)
+	a.manager.Overlay(dialog, "top")
+	a.manager.SetFocus(input)
 }
 
 func (a *App) writeFile(path string, e *Editor) error {
@@ -791,13 +793,13 @@ func newTab(root *App, label string) *tab {
 const tabItemWidth = 18
 
 func (t *tab) MinSize() (int, int) { return tabItemWidth, 1 }
-func (t *tab) Layout(x, y, w, h int) *ui.LayoutNode {
+func (t *tab) Layout(r ui.Rect) *ui.Node {
 	bw, bh := t.closeBtn.MinSize()
-	return &ui.LayoutNode{
+	return &ui.Node{
 		Element: t,
-		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
-		Children: []*ui.LayoutNode{
-			t.closeBtn.Layout(x+tabItemWidth-3, y, bw, bh),
+		Rect:    r,
+		Children: []*ui.Node{
+			t.closeBtn.Layout(ui.Rect{X: r.X + tabItemWidth - 3, Y: r.Y, W: bw, H: bh}),
 		},
 	}
 }
@@ -860,17 +862,16 @@ func (p *Palette) MinSize() (int, int) {
 	return w1 + 2, h1 + h2 + 2 // +2 for the border
 }
 
-func (p *Palette) Layout(x, y, w, h int) *ui.LayoutNode {
-	n := &ui.LayoutNode{
-		Element: p,
-		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
-	}
+func (p *Palette) Layout(r ui.Rect) *ui.Node {
 	view := ui.Border(ui.VStack(
 		p.input,
 		p.list,
 	))
-	n.Children = append(n.Children, view.Layout(x, y, w, h))
-	return n
+	return &ui.Node{
+		Element:  p,
+		Rect:     r,
+		Children: []*ui.Node{view.Layout(r)},
+	}
 }
 
 func (p *Palette) Render(ui.Screen, ui.Rect) {
@@ -1095,7 +1096,7 @@ func (sb *SearchBar) syncEditor() {
 	editor.SetSelection(m, ui.Pos{Row: m.Row, Col: m.Col + queryLen})
 }
 
-func (sb *SearchBar) Layout(x, y, w, h int) *ui.LayoutNode {
+func (sb *SearchBar) Layout(r ui.Rect) *ui.Node {
 	countStr := " 0/0 "
 	if len(sb.matches) > 0 {
 		displayIdx := sb.activeIndex + 1
@@ -1105,7 +1106,6 @@ func (sb *SearchBar) Layout(x, y, w, h int) *ui.LayoutNode {
 		countStr = fmt.Sprintf(" %d/%d ", displayIdx, len(sb.matches))
 	}
 
-	node := ui.NewLayoutNode(sb, x, y, w, h)
 	view := ui.HStack(
 		ui.PadH(ui.NewText("Find:"), 1),
 		ui.Grow(sb.input),
@@ -1114,8 +1114,11 @@ func (sb *SearchBar) Layout(x, y, w, h int) *ui.LayoutNode {
 		sb.btnNext,
 		sb.closeBtn,
 	)
-	node.Children = []*ui.LayoutNode{view.Layout(x, y, w, h)}
-	return node
+	return &ui.Node{
+		Element:  sb,
+		Rect:     r,
+		Children: []*ui.Node{view.Layout(r)},
+	}
 }
 
 func (sb *SearchBar) MinSize() (int, int) {
@@ -1155,11 +1158,8 @@ type proxyInput struct {
 	parent ui.Element
 }
 
-func (p *proxyInput) Layout(x, y, w, h int) *ui.LayoutNode {
-	return &ui.LayoutNode{
-		Element: p,
-		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
-	}
+func (p *proxyInput) Layout(r ui.Rect) *ui.Node {
+	return &ui.Node{Element: p, Rect: r}
 }
 
 func (p *proxyInput) FocusTarget() ui.Element {
@@ -1174,7 +1174,7 @@ func (a *App) activateLeader() {
 	// 2 秒後自動重置狀態
 	a.leaderTimer = time.AfterFunc(2*time.Second, func() {
 		a.leaderKeyActive = false
-		a.runtime.Refresh()
+		a.manager.Refresh()
 	})
 }
 
@@ -1208,10 +1208,10 @@ func NewEditor(r *App) *Editor {
 	return e
 }
 
-func (e *Editor) Layout(x, y, w, h int) *ui.LayoutNode {
-	return &ui.LayoutNode{
+func (e *Editor) Layout(r ui.Rect) *ui.Node {
+	return &ui.Node{
 		Element: e,
-		Rect:    ui.Rect{X: x, Y: y, W: w, H: h},
+		Rect:    r,
 	}
 }
 

@@ -152,10 +152,10 @@ func (e *TextEditor) MinSize() (int, int) {
 	return 25, 5
 }
 
-func (e *TextEditor) Layout(x, y, w, h int) *LayoutNode {
-	return &LayoutNode{
+func (e *TextEditor) Layout(r Rect) *Node {
+	return &Node{
 		Element: e,
-		Rect:    Rect{X: x, Y: y, W: w, H: h},
+		Rect:    r,
 	}
 }
 
