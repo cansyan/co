@@ -889,19 +889,21 @@ func (m *Manager) Start(root Element) error {
 	}
 
 	for {
+		// Redraw on every event to keep things simple and clear
+		draw()
+
+		ev := screen.PollEvent()
+		
+		// Check if we should exit after receiving event
 		select {
 		case <-m.done:
 			return nil
 		default:
 		}
 
-		// Redraw on every event to keep things simple and clear
-		draw()
-
-		ev := screen.PollEvent()
 		switch ev := ev.(type) {
 		case *tcell.EventInterrupt:
-			// waken by Refresh()
+			// waken by Refresh() or Stop()
 		case *tcell.EventResize:
 			draw()
 			screen.Sync()
@@ -913,9 +915,21 @@ func (m *Manager) Start(root Element) error {
 	}
 }
 
-// Stop stops the main event loop
+// Stop stops the main event loop and cleans up resources.
+// Safe to call multiple times.
 func (m *Manager) Stop() {
-	close(m.done)
+	select {
+	case <-m.done:
+		// Already closed, do nothing
+		return
+	default:
+		// Still open, close it
+		close(m.done)
+		// Wake up the event loop if it's blocked in PollEvent
+		if m.screen != nil {
+			m.screen.PostEvent(tcell.NewEventInterrupt(nil))
+		}
+	}
 }
 
 // BindKey bind the key to the action globally,

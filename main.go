@@ -8,11 +8,13 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -44,6 +46,14 @@ func main() {
 
 	manager := ui.NewManager()
 	manager.BindKey("Ctrl+Q", manager.Stop)
+
+	// Handle signals for graceful shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		manager.Stop()
+	}()
 
 	app := newApp(manager)
 	if arg := flag.Arg(0); arg != "" {
