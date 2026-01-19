@@ -11,9 +11,6 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-// Highlighter defines a function that returns syntax spans for a line of text.
-type Highlighter func(line []rune) []StyleSpan
-
 // editRecord represents a single edit operation that can be undone/redone.
 type editRecord struct {
 	buf       [][]rune // snapshot of buffer state
@@ -38,21 +35,20 @@ type TextEditor struct {
 	focused bool
 	pressed bool // mouse pressed
 
-	style       Style
-	highlighter Highlighter
+	Style       Style
+	Highlighter func(line []rune) []StyleSpan // function to get syntax highlighting spans
 
 	onChange func()
 	Dirty    bool
 
-	// Undo/redo support
+	// Undo/redo history
 	undoStack []editRecord
 	redoStack []editRecord
 	MergeNext bool // whether to merge next edit with current one
 
-	// Inline suggestions, like code completions but no dropdown,
-	// accepted with TAB, quietly shown in gray
+	// Inline suggestions, like code completions but no dropdown
 	InlineSuggest  bool
-	Suggester      func(prefix string) string
+	Suggester      func(prefix string) string // function to get suggestion based on current prefix
 	currentSuggest string
 
 	IndentGuide bool // show indent guides
@@ -62,19 +58,6 @@ func NewTextEditor() *TextEditor {
 	e := &TextEditor{
 		buf: [][]rune{{}}, // Start with one empty line of runes
 	}
-	return e
-}
-
-func (e *TextEditor) SetHighlighter(h Highlighter) {
-	e.highlighter = h
-}
-
-func (e *TextEditor) Foreground(c string) *TextEditor {
-	e.style.FG = c
-	return e
-}
-func (e *TextEditor) Background(c string) *TextEditor {
-	e.style.BG = c
 	return e
 }
 
@@ -320,9 +303,9 @@ func (e *TextEditor) Render(s Screen, rect Rect) {
 
 func (e *TextEditor) renderLine(s Screen, x, y, maxWidth, row int, line []rune) {
 	var styles []Style
-	if e.highlighter != nil {
-		spans := e.highlighter(line)
-		styles = expandStyles(spans, e.style, len(line))
+	if e.Highlighter != nil {
+		spans := e.Highlighter(line)
+		styles = expandStyles(spans, e.Style, len(line))
 	}
 
 	visualCol := 0
@@ -333,7 +316,7 @@ func (e *TextEditor) renderLine(s Screen, x, y, maxWidth, row int, line []rune) 
 		}
 
 		// Draw character
-		style := e.style
+		style := e.Style
 		if styles != nil {
 			style = styles[col]
 		}
@@ -350,7 +333,7 @@ func (e *TextEditor) renderLine(s Screen, x, y, maxWidth, row int, line []rune) 
 
 	// Draw line end selection indicator
 	if e.isSelected(Pos{Row: row, Col: len(line)}) {
-		style := e.style.Merge(Style{BG: Theme.Selection})
+		style := e.Style.Merge(Style{BG: Theme.Selection})
 		e.drawRune(s, x+visualCol, y, maxWidth-visualCol, ' ', visualCol, style)
 	}
 }

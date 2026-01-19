@@ -14,7 +14,7 @@ A lightweight, terminal-based text editor built in Go.
 - Color themes
 - Goto definition
 - Inline suggestion
-- Command Palette; Goto anything
+- Command Palette
 
 ## Usage
 
@@ -51,17 +51,17 @@ Search & Navigation:
     Ctrl+P / Up: Previous match
     Esc: Close search / Clear selection
 
-Command Palette:
-    Ctrl+P: Go to file
-    Ctrl+R: Go to symbol
-    Ctrl+K Ctrl+P: Run command
-
 Code Navigation:
     Ctrl+G: Go to definition
     Alt+Up: Go to first line
     Alt+Down: Go to last line
     Alt+Left: Go to line start (first non-space character)
     Alt+Right: Go to line end
+
+Command Palette:
+    Ctrl+P: Go to file
+    Ctrl+R: Go to symbol
+    Ctrl+K Ctrl+P: Run command
 ```
 
 ## Command Palette Prefixes

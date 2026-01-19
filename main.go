@@ -780,9 +780,9 @@ func newTab(root *App, label string) *tab {
 	ext := filepath.Ext(label)
 	switch ext {
 	case ".go":
-		e.SetHighlighter(highlightGo)
+		e.Highlighter = highlightGo
 	case ".md", ".markdown":
-		e.SetHighlighter(highlightMarkdown)
+		e.Highlighter = highlightMarkdown
 	}
 	t.editor = e
 	return t
