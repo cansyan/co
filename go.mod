@@ -1,6 +1,8 @@
 module github.com/cansyan/co
 
-go 1.25.6
+go 1.24.0
+
+toolchain go1.24.12
 
 require (
 	github.com/gdamore/tcell/v2 v2.13.7
