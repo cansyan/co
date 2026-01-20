@@ -79,8 +79,13 @@ type Node struct {
 }
 
 func (n *Node) Draw(s Screen) {
-	n.Element.Render(s, n.Rect)
+	if n.Element != nil {
+		n.Element.Render(s, n.Rect)
+	}
 	for _, child := range n.Children {
+		if child == nil {
+			continue
+		}
 		child.Draw(s)
 	}
 }
