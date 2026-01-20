@@ -78,6 +78,13 @@ type Node struct {
 	Children []*Node
 }
 
+func (n *Node) Draw(s Screen) {
+	n.Element.Render(s, n.Rect)
+	for _, child := range n.Children {
+		child.Draw(s)
+	}
+}
+
 // Debug returns a string representation of the tree structure
 func (n *Node) Debug() string {
 	var sb strings.Builder
@@ -705,15 +712,17 @@ func (e empty) Render(Screen, Rect) {}
 // Manager manages the main event loop, rendering, and event dispatching.
 type Manager struct {
 	screen  Screen
-	root    Element // root element of the UI hierarchy to be rendered
-	focused Element
-	hover   Element
-	tree    *Node // reflects the view hierarchy after last render
-	done    chan struct{}
+	view    Element
+	overlay *overlay
+	tree    *Node // layout tree that reflects the UI hierarchy
 
+	// hit test
 	clickPoint Point
-	bindings   map[string]func()
-	overlay    *overlay // for temporary display
+	focused    Element
+	hover      Element
+
+	bindings map[string]func()
+	done     chan struct{}
 }
 
 func NewManager() *Manager {
@@ -723,26 +732,17 @@ func NewManager() *Manager {
 	}
 }
 
-func drawTree(node *Node, s Screen) {
-	if node == nil {
-		return
-	}
-
-	node.Element.Render(s, node.Rect)
-	for _, child := range node.Children {
-		drawTree(child, s)
-	}
-}
-
-// Render builds the layout tree then render it to the screen.
+// Render builds the layout tree then draw it to the screen.
 func (m *Manager) Render() {
 	w, h := m.screen.Size()
-	m.tree = m.root.Layout(Rect{X: 0, Y: 0, W: w, H: h})
-	if o := m.overlay; o != nil {
-		node := o.Layout(Rect{X: 0, Y: 0, W: w, H: h})
-		m.tree.Children = append(m.tree.Children, node)
+	rect := Rect{X: 0, Y: 0, W: w, H: h}
+
+	m.tree = m.view.Layout(rect)
+	if m.overlay != nil {
+		m.tree.Children = append(m.tree.Children, m.overlay.Layout(rect))
 	}
-	drawTree(m.tree, m.screen)
+
+	m.tree.Draw(m.screen)
 }
 
 // Point represent a position in the screen coordinate.
@@ -867,8 +867,8 @@ func (m *Manager) Refresh() {
 }
 
 // Start starts the main event loop
-func (m *Manager) Start(root Element) error {
-	m.root = root
+func (m *Manager) Start(view Element) error {
+	m.view = view
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return err
@@ -881,7 +881,7 @@ func (m *Manager) Start(root Element) error {
 	defer screen.Fini()
 	screen.EnableMouse()
 
-	draw := func() {
+	redraw := func() {
 		screen.SetCursorStyle(tcell.CursorStyleSteadyBar, tcell.GetColor(Theme.Cursor))
 		screen.Fill(' ', Style{}.Apply())
 		m.Render()
@@ -890,10 +890,10 @@ func (m *Manager) Start(root Element) error {
 
 	for {
 		// Redraw on every event to keep things simple and clear
-		draw()
+		redraw()
 
 		ev := screen.PollEvent()
-		
+
 		// Check if we should exit after receiving event
 		select {
 		case <-m.done:
@@ -905,7 +905,7 @@ func (m *Manager) Start(root Element) error {
 		case *tcell.EventInterrupt:
 			// waken by Refresh() or Stop()
 		case *tcell.EventResize:
-			draw()
+			redraw()
 			screen.Sync()
 		case *tcell.EventKey:
 			m.handleKey(ev)
