@@ -138,6 +138,22 @@ func (n *Node) Debug() string {
 	return sb.String()
 }
 
+// Find searches the tree for a node containing the target element.
+func (n *Node) Find(target Element) *Node {
+	if n == nil || target == nil {
+		return nil
+	}
+	if n.Element == target {
+		return n
+	}
+	for _, child := range n.Children {
+		if res := child.Find(target); res != nil {
+			return res
+		}
+	}
+	return nil
+}
+
 type Rect struct {
 	X, Y, W, H int
 }
@@ -717,9 +733,9 @@ func (e empty) Render(Screen, Rect) {}
 // Manager manages the main event loop, rendering, and event dispatching.
 type Manager struct {
 	screen  Screen
+	root    *Node // root node of the layout tree
 	view    Element
 	overlay *overlay
-	tree    *Node // layout tree that reflects the UI hierarchy
 
 	// hit test
 	clickPoint Point
@@ -742,12 +758,12 @@ func (m *Manager) Render() {
 	w, h := m.screen.Size()
 	rect := Rect{X: 0, Y: 0, W: w, H: h}
 
-	m.tree = m.view.Layout(rect)
+	m.root = m.view.Layout(rect)
 	if m.overlay != nil {
-		m.tree.Children = append(m.tree.Children, m.overlay.Layout(rect))
+		m.root.Children = append(m.root.Children, m.overlay.Layout(rect))
 	}
 
-	m.tree.Draw(m.screen)
+	m.root.Draw(m.screen)
 }
 
 // Point represent a position in the screen coordinate.
@@ -823,25 +839,10 @@ func (m *Manager) blurCurrent() {
 }
 
 func (m *Manager) clearOverlayIfFocusOutside(e Element) {
-	overlayNode := findNode(m.tree, m.overlay)
-	if overlayNode != nil && findNode(overlayNode, e) == nil {
+	overlayNode := m.root.Find(m.overlay)
+	if overlayNode != nil && overlayNode.Find(e) == nil {
 		m.overlay = nil
 	}
-}
-
-func findNode(n *Node, target Element) *Node {
-	if n == nil || target == nil {
-		return nil
-	}
-	if n.Element == target {
-		return n
-	}
-	for _, child := range n.Children {
-		if res := findNode(child, target); res != nil {
-			return res
-		}
-	}
-	return nil
 }
 
 func (m *Manager) resolveFocus(e Element) Element {
@@ -975,7 +976,7 @@ func (m *Manager) handleKey(ev *tcell.EventKey) {
 // hover -> mouse down -> focus -> mouse up -> scroll
 func (m *Manager) handleMouse(ev *tcell.EventMouse) {
 	x, y := ev.Position()
-	hit, local := hitTest(m.tree, Point{X: x, Y: y})
+	hit, local := hitTest(m.root, Point{X: x, Y: y})
 	if hit == nil {
 		return
 	}

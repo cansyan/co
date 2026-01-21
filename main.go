@@ -490,7 +490,7 @@ func (a *App) fillCommandMode(p *Palette, query string) {
 			}
 			a.requestFocus()
 		}},
-		{"Goto Symbol", func() { a.showPalette("@"); a.requestFocus() }},
+		{"Goto Symbol", func() { a.showPalette("@") }},
 		{"New File", func() { a.newTab("untitled"); a.requestFocus() }},
 		{"Quit", a.manager.Stop},
 	}
@@ -1201,16 +1201,16 @@ func NewEditor(r *App) *Editor {
 	}
 
 	e.InlineSuggest = true
-	// For now, the suggester just suggests the first matching symbol name.
-	// It can extend to a more advanced one later: multiple results, time constraint,
-	// ignore case, fuzzy match, append () for function, etc.
 	e.Suggester = func(prefix string) string {
+		if len(prefix) < 2 {
+			// avoid abusing suggestions for short prefixes
+			return ""
+		}
+
+		prefix = strings.ToLower(prefix)
 		for _, s := range e.symbols {
-			if len(s.Name) > len(prefix) && strings.HasPrefix(s.Name, prefix) {
-				if s.Kind == "func" {
-					return s.Name[len(prefix):] + "()"
-				}
-				return s.Name[len(prefix):]
+			if len(s.Name) > len(prefix) && strings.HasPrefix(strings.ToLower(s.Name), prefix) {
+				return s.Name
 			}
 		}
 		return ""

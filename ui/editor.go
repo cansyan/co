@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/gdamore/tcell/v2"
@@ -46,17 +48,19 @@ type TextEditor struct {
 	redoStack []editRecord
 	MergeNext bool // whether to merge next edit with current one
 
-	// Inline suggestions, like code completions but no dropdown
-	InlineSuggest  bool
-	Suggester      func(prefix string) string // function to get suggestion based on current prefix
-	currentSuggest string
+	// Inline suggestion
+	InlineSuggest    bool
+	Suggester        func(prefix string) string // function to get suggestion based on current prefix
+	SuggesterTimeout time.Duration              // timeout for suggester calls (default 100ms)
+	currentSuggest   string
 
-	IndentGuide bool // show indent guides
+	IndentGuide bool // whether to show indentation guides
 }
 
 func NewTextEditor() *TextEditor {
 	e := &TextEditor{
-		buf: [][]rune{{}}, // Start with one empty line of runes
+		buf:              [][]rune{{}}, // Start with one empty line of runes
+		SuggesterTimeout: 100 * time.Millisecond,
 	}
 	return e
 }
@@ -312,7 +316,7 @@ func (e *TextEditor) renderLine(s Screen, x, y, maxWidth, row int, line []rune) 
 	for col, r := range line {
 		// Draw inline suggestion at cursor position (before cursor character)
 		if row == e.Pos.Row && col == e.Pos.Col {
-			visualCol = e.drawInlineSuggestion(s, x, y, maxWidth, visualCol)
+			visualCol = e.drawSuggestion(s, x, y, maxWidth, visualCol)
 		}
 
 		// Draw character
@@ -328,7 +332,7 @@ func (e *TextEditor) renderLine(s Screen, x, y, maxWidth, row int, line []rune) 
 
 	// Draw inline suggestion at end of line
 	if row == e.Pos.Row && e.Pos.Col >= len(line) {
-		visualCol = e.drawInlineSuggestion(s, x, y, maxWidth, visualCol)
+		visualCol = e.drawSuggestion(s, x, y, maxWidth, visualCol)
 	}
 
 	// Draw line end selection indicator
@@ -338,12 +342,17 @@ func (e *TextEditor) renderLine(s Screen, x, y, maxWidth, row int, line []rune) 
 	}
 }
 
-func (e *TextEditor) drawInlineSuggestion(s Screen, x, y, maxWidth, visualCol int) int {
+func (e *TextEditor) drawSuggestion(s Screen, x, y, maxWidth, visualCol int) int {
 	if !e.InlineSuggest || e.currentSuggest == "" || !e.focused {
 		return visualCol
 	}
 
-	for _, r := range e.currentSuggest {
+	start, end, ok := e.WordRangeAtCursor()
+	if !ok {
+		return visualCol
+	}
+
+	for _, r := range e.currentSuggest[end-start:] {
 		if visualCol >= maxWidth {
 			break
 		}
@@ -544,6 +553,10 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 			e.MergeNext = false
 			defer onChange()
 			e.Dirty = true
+			start, _, ok := e.WordRangeAtCursor()
+			if ok {
+				e.DeleteRange(Pos{Row: e.Pos.Row, Col: start}, e.Pos)
+			}
 			e.InsertText(e.currentSuggest)
 			e.currentSuggest = ""
 			return true
@@ -1236,7 +1249,26 @@ func (e *TextEditor) updateInlineSuggest() {
 		return
 	}
 
-	e.currentSuggest = e.Suggester(prefix)
+	// Call suggester with timeout to prevent blocking
+	timeout := e.SuggesterTimeout
+	if timeout == 0 {
+		timeout = 100 * time.Millisecond
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	resultCh := make(chan string, 1)
+	go func() {
+		resultCh <- e.Suggester(prefix)
+	}()
+
+	select {
+	case result := <-resultCh:
+		e.currentSuggest = result
+	case <-ctx.Done():
+		// Timeout - don't set suggestion
+	}
 }
 
 type StyleSpan struct {
