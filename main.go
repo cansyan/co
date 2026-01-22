@@ -814,8 +814,9 @@ func (t *tab) Layout(r ui.Rect) *ui.Node {
 	}
 }
 func (t *tab) Render(screen ui.Screen, r ui.Rect) {
-	var style ui.Style
+	style := ui.Theme.Syntax.Comment
 	if t == t.a.tabs[t.a.activeTab] {
+		style.FG = ui.Theme.Foreground
 		style.FontUnderline = true
 	} else if t.hovered {
 		style.BG = ui.Theme.Hover
