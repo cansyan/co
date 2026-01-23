@@ -90,6 +90,25 @@ func (n *Node) Draw(s Screen) {
 	}
 }
 
+// Find searches the tree for a node containing the target element.
+func (n *Node) Find(target Element) *Node {
+	if n == nil || target == nil {
+		return nil
+	}
+	if n.Element == target {
+		return n
+	}
+	for _, child := range n.Children {
+		if child == nil {
+			continue
+		}
+		if res := child.Find(target); res != nil {
+			return res
+		}
+	}
+	return nil
+}
+
 // Debug returns a string representation of the tree structure
 func (n *Node) Debug() string {
 	var sb strings.Builder
@@ -136,22 +155,6 @@ func (n *Node) Debug() string {
 	}
 	dump(n, "", false, true)
 	return sb.String()
-}
-
-// Find searches the tree for a node containing the target element.
-func (n *Node) Find(target Element) *Node {
-	if n == nil || target == nil {
-		return nil
-	}
-	if n.Element == target {
-		return n
-	}
-	for _, child := range n.Children {
-		if res := child.Find(target); res != nil {
-			return res
-		}
-	}
-	return nil
 }
 
 type Rect struct {
@@ -822,7 +825,13 @@ func (m *Manager) SetFocus(e Element) {
 	if fe, ok := e.(Focusable); ok {
 		fe.OnFocus()
 		m.focused = e
-		m.clearOverlayIfFocusOutside(e)
+		// clear overlay if it lost focus
+		if m.overlay != nil {
+			overlayNode := m.root.Find(m.overlay)
+			if overlayNode != nil && overlayNode.Find(e) == nil {
+				m.overlay = nil
+			}
+		}
 	} else {
 		m.focused = nil
 	}
@@ -836,13 +845,6 @@ func (m *Manager) blurCurrent() {
 		f.OnBlur()
 	}
 	m.screen.HideCursor()
-}
-
-func (m *Manager) clearOverlayIfFocusOutside(e Element) {
-	overlayNode := m.root.Find(m.overlay)
-	if overlayNode != nil && overlayNode.Find(e) == nil {
-		m.overlay = nil
-	}
 }
 
 func (m *Manager) resolveFocus(e Element) Element {

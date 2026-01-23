@@ -720,21 +720,18 @@ func (a *App) promptSaveAs(commit func(path string)) {
 		Style: ui.Style{BG: ui.Theme.Selection},
 	}
 
-	dialog := ui.Frame(
-		ui.Border(ui.VStack(
-			ui.PadH(ui.HStack(
-				ui.NewText("Save as: "),
-				ui.Grow(input),
-			), 1),
+	dialog := ui.Frame(ui.Border(ui.VStack(
+		ui.PadH(ui.HStack(
+			ui.NewText("Save as: "),
+			ui.Grow(input),
+		), 1),
 
-			ui.PadH(ui.HStack(
-				ui.NewButton("Cancel", a.manager.CloseOverlay),
-				ui.Spacer,
-				okBtn,
-			), 4),
-		).Spacing(1)),
-		40, 0,
-	)
+		ui.PadH(ui.HStack(
+			ui.NewButton("Cancel", a.manager.CloseOverlay),
+			ui.Spacer,
+			okBtn,
+		), 4),
+	).Spacing(1)), 40, 0)
 	a.manager.Overlay(dialog, "top")
 	a.manager.SetFocus(input)
 }
@@ -742,7 +739,6 @@ func (a *App) promptSaveAs(commit func(path string)) {
 func (a *App) writeFile(path string, e *Editor) error {
 	bs := []byte(e.String())
 
-	// Only format if it's a Go file
 	if filepath.Ext(path) == ".go" {
 		formatted, err := format.Source(bs)
 		if err == nil {
