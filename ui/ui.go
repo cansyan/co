@@ -756,6 +756,11 @@ func NewManager() *Manager {
 	}
 }
 
+// Screen returns the tcell Screen instance for direct access to terminal features.
+func (m *Manager) Screen() Screen {
+	return m.screen
+}
+
 // Render builds the layout tree then draw it to the screen.
 func (m *Manager) Render() {
 	w, h := m.screen.Size()
