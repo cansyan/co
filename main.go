@@ -23,20 +23,12 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
-	"golang.design/x/clipboard"
 )
 
 var verbose = flag.Bool("v", false, "enable verbose logging")
 
 func main() {
 	flag.Parse()
-
-	// Initialize clipboard
-	err := clipboard.Init()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize clipboard: %v\n", err)
-		return
-	}
 
 	if *verbose {
 		log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -111,6 +103,7 @@ type App struct {
 
 	searchBar  *SearchBar
 	showSearch bool
+	clipboard  string // local cache for immediate paste; also synced to OS clipboard
 
 	leaderKeyActive bool
 	leaderTimer     *time.Timer
@@ -1246,28 +1239,33 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		s := e.SelectedText()
 		if s == "" {
 			// copy current line by default
-			clipboard.Write(clipboard.FmtText, []byte(string(e.Line(e.Pos.Row))))
-			return true
+			s = string(e.Line(e.Pos.Row))
 		}
-		clipboard.Write(clipboard.FmtText, []byte(s))
+		e.app.clipboard = s
+		e.app.manager.Screen().SetClipboard([]byte(s))
+		return true
 	case "ctrl+x":
 		e.TextEditor.SaveEdit()
 		e.MergeNext = false
 		start, end, ok := e.Selection()
 		if !ok {
 			// cut line by default
-			clipboard.Write(clipboard.FmtText, []byte(string(e.Line(e.Pos.Row))+"\n"))
+			s := string(e.Line(e.Pos.Row)) + "\n"
+			e.app.clipboard = s
+			e.app.manager.Screen().SetClipboard([]byte(s))
 			e.DeleteRange(ui.Pos{Row: e.Pos.Row}, ui.Pos{Row: e.Pos.Row + 1})
 			return true
 		}
 
-		clipboard.Write(clipboard.FmtText, []byte(e.SelectedText()))
+		s := e.SelectedText()
+		e.app.clipboard = s
+		e.app.manager.Screen().SetClipboard([]byte(s))
 		e.DeleteRange(start, end)
 		e.ClearSelection()
 	case "ctrl+v":
 		e.TextEditor.SaveEdit()
 		e.MergeNext = false
-		e.InsertText(string(clipboard.Read(clipboard.FmtText)))
+		e.InsertText(e.app.clipboard)
 	case "ctrl+d":
 		// if no selection, select the word at current cursor;
 		// if has selection, jump to the next same word, like * in Vim.
