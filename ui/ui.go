@@ -757,6 +757,8 @@ func NewManager() *Manager {
 }
 
 // Screen returns the tcell Screen instance for direct access to terminal features.
+// This method should only be called after Start() has been invoked, as the screen
+// is initialized during the Start() process.
 func (m *Manager) Screen() Screen {
 	return m.screen
 }
