@@ -316,8 +316,8 @@ type TextInput struct {
 	Style       Style
 }
 
-// Text returns the current text content
-func (t *TextInput) Text() string {
+// String returns the current text content
+func (t *TextInput) String() string {
 	return string(t.text)
 }
 

@@ -69,6 +69,7 @@ func (e *TextEditor) Len() int {
 	return len(e.buf)
 }
 
+// String returns the entire text content as a string.
 func (e *TextEditor) String() string {
 	var sb strings.Builder
 	for i, line := range e.buf {

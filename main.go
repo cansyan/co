@@ -318,7 +318,7 @@ func (a *App) resetFind() {
 	sb.activeIndex = -1
 
 	// reuse previous query or selected text, but select all for easy replacement
-	query := sb.input.Text()
+	query := sb.input.String()
 	if e := a.getEditor(); e != nil {
 		if s := e.SelectedText(); s != "" {
 			query = s
@@ -408,7 +408,7 @@ func (a *App) showPalette(prefix string) {
 		list:  new(ui.List),
 	}
 	p.input.OnChange = func() {
-		text := p.input.Text()
+		text := p.input.String()
 		p.list.Clear()
 		p.list.Index = 0
 
@@ -713,7 +713,7 @@ func (a *App) promptSaveAs(commit func(path string)) {
 		Text: "OK",
 		OnClick: func() {
 			if commit != nil {
-				commit(input.Text())
+				commit(input.String())
 			}
 			a.manager.CloseOverlay()
 		},
@@ -992,7 +992,7 @@ func (sb *SearchBar) updateMatches() {
 	sb.matches = nil
 	sb.activeIndex = -1
 
-	query := strings.ToLower(sb.input.Text())
+	query := strings.ToLower(sb.input.String())
 	if query == "" {
 		return
 	}
@@ -1098,7 +1098,7 @@ func (sb *SearchBar) syncEditor() {
 	if editor == nil {
 		return
 	}
-	queryLen := utf8.RuneCountInString(sb.input.Text())
+	queryLen := utf8.RuneCountInString(sb.input.String())
 	editor.CenterRow(m.Row)
 	editor.SetSelection(m, ui.Pos{Row: m.Row, Col: m.Col + queryLen})
 }
