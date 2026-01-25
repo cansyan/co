@@ -1456,11 +1456,33 @@ func highlightMarkdown(line []rune) []ui.StyleSpan {
 
 	// Headers: # ## ### etc.
 	if line[0] == '#' {
-		spans = append(spans, ui.StyleSpan{
-			Start: 0,
-			End:   len(line),
-			Style: ui.Theme.Syntax.Keyword,
-		})
+		i := 0
+		for i < len(line) && line[i] == '#' {
+			i++
+		}
+		spans = []ui.StyleSpan{
+			{
+				Start: 0,
+				End:   i,
+				Style: ui.Style{FontBold: true, FG: ui.Theme.Syntax.Number.FG},
+			},
+			{
+				Start: i,
+				End:   len(line),
+				Style: ui.Style{FontBold: true},
+			},
+		}
+		return spans
+	}
+
+	if strings.HasPrefix(string(line), "```") {
+		spans = []ui.StyleSpan{
+			{
+				Start: 0,
+				End:   3,
+				Style: ui.Style{BG: ui.Theme.Selection},
+			},
+		}
 		return spans
 	}
 
@@ -1505,7 +1527,7 @@ func highlightMarkdown(line []rune) []ui.StyleSpan {
 				spans = append(spans, ui.StyleSpan{
 					Start: start,
 					End:   i + 1,
-					Style: ui.Theme.Syntax.String,
+					Style: ui.Style{BG: ui.Theme.Selection},
 				})
 			}
 		}
