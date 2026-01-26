@@ -235,6 +235,8 @@ func (a *App) MinSize() (int, int) {
 }
 
 func (a *App) Layout(r ui.Rect) *ui.Node {
+	// It is not efficient to recreate the UI components on every layout call,
+	// but for now it is acceptable given the simplicity of the app.
 	tabLabels := ui.HStack()
 	for i, tab := range a.tabs {
 		tabLabels.Append(tab)
@@ -404,8 +406,12 @@ func (a *App) getEditor() *Editor {
 
 func (a *App) showPalette(prefix string) {
 	p := &Palette{
-		input: new(ui.TextInput),
-		list:  new(ui.List),
+		list: new(ui.List),
+	}
+	// Use proxyInput to delegate key handling to Palette
+	p.input = &proxyInput{
+		TextInput: new(ui.TextInput),
+		parent:    p,
 	}
 	p.input.OnChange = func() {
 		text := p.input.String()
@@ -923,7 +929,7 @@ func (t *tab) OnMouseLeave() {
 func (t *tab) OnMouseMove(rx, ry int) {}
 
 type Palette struct {
-	input *ui.TextInput
+	input *proxyInput
 	list  *ui.List
 }
 

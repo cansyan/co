@@ -578,8 +578,6 @@ type List struct {
 	Items    []ListItem
 	Index    int // current selected index, -1 means none
 	OnSelect func(ListItem)
-
-	// no hover state, to avoid confusion with selection
 }
 
 type ListItem struct {
@@ -637,18 +635,19 @@ func (l *List) OnMouseDown(x, y int) {
 
 func (l *List) OnMouseUp(x, y int) {}
 
-func (l *List) OnMouseMove(x, y int) {
-	if y >= 0 && y < len(l.Items) {
-		l.Index = y
-	} else {
-		l.Index = -1
-	}
-}
+// to avoid confusion with selection, no hover change on mouse move
+// func (l *List) OnMouseMove(x, y int) {
+// 	if y >= 0 && y < len(l.Items) {
+// 		l.Index = y
+// 	} else {
+// 		l.Index = -1
+// 	}
+// }
+// func (l *List) OnMouseEnter() {}
+// func (l *List) OnMouseLeave() { l.Index = -1 }
 
-func (l *List) OnMouseEnter() {}
-func (l *List) OnMouseLeave() { l.Index = -1 }
-func (l *List) OnFocus()      {}
-func (l *List) OnBlur()       {}
+func (l *List) OnFocus() {}
+func (l *List) OnBlur()  {}
 
 func (l *List) Append(item ListItem) {
 	l.Items = append(l.Items, item)
@@ -1035,17 +1034,19 @@ func (m *Manager) handleMouse(ev *tcell.EventMouse) bool {
 	return dirty
 }
 
+// Returns true if hover state changed.
 func (m *Manager) updateHover(e Element, lx, ly int) bool {
 	changed := false
 	if m.hover != e {
 		if h, ok := m.hover.(Hoverable); ok {
+			changed = true
 			h.OnMouseLeave()
 		}
 		if h, ok := e.(Hoverable); ok {
+			changed = true
 			h.OnMouseEnter()
 		}
 		m.hover = e
-		changed = true
 	}
 
 	if h, ok := e.(Hoverable); ok {
