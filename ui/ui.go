@@ -903,11 +903,11 @@ func (m *Manager) Start(view Element) error {
 		screen.Show()
 	}
 
-	for {
-		// Redraw on every event to keep things simple and clear
-		redraw()
+	redraw()
 
+	for {
 		ev := screen.PollEvent()
+		dirty := false
 
 		// Check if we should exit after receiving event
 		select {
@@ -919,13 +919,19 @@ func (m *Manager) Start(view Element) error {
 		switch ev := ev.(type) {
 		case *tcell.EventInterrupt:
 			// waken by Refresh() or Stop()
+			dirty = true
 		case *tcell.EventResize:
-			redraw()
+			dirty = true
 			screen.Sync()
 		case *tcell.EventKey:
 			m.handleKey(ev)
+			dirty = true
 		case *tcell.EventMouse:
-			m.handleMouse(ev)
+			dirty = m.handleMouse(ev)
+		}
+
+		if dirty {
+			redraw()
 		}
 	}
 }
@@ -982,44 +988,55 @@ func (m *Manager) handleKey(ev *tcell.EventKey) {
 	}
 }
 
-// hover -> mouse down -> focus -> mouse up -> scroll
-func (m *Manager) handleMouse(ev *tcell.EventMouse) {
+// Returns true if the event caused state changes that require a redraw.
+func (m *Manager) handleMouse(ev *tcell.EventMouse) bool {
 	x, y := ev.Position()
 	hit, local := hitTest(m.root, Point{X: x, Y: y})
 	if hit == nil {
-		return
+		return false
 	}
 	lx, ly := local.X, local.Y
 
-	m.updateHover(hit, lx, ly)
+	dirty := m.updateHover(hit, lx, ly)
 
 	switch ev.Buttons() {
 	case tcell.ButtonPrimary:
+		prevFocus := m.focused
 		m.SetFocus(hit)
+		if prevFocus != m.focused {
+			dirty = true
+		}
 		m.clickPoint = Point{X: x, Y: y}
 		// mouse down
 		if i, ok := hit.(Clickable); ok {
 			i.OnMouseDown(lx, ly)
+			dirty = true
 		}
 	case tcell.WheelUp:
 		if i, ok := hit.(Scrollable); ok {
 			i.OnScroll(-2)
+			dirty = true
 		}
 	case tcell.WheelDown:
 		if i, ok := hit.(Scrollable); ok {
 			i.OnScroll(2)
+			dirty = true
 		}
-	default:
+	case tcell.ButtonNone:
 		// mouse up
 		if x == m.clickPoint.X && y == m.clickPoint.Y {
 			if i, ok := hit.(Clickable); ok {
 				i.OnMouseUp(lx, ly)
+				dirty = true
 			}
 		}
 	}
+
+	return dirty
 }
 
-func (m *Manager) updateHover(e Element, lx, ly int) {
+func (m *Manager) updateHover(e Element, lx, ly int) bool {
+	changed := false
 	if m.hover != e {
 		if h, ok := m.hover.(Hoverable); ok {
 			h.OnMouseLeave()
@@ -1028,11 +1045,14 @@ func (m *Manager) updateHover(e Element, lx, ly int) {
 			h.OnMouseEnter()
 		}
 		m.hover = e
+		changed = true
 	}
 
 	if h, ok := e.(Hoverable); ok {
 		h.OnMouseMove(lx, ly)
 	}
+
+	return changed
 }
 
 // Overlay displays an overlay element over the main layout
