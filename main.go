@@ -1238,7 +1238,7 @@ func (sb *SearchBar) OnFocus() {
 }
 func (sb *SearchBar) OnBlur() { sb.input.OnBlur() }
 
-// proxy TextInput, can redirect the focus to parent.
+// proxyInput delegates focus to its parent element
 type proxyInput struct {
 	*ui.TextInput
 	parent ui.Element
@@ -1257,7 +1257,6 @@ func (a *App) activateLeader() {
 	if a.leaderTimer != nil {
 		a.leaderTimer.Stop()
 	}
-	// 2 秒後自動重置狀態
 	a.leaderTimer = time.AfterFunc(2*time.Second, func() {
 		a.leaderKeyActive = false
 		a.manager.Refresh()
@@ -1307,10 +1306,8 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 	switch strings.ToLower(ev.Name()) {
 	case "ctrl+z":
 		e.TextEditor.Undo()
-		return true
 	case "ctrl+y":
 		e.TextEditor.Redo()
-		return true
 	case "ctrl+a":
 		lastLine := e.Line(e.Len() - 1)
 		e.SetSelection(ui.Pos{}, ui.Pos{Row: e.Len() - 1, Col: len(lastLine)})
@@ -1322,7 +1319,6 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		}
 		e.app.clipboard = s
 		e.app.manager.Screen().SetClipboard([]byte(s))
-		return true
 	case "ctrl+x":
 		e.TextEditor.SaveEdit()
 		e.MergeNext = false
