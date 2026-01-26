@@ -526,6 +526,7 @@ func (a *App) fillFileSearchMode(p *Palette, query string) {
 	query = strings.ToLower(query)
 	filter := make(map[string]bool)
 	currentDir, _ := os.Getwd()
+	ignoreRules := loadGitignoreRules(filepath.Join(currentDir, ".gitignore"))
 
 	// list opened tabs first
 	for _, t := range a.tabs {
@@ -553,6 +554,9 @@ func (a *App) fillFileSearchMode(p *Palette, query string) {
 		if entry.IsDir() || filter[name] || strings.HasPrefix(name, ".") {
 			continue
 		}
+		if isGitignored(name, name, ignoreRules) {
+			continue
+		}
 		if query != "" && !strings.Contains(strings.ToLower(name), query) {
 			continue
 		}
@@ -561,6 +565,75 @@ func (a *App) fillFileSearchMode(p *Palette, query string) {
 			return
 		}
 	}
+}
+
+type gitignoreRule struct {
+	pattern  string
+	negate   bool
+	hasSlash bool
+	dirOnly  bool
+}
+
+func loadGitignoreRules(path string) []gitignoreRule {
+	bs, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(string(bs), "\n")
+	rules := make([]gitignoreRule, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		negate := false
+		if strings.HasPrefix(line, "!") {
+			negate = true
+			line = strings.TrimSpace(line[1:])
+			if line == "" {
+				continue
+			}
+		}
+		dirOnly := strings.HasSuffix(line, "/")
+		if dirOnly {
+			line = strings.TrimSuffix(line, "/")
+			if line == "" {
+				continue
+			}
+		}
+		line = strings.TrimPrefix(line, "/")
+		rules = append(rules, gitignoreRule{
+			pattern:  line,
+			negate:   negate,
+			hasSlash: strings.Contains(line, "/"),
+			dirOnly:  dirOnly,
+		})
+	}
+	return rules
+}
+
+func isGitignored(relPath, name string, rules []gitignoreRule) bool {
+	if len(rules) == 0 {
+		return false
+	}
+	ignored := false
+	for _, r := range rules {
+		if r.dirOnly {
+			continue
+		}
+		var target string
+		if r.hasSlash {
+			target = filepath.ToSlash(relPath)
+		} else {
+			target = name
+		}
+		matched, err := filepath.Match(r.pattern, target)
+		if err != nil || !matched {
+			continue
+		}
+		ignored = !r.negate
+	}
+	return ignored
 }
 
 func (a *App) openFile(name string) error {

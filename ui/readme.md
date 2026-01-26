@@ -1,4 +1,4 @@
-A text user interface (TUI) package, built on top of tcell.
+A text user interface (TUI) package for building interactive terminal applications in Go.
 
 Features:
 - element: Button, Text, TextInput, TextViewer, TextEditor, Spacer, Divider
@@ -7,5 +7,6 @@ Features:
 - mouse: hover enter/move/leave, click, scroll
 
 Design decisions:
-- redraw on every event
+- tcell does the actual terminal rendering
+- redraw on state changes
 - child element does not inherit the parent's style
