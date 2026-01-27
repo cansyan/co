@@ -16,6 +16,7 @@ applyTo: '**/*.go,**/go.mod'
 - **Testing:** Use table-driven tests by default. Place tests in `_test.go` files within the same package.
 - **Interfaces:** Accept interfaces, return concrete types. Keep interfaces small (1-3 methods).
 - **Comments:** English only. Document *why*, not *what*. Code should be self-documenting.
+- **Context:** Pass `ctx context.Context` as the first argument for I/O-bound functions.
 
 ## Naming & Structure
 - **Conciseness:** Use short, descriptive names. Avoid "stuttering" (e.g., `server.Server`, not `server.HTTPServer`).

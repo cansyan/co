@@ -54,7 +54,7 @@ func NewBreakersTheme() ColorTheme {
 	return ColorTheme{
 		Foreground: "#333333", // grey3
 		Background: "#fbffff", // white5 (extremely light cyan-white)
-		Cursor:     "black",
+		Cursor:     "#fac863", // orange
 		Border:     "#d9e0e4", // white2 (selection_border)
 		Hover:      "#dae0e2", // white3
 		Selection:  "#dae0e2", // white3 (line_highlight / selection)

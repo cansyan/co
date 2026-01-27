@@ -894,6 +894,8 @@ func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 		style.BG = ui.Theme.Hover
 	}
 
+	t.closeBtn.Style.FG = style.FG
+
 	labelWidth := tabItemWidth - 3 - 1 // minus button and padding
 	label := filepath.Base(t.path)
 	if runewidth.StringWidth(label) <= labelWidth {
