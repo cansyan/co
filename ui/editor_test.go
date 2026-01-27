@@ -548,10 +548,10 @@ func TestVisualColFromLine(t *testing.T) {
 
 func TestVisualColToLine(t *testing.T) {
 	tests := []struct {
-		name     string
-		line     []rune
+		name      string
+		line      []rune
 		visualCol int
-		expected int
+		expected  int
 	}{
 		{"simple text", []rune("hello"), 3, 3},
 		{"with tab at start", []rune("\thello"), 5, 2},
@@ -791,40 +791,40 @@ func TestTextEditor_FindClosingBracket(t *testing.T) {
 
 func TestTextEditor_FindOpeningBracket(t *testing.T) {
 	tests := []struct {
-		name      string
-		text      string
-		startRow  int
-		startCol  int
-		wantRow   int
-		wantCol   int
-		wantChar  rune
+		name     string
+		text     string
+		startRow int
+		startCol int
+		wantRow  int
+		wantCol  int
+		wantChar rune
 	}{
 		{
-			name:      "simple parens",
-			text:      "(hello)",
-			startRow:  0,
-			startCol:  6,
-			wantRow:   0,
-			wantCol:   0,
-			wantChar:  '(',
+			name:     "simple parens",
+			text:     "(hello)",
+			startRow: 0,
+			startCol: 6,
+			wantRow:  0,
+			wantCol:  0,
+			wantChar: '(',
 		},
 		{
-			name:      "nested parens",
-			text:      "((hello))",
-			startRow:  0,
-			startCol:  8,
-			wantRow:   0,
-			wantCol:   0,
-			wantChar:  '(',
+			name:     "nested parens",
+			text:     "((hello))",
+			startRow: 0,
+			startCol: 8,
+			wantRow:  0,
+			wantCol:  0,
+			wantChar: '(',
 		},
 		{
-			name:      "not found",
-			text:      "hello)",
-			startRow:  0,
-			startCol:  5,
-			wantRow:   -1,
-			wantCol:   -1,
-			wantChar:  0,
+			name:     "not found",
+			text:     "hello)",
+			startRow: 0,
+			startCol: 5,
+			wantRow:  -1,
+			wantCol:  -1,
+			wantChar: 0,
 		},
 	}
 

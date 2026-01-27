@@ -470,10 +470,8 @@ func (a *App) showPalette(prefix string) {
 			}
 
 		case strings.HasPrefix(text, ">"):
-			// 3. Command Mode
 			a.fillCommandMode(p, text[1:])
 		default:
-			// 4. File Search Mode (Default)
 			a.fillFileSearchMode(p, text)
 		}
 	}

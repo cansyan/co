@@ -896,7 +896,7 @@ func (m *Manager) Start(view Element) error {
 	screen.EnableMouse()
 
 	redraw := func() {
-		screen.SetCursorStyle(tcell.CursorStyleSteadyBar, tcell.GetColor(Theme.Cursor))
+		screen.SetCursorStyle(tcell.CursorStyleDefault, tcell.GetColor(Theme.Cursor))
 		screen.Fill(' ', Style{}.Apply())
 		m.Render()
 		screen.Show()
