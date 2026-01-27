@@ -37,14 +37,15 @@ type ColorTheme struct {
 	Border     string
 	Hover      string
 	Selection  string
-	Syntax     SyntaxColor
+	Syntax     SyntaxStyle
 }
 
-type SyntaxColor struct {
+type SyntaxStyle struct {
 	Keyword      Style
 	String       Style
 	Comment      Style
 	Number       Style
+	Operator     Style
 	FunctionName Style
 	FunctionCall Style
 }
@@ -57,7 +58,7 @@ func NewBreakersTheme() ColorTheme {
 		Border:     "#d9e0e4", // white2 (selection_border)
 		Hover:      "#dae0e2", // white3
 		Selection:  "#dae0e2", // white3 (line_highlight / selection)
-		Syntax: SyntaxColor{
+		Syntax: SyntaxStyle{
 			Keyword: Style{
 				FG:         "#c594c5", // pink
 				FontItalic: true,      // storage.type italic
@@ -77,6 +78,7 @@ func NewBreakersTheme() ColorTheme {
 			FunctionCall: Style{
 				FG: "#6699cc", // blue (variable.function)
 			},
+			Operator: Style{FG: "#F97B58"}, // red2
 		},
 	}
 }
@@ -89,7 +91,7 @@ func NewMarianaTheme() ColorTheme {
 		Border:     "#65737e", // blue4 (selection_border)
 		Hover:      "#4e5a65",
 		Selection:  "#4e5a65", // blue2 (alpha handled by terminal blending)
-		Syntax: SyntaxColor{
+		Syntax: SyntaxStyle{
 			Keyword: Style{
 				FG:         "#c594c5", // pink
 				FontItalic: true,
@@ -109,6 +111,7 @@ func NewMarianaTheme() ColorTheme {
 			FunctionCall: Style{
 				FG: "#6699cc", // blue (variable.function)
 			},
+			Operator: Style{FG: "#F97B58"}, // red2
 		},
 	}
 }

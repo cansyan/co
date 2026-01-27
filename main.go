@@ -1446,7 +1446,28 @@ func highlightGo(line []rune) []ui.StyleSpan {
 				if i+1 < len(line) && line[i+1] == '/' {
 					state = stateInComment
 					start = i
+				} else {
+					spans = append(spans, ui.StyleSpan{
+						Start: i,
+						End:   i + 1,
+						Style: ui.Theme.Syntax.Operator,
+					})
+					i++
+					continue
 				}
+			case '+', '-', '*', '%', '&', '|', '^', '<', '>', '=', '!', ':':
+				// Parse multi-character operators
+				j := i + 1
+				for j < len(line) && isOperatorRune(line[j]) {
+					j++
+				}
+				spans = append(spans, ui.StyleSpan{
+					Start: i,
+					End:   j,
+					Style: ui.Theme.Syntax.Operator,
+				})
+				i = j
+				continue
 			default:
 				if isAlphaNumeric(r) {
 					j := i + 1
@@ -1522,6 +1543,10 @@ func isAlphaNumeric(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }
 
+func isOperatorRune(r rune) bool {
+	return strings.ContainsRune("+-*/%&|^<>=!:", r)
+}
+
 func highlightMarkdown(line []rune) []ui.StyleSpan {
 	var spans []ui.StyleSpan
 	if len(line) == 0 {
@@ -1538,7 +1563,7 @@ func highlightMarkdown(line []rune) []ui.StyleSpan {
 			{
 				Start: 0,
 				End:   i,
-				Style: ui.Style{FontBold: true, FG: ui.Theme.Syntax.Number.FG},
+				Style: ui.Style{FontBold: true, FG: ui.Theme.Syntax.Operator.FG},
 			},
 			{
 				Start: i,
@@ -1571,7 +1596,7 @@ func highlightMarkdown(line []rune) []ui.StyleSpan {
 				spans = append(spans, ui.StyleSpan{
 					Start: trimmed,
 					End:   trimmed + 1,
-					Style: ui.Theme.Syntax.Keyword,
+					Style: ui.Theme.Syntax.Number,
 				})
 			}
 		} else if unicode.IsDigit(line[trimmed]) {
