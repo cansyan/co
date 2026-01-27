@@ -261,7 +261,7 @@ func TestHighlightMarkdown(t *testing.T) {
 		line     string
 		expected int // Number of style spans expected
 	}{
-		{"# Header", 1},    // header
+		{"# Header", 2},    // header (# symbols + rest of line)
 		{"- List item", 1}, // list
 		{"`code`", 1},      // inline code
 		{"**bold**", 1},    // bold

@@ -726,7 +726,6 @@ func (a *App) navigateToHistory() {
 
 	entry := a.history[a.historyPos]
 	if err := a.openFile(entry.path); err != nil {
-		log.Print(err)
 		a.setStatus(err.Error(), 3*time.Second)
 		return
 	}
