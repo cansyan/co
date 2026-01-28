@@ -50,8 +50,8 @@ type Editor struct {
 
 	// Inline suggestion
 	InlineSuggest    bool
-	Suggester        func(prefix string) string // function to get suggestion based on current prefix
-	SuggesterTimeout time.Duration              // timeout for suggester calls (default 100ms)
+	Suggester        func(ctx context.Context, prefix string) string // function to get suggestion based on current prefix
+	SuggesterTimeout time.Duration                                   // timeout for suggester calls (default 100ms)
 	currentSuggest   string
 
 	IndentGuide bool // whether to show indentation guides
@@ -1261,7 +1261,7 @@ func (e *Editor) updateInlineSuggest() {
 
 	resultCh := make(chan string, 1)
 	go func() {
-		resultCh <- e.Suggester(prefix)
+		resultCh <- e.Suggester(ctx, prefix)
 	}()
 
 	select {

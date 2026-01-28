@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"go/format"
@@ -1275,7 +1276,7 @@ func NewEditor(r *App) *Editor {
 	}
 
 	e.InlineSuggest = true
-	e.Suggester = func(prefix string) string {
+	e.Suggester = func(ctx context.Context, prefix string) string {
 		if len(prefix) < 2 {
 			// avoid abusing suggestions for short prefixes
 			return ""
