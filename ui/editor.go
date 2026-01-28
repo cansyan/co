@@ -49,9 +49,11 @@ type Editor struct {
 	MergeNext bool // whether to merge next edit with current one
 
 	// Inline suggestion
-	InlineSuggest    bool
-	Suggester        func(ctx context.Context, prefix string) string // function to get suggestion based on current prefix
-	SuggesterTimeout time.Duration                                   // timeout for suggester calls (default 100ms)
+	InlineSuggest bool
+	// function to get suggestion based on current prefix
+	Suggester func(ctx context.Context, prefix string) string
+	// timeout for suggester calls (default 100ms)
+	SuggesterTimeout time.Duration
 	currentSuggest   string
 
 	IndentGuide bool // whether to show indentation guides

@@ -96,6 +96,7 @@ type App struct {
 	tabs      []*tab
 	activeTab int
 	newBtn    *ui.Button
+	openBtn   *ui.Button
 	saveBtn   *ui.Button
 	quitBtn   *ui.Button
 	backBtn   *ui.Button
@@ -131,6 +132,7 @@ func newApp(m *ui.Manager) *App {
 			m.SetFocus(a)
 		},
 	}
+	a.openBtn = &ui.Button{Text: "Open", OnClick: a.promptOpen}
 	a.backBtn = &ui.Button{Text: "←", OnClick: a.goBack}
 	a.fwdBtn = &ui.Button{Text: "→", OnClick: a.goForward}
 	a.saveBtn = &ui.Button{Text: "Save", OnClick: a.saveFile}
@@ -248,7 +250,7 @@ func (a *App) Layout(r ui.Rect) *ui.Node {
 
 	mainStack := ui.VStack()
 	mainStack.Append(
-		ui.HStack(ui.Grow(tabLabels), a.backBtn, a.fwdBtn, a.newBtn, a.saveBtn, a.quitBtn),
+		ui.HStack(ui.Grow(tabLabels), a.backBtn, a.fwdBtn, a.newBtn, a.openBtn, a.saveBtn, a.quitBtn),
 	)
 	if len(a.tabs) > 0 {
 		mainStack.Append(ui.Grow(a.tabs[a.activeTab].editor))
@@ -333,24 +335,6 @@ func (a *App) resetFind() {
 	a.manager.SetFocus(sb)
 }
 
-func (a *App) openFileDialog() {
-	input := &ui.Input{
-		Placeholder: "Open file path: ",
-		OnCommit: func(text string) {
-			if text != "" {
-				if err := a.openFile(text); err != nil {
-					log.Print(err)
-					a.setStatus(err.Error(), 3*time.Second)
-				}
-			}
-			a.manager.CloseOverlay()
-			a.requestFocus()
-		},
-	}
-	view := ui.Border(ui.Frame(input, 60, 1))
-	a.manager.Overlay(view, "top")
-}
-
 // handles app-level commands
 func (a *App) handleGlobalKey(ev *tcell.EventKey) bool {
 	switch strings.ToLower(ev.Name()) {
@@ -381,7 +365,7 @@ func (a *App) handleGlobalKey(ev *tcell.EventKey) bool {
 		a.showPalette("@")
 		return true
 	case "ctrl+o":
-		a.openFileDialog()
+		a.promptOpen()
 		return true
 	case "ctrl+t":
 		a.newTab("untitled")
@@ -800,6 +784,51 @@ func (a *App) promptSaveAs(commit func(path string)) {
 	dialog := ui.Frame(ui.Border(ui.VStack(
 		ui.PadH(ui.HStack(
 			ui.NewText("Save as: "),
+			ui.Grow(input),
+		), 1),
+
+		ui.PadH(ui.HStack(
+			ui.NewButton("Cancel", a.manager.CloseOverlay),
+			ui.Spacer,
+			okBtn,
+		), 4),
+	).Spacing(1)), 40, 0)
+	a.manager.Overlay(dialog, "top")
+	a.manager.SetFocus(input)
+}
+
+func (a *App) promptOpen() {
+	input := &ui.Input{
+		OnCommit: func(text string) {
+			if text != "" {
+				if err := a.openFile(text); err != nil {
+					log.Print(err)
+					a.setStatus(err.Error(), 5*time.Second)
+				}
+			}
+			a.manager.CloseOverlay()
+			a.requestFocus()
+		},
+	}
+
+	okBtn := &ui.Button{
+		Text: "OK",
+		OnClick: func() {
+			if text := input.String(); text != "" {
+				if err := a.openFile(text); err != nil {
+					log.Print(err)
+					a.setStatus(err.Error(), 5*time.Second)
+				}
+			}
+			a.manager.CloseOverlay()
+			a.requestFocus()
+		},
+		Style: ui.Style{BG: ui.Theme.Selection},
+	}
+
+	dialog := ui.Frame(ui.Border(ui.VStack(
+		ui.PadH(ui.HStack(
+			ui.NewText("Open file: "),
 			ui.Grow(input),
 		), 1),
 
