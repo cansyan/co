@@ -21,8 +21,8 @@ type editRecord struct {
 	selecting bool     // selection state
 }
 
-// TextEditor is a multi-line editable text area.
-type TextEditor struct {
+// Editor is a multi-line editable text area.
+type Editor struct {
 	buf     [][]rune // row-major text buffer
 	Pos     Pos      // cursor position; also selection end
 	goalCol int      // desired visual column when moving vertically
@@ -57,20 +57,20 @@ type TextEditor struct {
 	IndentGuide bool // whether to show indentation guides
 }
 
-func NewTextEditor() *TextEditor {
-	e := &TextEditor{
+func NewTextEditor() *Editor {
+	e := &Editor{
 		buf:              [][]rune{{}}, // Start with one empty line of runes
 		SuggesterTimeout: 100 * time.Millisecond,
 	}
 	return e
 }
 
-func (e *TextEditor) Len() int {
+func (e *Editor) Len() int {
 	return len(e.buf)
 }
 
 // String returns the entire text content as a string.
-func (e *TextEditor) String() string {
+func (e *Editor) String() string {
 	var sb strings.Builder
 	for i, line := range e.buf {
 		sb.WriteString(string(line))
@@ -82,7 +82,7 @@ func (e *TextEditor) String() string {
 	return sb.String()
 }
 
-func (e *TextEditor) SetText(s string) {
+func (e *Editor) SetText(s string) {
 	lines := strings.Split(s, "\n")
 	e.buf = make([][]rune, len(lines))
 	for i, line := range lines {
@@ -93,7 +93,7 @@ func (e *TextEditor) SetText(s string) {
 }
 
 // SetCursor moves the cursor and clears any active selection.
-func (e *TextEditor) SetCursor(row, col int) {
+func (e *Editor) SetCursor(row, col int) {
 	if row < 0 || row >= len(e.buf) || col < 0 {
 		return
 	}
@@ -105,7 +105,7 @@ func (e *TextEditor) SetCursor(row, col int) {
 // CenterRow centers the given row vertically in the viewport.
 // Used for jump operations (goto line, search results) where you want
 // the target line in the middle of the screen for context.
-func (e *TextEditor) CenterRow(row int) {
+func (e *Editor) CenterRow(row int) {
 	e.offsetY = row - (e.viewH / 2)
 	e.clampScroll()
 }
@@ -113,7 +113,7 @@ func (e *TextEditor) CenterRow(row int) {
 // EnsureVisible ensures the current cursor row is visible with minimal scrolling.
 // Used for normal navigation (arrow keys, typing) where you want smooth,
 // minimal viewport movement - only scrolls if cursor goes out of bounds.
-func (e *TextEditor) EnsureVisible(row int) {
+func (e *Editor) EnsureVisible(row int) {
 	if e.viewH <= 0 {
 		return
 	}
@@ -133,7 +133,7 @@ func (e *TextEditor) EnsureVisible(row int) {
 	e.clampScroll()
 }
 
-func (e *TextEditor) clampScroll() {
+func (e *Editor) clampScroll() {
 	maxOffset := max(0, len(e.buf)-e.viewH)
 	if e.offsetY > maxOffset {
 		e.offsetY = maxOffset
@@ -143,7 +143,7 @@ func (e *TextEditor) clampScroll() {
 	}
 }
 
-func (e *TextEditor) adjustCol() {
+func (e *Editor) adjustCol() {
 	if e.Pos.Row < len(e.buf) {
 		lineLen := len(e.buf[e.Pos.Row])
 		if e.Pos.Col > lineLen {
@@ -152,12 +152,12 @@ func (e *TextEditor) adjustCol() {
 	}
 }
 
-func (e *TextEditor) MinSize() (int, int) {
+func (e *Editor) MinSize() (int, int) {
 	// Fixed width: 5 columns for line numbers, 20 for content
 	return 25, 5
 }
 
-func (e *TextEditor) Layout(r Rect) *Node {
+func (e *Editor) Layout(r Rect) *Node {
 	return &Node{
 		Element: e,
 		Rect:    r,
@@ -213,7 +213,7 @@ func visualColToLine(line []rune, col int) int {
 	return len(line)
 }
 
-func (e *TextEditor) drawRune(s tcell.Screen, x, y int, maxWidth int, r rune, visualCol int, style Style) int {
+func (e *Editor) drawRune(s tcell.Screen, x, y int, maxWidth int, r rune, visualCol int, style Style) int {
 	if maxWidth <= 0 {
 		return 0
 	}
@@ -247,7 +247,7 @@ func (e *TextEditor) drawRune(s tcell.Screen, x, y int, maxWidth int, r rune, vi
 	return w
 }
 
-func (e *TextEditor) Render(s Screen, rect Rect) {
+func (e *Editor) Render(s Screen, rect Rect) {
 	e.viewH = rect.H
 
 	// Calculate line number column width
@@ -306,7 +306,7 @@ func (e *TextEditor) Render(s Screen, rect Rect) {
 	}
 }
 
-func (e *TextEditor) renderLine(s Screen, x, y, maxWidth, row int, line []rune) {
+func (e *Editor) renderLine(s Screen, x, y, maxWidth, row int, line []rune) {
 	var styles []Style
 	if e.Highlighter != nil {
 		spans := e.Highlighter(line)
@@ -343,7 +343,7 @@ func (e *TextEditor) renderLine(s Screen, x, y, maxWidth, row int, line []rune) 
 	}
 }
 
-func (e *TextEditor) drawSuggestion(s Screen, x, y, maxWidth, visualCol int) int {
+func (e *Editor) drawSuggestion(s Screen, x, y, maxWidth, visualCol int) int {
 	if !e.InlineSuggest || e.currentSuggest == "" || !e.focused {
 		return visualCol
 	}
@@ -362,10 +362,10 @@ func (e *TextEditor) drawSuggestion(s Screen, x, y, maxWidth, visualCol int) int
 	return visualCol
 }
 
-func (e *TextEditor) OnFocus() { e.focused = true }
-func (e *TextEditor) OnBlur()  { e.focused = false }
+func (e *Editor) OnFocus() { e.focused = true }
+func (e *Editor) OnBlur()  { e.focused = false }
 
-func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
+func (e *Editor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 	keepVisualCol := false
 	defer func() {
 		if !keepVisualCol {
@@ -589,14 +589,14 @@ func (e *TextEditor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 	return consumed
 }
 
-func (e *TextEditor) OnMouseUp(x, y int) {
+func (e *Editor) OnMouseUp(x, y int) {
 	e.pressed = false
 	if e.Pos.Row == e.anchor.Row && e.Pos.Col == e.anchor.Col {
 		e.selecting = false
 	}
 }
 
-func (e *TextEditor) OnMouseDown(x, y int) {
+func (e *Editor) OnMouseDown(x, y int) {
 	e.currentSuggest = ""
 	// Calculate the target row (relative to content)
 	targetRow := y + e.offsetY
@@ -626,9 +626,9 @@ func (e *TextEditor) OnMouseDown(x, y int) {
 	}
 }
 
-func (e *TextEditor) OnMouseEnter() {}
-func (e *TextEditor) OnMouseLeave() {}
-func (e *TextEditor) OnMouseMove(lx, ly int) {
+func (e *Editor) OnMouseEnter() {}
+func (e *Editor) OnMouseLeave() {}
+func (e *Editor) OnMouseMove(lx, ly int) {
 	if e.pressed {
 		// Drag to select
 		targetRow := ly + e.offsetY
@@ -648,7 +648,7 @@ func (e *TextEditor) OnMouseMove(lx, ly int) {
 
 // SetSelection sets the selection anchor to startRow and startCol,
 // sets content cursor to endRow and endCol.
-func (e *TextEditor) SetSelection(start, end Pos) {
+func (e *Editor) SetSelection(start, end Pos) {
 	length := e.Len()
 	if start.Row < 0 || start.Row > length-1 || end.Row < 0 || end.Row > length-1 {
 		return
@@ -659,7 +659,7 @@ func (e *TextEditor) SetSelection(start, end Pos) {
 	e.adjustCol()
 }
 
-func (e *TextEditor) Selection() (start, end Pos, ok bool) {
+func (e *Editor) Selection() (start, end Pos, ok bool) {
 	if !e.selecting || (e.Pos.Row == e.anchor.Row && e.Pos.Col == e.anchor.Col) {
 		return
 	}
@@ -674,11 +674,11 @@ func (e *TextEditor) Selection() (start, end Pos, ok bool) {
 	return start, end, true
 }
 
-func (e *TextEditor) ClearSelection() {
+func (e *Editor) ClearSelection() {
 	e.selecting = false
 }
 
-func (e *TextEditor) isSelected(pos Pos) bool {
+func (e *Editor) isSelected(pos Pos) bool {
 	start, end, ok := e.Selection()
 	if !ok {
 		return false
@@ -703,7 +703,7 @@ func (e *TextEditor) isSelected(pos Pos) bool {
 }
 
 // WordRangeAtCursor returns the word boundaries at current cursor.
-func (e *TextEditor) WordRangeAtCursor() (start, end int, ok bool) {
+func (e *Editor) WordRangeAtCursor() (start, end int, ok bool) {
 	if e.Pos.Row < 0 || e.Pos.Row >= len(e.buf) {
 		return
 	}
@@ -735,7 +735,7 @@ func (e *TextEditor) WordRangeAtCursor() (start, end int, ok bool) {
 }
 
 // SelectWord selects word at current cursor
-func (e *TextEditor) SelectWord() {
+func (e *Editor) SelectWord() {
 	if len(e.buf) == 0 || e.Pos.Row >= len(e.buf) {
 		return
 	}
@@ -750,7 +750,7 @@ func (e *TextEditor) SelectWord() {
 
 // ExpandSelectionToLine expands selection to line.
 // Repeated calls may expand further lines.
-func (e *TextEditor) ExpandSelectionToLine() {
+func (e *Editor) ExpandSelectionToLine() {
 	if len(e.buf) == 0 || e.Pos.Row >= len(e.buf) {
 		return
 	}
@@ -777,7 +777,7 @@ func (e *TextEditor) ExpandSelectionToLine() {
 
 // ExpandSelectionToBrackets expands selection to the nearest enclosing brackets.
 // Repeated calls may expand further depending on context;
-func (e *TextEditor) ExpandSelectionToBrackets() {
+func (e *Editor) ExpandSelectionToBrackets() {
 	openRow, openCol, openCh := e.findOpeningBracket(e.Pos.Row, e.Pos.Col)
 	if openCol == -1 {
 		return
@@ -804,7 +804,7 @@ var bracketClose = map[rune]rune{
 	'}': '{',
 }
 
-func (e *TextEditor) findOpeningBracket(startRow, startCol int) (openRow, openCol int, openCh rune) {
+func (e *Editor) findOpeningBracket(startRow, startCol int) (openRow, openCol int, openCh rune) {
 	var stack []rune
 	for r := startRow; r >= 0; r-- {
 		cStart := len(e.buf[r]) - 1
@@ -828,7 +828,7 @@ func (e *TextEditor) findOpeningBracket(startRow, startCol int) (openRow, openCo
 	return -1, -1, 0
 }
 
-func (e *TextEditor) findClosingBracket(openRow, openCol int, openCh rune) (closeRow, closeCol int) {
+func (e *Editor) findClosingBracket(openRow, openCol int, openCh rune) (closeRow, closeCol int) {
 	closeCh := bracketOpen[openCh]
 	depth := 0
 	for r := openRow; r < len(e.buf); r++ {
@@ -854,7 +854,7 @@ func (e *TextEditor) findClosingBracket(openRow, openCol int, openCh rune) (clos
 }
 
 // FindNext 尋找下一個匹配項並更新選區
-func (e *TextEditor) FindNext(query string) {
+func (e *Editor) FindNext(query string) {
 	if query == "" {
 		return
 	}
@@ -916,7 +916,7 @@ func (e *TextEditor) FindNext(query string) {
 }
 
 // SelectedText 回傳當前選區的字串內容
-func (e *TextEditor) SelectedText() string {
+func (e *Editor) SelectedText() string {
 	start, end, ok := e.Selection()
 	if !ok {
 		return ""
@@ -937,7 +937,7 @@ func (e *TextEditor) SelectedText() string {
 	return sb.String()
 }
 
-func (e *TextEditor) OnScroll(dy int) {
+func (e *Editor) OnScroll(dy int) {
 	if len(e.buf) <= e.viewH {
 		e.offsetY = 0
 	} else if dy < 0 {
@@ -950,12 +950,12 @@ func (e *TextEditor) OnScroll(dy int) {
 }
 
 // OnChange sets a callback function that is called whenever the text content changes.
-func (e *TextEditor) OnChange(fn func()) {
+func (e *Editor) OnChange(fn func()) {
 	e.onChange = fn
 }
 
 // Line return a line of text on the given row index.
-func (e *TextEditor) Line(i int) []rune {
+func (e *Editor) Line(i int) []rune {
 	return slices.Clone(e.buf[i])
 }
 
@@ -976,7 +976,7 @@ func (p Pos) Advance(rs []rune) Pos {
 	return p
 }
 
-func (e *TextEditor) insertRunes(pos Pos, rs []rune) {
+func (e *Editor) insertRunes(pos Pos, rs []rune) {
 	if len(rs) == 0 {
 		return
 	}
@@ -1004,7 +1004,7 @@ func (e *TextEditor) insertRunes(pos Pos, rs []rune) {
 
 // InsertText simulates a paste operation: it inserts a string 's' at the current
 // cursor position (t.row, t.col), correctly handling any embedded newlines ('\n').
-func (e *TextEditor) InsertText(s string) {
+func (e *Editor) InsertText(s string) {
 	if s == "" {
 		return
 	}
@@ -1065,7 +1065,7 @@ func spliceLines(lines [][]rune, start, remove int, insert [][]rune) [][]rune {
 
 // DeleteRange deletes a range of text defined by two cursor positions (start, end).
 // the positions are inclusive of start and exclusive of end.
-func (e *TextEditor) DeleteRange(start, end Pos) {
+func (e *Editor) DeleteRange(start, end Pos) {
 	// 1. Normalize and clamp the selection range
 	if start.Row > end.Row || (start.Row == end.Row && start.Col > end.Col) {
 		start.Row, end.Row = end.Row, start.Row
@@ -1119,7 +1119,7 @@ func (e *TextEditor) DeleteRange(start, end Pos) {
 }
 
 // SaveEdit saves the current buffer state to the undo stack.
-func (e *TextEditor) SaveEdit() {
+func (e *Editor) SaveEdit() {
 	// Create a deep copy of the buffer
 	bufCopy := make([][]rune, len(e.buf))
 	for i := range e.buf {
@@ -1140,7 +1140,7 @@ func (e *TextEditor) SaveEdit() {
 }
 
 // Undo reverts the last edit operation.
-func (e *TextEditor) Undo() {
+func (e *Editor) Undo() {
 	if len(e.undoStack) == 0 {
 		return
 	}
@@ -1175,7 +1175,7 @@ func (e *TextEditor) Undo() {
 }
 
 // Redo reapplies an undone edit operation.
-func (e *TextEditor) Redo() {
+func (e *Editor) Redo() {
 	if len(e.redoStack) == 0 {
 		return
 	}
@@ -1210,7 +1210,7 @@ func (e *TextEditor) Redo() {
 }
 
 // updateInlineSuggest finds and sets the current inline suggestion.
-func (e *TextEditor) updateInlineSuggest() {
+func (e *Editor) updateInlineSuggest() {
 	if !e.InlineSuggest || e.Suggester == nil {
 		return
 	}

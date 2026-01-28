@@ -15,7 +15,7 @@ func TestNewEditor(t *testing.T) {
 		t.Fatal("NewEditor returned nil")
 	}
 
-	if editor.TextEditor == nil {
+	if editor.Editor == nil {
 		t.Fatal("Editor TextEditor is nil")
 	}
 

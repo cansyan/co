@@ -301,9 +301,9 @@ func (b *Button) OnMouseUp(x, y int) {
 	b.pressed = false
 }
 
-// TextInput is a single-line text input field.
-// The zero value for TextInput is ready to use.
-type TextInput struct {
+// Input is a single-line text input field.
+// The zero value for Input is ready to use.
+type Input struct {
 	text    []rune
 	cursor  int // cursor position; also selection end
 	anchor  int // selection start (rune index)
@@ -317,11 +317,11 @@ type TextInput struct {
 }
 
 // String returns the current text content
-func (t *TextInput) String() string {
+func (t *Input) String() string {
 	return string(t.text)
 }
 
-func (t *TextInput) SetText(s string) {
+func (t *Input) SetText(s string) {
 	t.text = []rune(s)
 	t.cursor = len(t.text)
 	t.anchor = t.cursor
@@ -330,18 +330,18 @@ func (t *TextInput) SetText(s string) {
 	}
 }
 
-func (t *TextInput) MinSize() (int, int) {
+func (t *Input) MinSize() (int, int) {
 	return 10, 1
 }
 
-func (t *TextInput) Layout(r Rect) *Node {
+func (t *Input) Layout(r Rect) *Node {
 	return &Node{
 		Element: t,
 		Rect:    r,
 	}
 }
 
-func (t *TextInput) Render(s Screen, rect Rect) {
+func (t *Input) Render(s Screen, rect Rect) {
 	if t.focused && t.cursor < rect.W {
 		s.ShowCursor(rect.X+t.cursor, rect.Y)
 	}
@@ -376,9 +376,9 @@ func (t *TextInput) Render(s Screen, rect Rect) {
 	}
 }
 
-func (t *TextInput) OnFocus() { t.focused = true }
-func (t *TextInput) OnBlur()  { t.focused = false }
-func (t *TextInput) HandleKey(ev *tcell.EventKey) bool {
+func (t *Input) OnFocus() { t.focused = true }
+func (t *Input) OnBlur()  { t.focused = false }
+func (t *Input) HandleKey(ev *tcell.EventKey) bool {
 	resetSelection := true
 	consumed := true
 	switch ev.Key() {
@@ -428,7 +428,7 @@ func (t *TextInput) HandleKey(ev *tcell.EventKey) bool {
 	return consumed
 }
 
-func (t *TextInput) OnMouseDown(x, y int) {
+func (t *Input) OnMouseDown(x, y int) {
 	if x < 0 {
 		x = 0
 	}
@@ -442,7 +442,7 @@ func (t *TextInput) OnMouseDown(x, y int) {
 	}
 }
 
-func (t *TextInput) OnMouseMove(x, y int) {
+func (t *Input) OnMouseMove(x, y int) {
 	if t.pressed {
 		t.cursor = t.clampCursor(x)
 		if t.OnChange != nil {
@@ -451,11 +451,11 @@ func (t *TextInput) OnMouseMove(x, y int) {
 	}
 }
 
-func (t *TextInput) OnMouseUp(x, y int) {
+func (t *Input) OnMouseUp(x, y int) {
 	t.pressed = false
 }
 
-func (t *TextInput) clampCursor(x int) int {
+func (t *Input) clampCursor(x int) int {
 	if x < 0 {
 		return 0
 	}
@@ -465,13 +465,13 @@ func (t *TextInput) clampCursor(x int) int {
 	return x
 }
 
-func (t *TextInput) Select(start, end int) {
+func (t *Input) Select(start, end int) {
 	t.anchor = start
 	t.cursor = end
 }
 
-// 取得正規化後的選取範圍 (start <= end)
-func (t *TextInput) selection() (int, int, bool) {
+// Returns the normalized selection range (start <= end)
+func (t *Input) selection() (int, int, bool) {
 	if t.anchor == t.cursor {
 		return 0, 0, false
 	}

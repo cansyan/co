@@ -333,7 +333,7 @@ func (a *App) resetFind() {
 }
 
 func (a *App) openFileDialog() {
-	input := &ui.TextInput{
+	input := &ui.Input{
 		Placeholder: "Open file path: ",
 		OnCommit: func(text string) {
 			if text != "" {
@@ -410,8 +410,8 @@ func (a *App) showPalette(prefix string) {
 	}
 	// Use proxyInput to delegate key handling to Palette
 	p.input = &proxyInput{
-		TextInput: new(ui.TextInput),
-		parent:    p,
+		Input:  new(ui.Input),
+		parent: p,
 	}
 	p.input.OnChange = func() {
 		text := p.input.String()
@@ -776,7 +776,7 @@ func (a *App) saveFile() {
 }
 
 func (a *App) promptSaveAs(commit func(path string)) {
-	input := &ui.TextInput{
+	input := &ui.Input{
 		OnCommit: func(text string) {
 			if commit != nil {
 				commit(text)
@@ -1046,8 +1046,8 @@ type SearchBar struct {
 func NewSearchBar(r *App) *SearchBar {
 	sb := &SearchBar{a: r, activeIndex: -1}
 	sb.input = &proxyInput{
-		TextInput: new(ui.TextInput),
-		parent:    sb,
+		Input:  new(ui.Input),
+		parent: sb,
 	}
 	// Lazy Evaluation:
 	// 當文字改變時，僅標記狀態為「需要重新掃描」，但不立即掃描
@@ -1239,7 +1239,7 @@ func (sb *SearchBar) OnBlur() { sb.input.OnBlur() }
 
 // proxyInput delegates focus to its parent element
 type proxyInput struct {
-	*ui.TextInput
+	*ui.Input
 	parent ui.Element
 }
 
@@ -1263,15 +1263,15 @@ func (a *App) activateLeader() {
 }
 
 type Editor struct {
-	*ui.TextEditor
+	*ui.Editor
 	app     *App
 	symbols []symbol
 }
 
 func NewEditor(r *App) *Editor {
 	e := &Editor{
-		TextEditor: ui.NewTextEditor(),
-		app:        r,
+		Editor: ui.NewTextEditor(),
+		app:    r,
 	}
 
 	e.InlineSuggest = true
@@ -1304,9 +1304,9 @@ func (e *Editor) Layout(r ui.Rect) *ui.Node {
 func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 	switch strings.ToLower(ev.Name()) {
 	case "ctrl+z":
-		e.TextEditor.Undo()
+		e.Editor.Undo()
 	case "ctrl+y":
-		e.TextEditor.Redo()
+		e.Editor.Redo()
 	case "ctrl+a":
 		lastLine := e.Line(e.Len() - 1)
 		e.SetSelection(ui.Pos{}, ui.Pos{Row: e.Len() - 1, Col: len(lastLine)})
@@ -1319,7 +1319,7 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		e.app.clipboard = s
 		e.app.manager.Screen().SetClipboard([]byte(s))
 	case "ctrl+x":
-		e.TextEditor.SaveEdit()
+		e.Editor.SaveEdit()
 		e.MergeNext = false
 		start, end, ok := e.Selection()
 		if !ok {
@@ -1337,7 +1337,7 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		e.DeleteRange(start, end)
 		e.ClearSelection()
 	case "ctrl+v":
-		e.TextEditor.SaveEdit()
+		e.Editor.SaveEdit()
 		e.MergeNext = false
 		e.InsertText(e.app.clipboard)
 	case "ctrl+d":
@@ -1373,7 +1373,7 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		e.ClearSelection()
 		e.Pos.Col = len(e.Line(e.Pos.Row))
 	default:
-		if !e.TextEditor.HandleKey(ev) {
+		if !e.Editor.HandleKey(ev) {
 			// Bubble event to parent
 			return e.app.handleGlobalKey(ev)
 		}
@@ -1415,7 +1415,7 @@ func (e *Editor) updateSymbols() {
 }
 
 func (e *Editor) OnMouseDown(lx, ly int) {
-	e.TextEditor.OnMouseDown(lx, ly)
+	e.Editor.OnMouseDown(lx, ly)
 	e.app.recordJump()
 }
 
