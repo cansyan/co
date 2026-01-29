@@ -28,9 +28,9 @@ go build -o co main.go
 ```
 File Operations:
     Ctrl+T: New tab
-    Ctrl+O: Open file dialog
-    Ctrl+S: Save current file
-    Ctrl+W: Close current tab (with save prompt)
+    Ctrl+O: Open file
+    Ctrl+S: Save file
+    Ctrl+W: Close tab
     Ctrl+Q: Quit editor
 
 Editing:

@@ -245,7 +245,7 @@ func TestHighlightGo(t *testing.T) {
 		{"\"string\"", 1},     // string literal
 		{"// comment", 1},     // comment
 		{"123", 1},            // number
-		{"x + y", 0},          // no highlighting
+		{"x + y", 1},          // operator
 	}
 
 	for _, test := range tests {
