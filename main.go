@@ -22,7 +22,6 @@ import (
 
 	"github.com/cansyan/co/ui"
 
-	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -126,7 +125,7 @@ func newApp(m *ui.Manager) *App {
 		historyPos: -1,
 	}
 	a.newBtn = &ui.Button{
-		Text: "＋",
+		Text: "+",
 		OnClick: func() {
 			a.newTab("untitled")
 			m.SetFocus(a)
@@ -296,7 +295,7 @@ func (a *App) setStatus(msg string, delay time.Duration) {
 	})
 }
 
-func (a *App) Render(ui.Screen, ui.Rect) {
+func (a *App) Render(*ui.Screen, ui.Rect) {
 	// no-op
 }
 
@@ -336,7 +335,7 @@ func (a *App) resetFind() {
 }
 
 // handles app-level commands
-func (a *App) handleGlobalKey(ev *tcell.EventKey) bool {
+func (a *App) handleGlobalKey(ev *ui.EventKey) bool {
 	switch strings.ToLower(ev.Name()) {
 	case "ctrl+s":
 		a.saveFile()
@@ -867,7 +866,6 @@ type tab struct {
 	path     string
 	closeBtn *ui.Button
 	editor   *Editor
-	hovered  bool
 }
 
 func newTab(root *App, label string) *tab {
@@ -908,13 +906,11 @@ func (t *tab) Layout(r ui.Rect) *ui.Node {
 		},
 	}
 }
-func (t *tab) Render(screen ui.Screen, r ui.Rect) {
+func (t *tab) Render(screen *ui.Screen, r ui.Rect) {
 	style := ui.Theme.Syntax.Comment
 	if t == t.a.tabs[t.a.activeTab] {
 		style.FG = ui.Theme.Foreground
 		style.FontUnderline = true
-	} else if t.hovered {
-		style.BG = ui.Theme.Hover
 	}
 
 	t.closeBtn.Style.FG = style.FG
@@ -942,13 +938,6 @@ func (t *tab) OnMouseDown(lx, ly int) {
 }
 
 func (t *tab) OnMouseUp(lx, ly int) {}
-func (t *tab) OnMouseEnter() {
-	t.hovered = true
-}
-func (t *tab) OnMouseLeave() {
-	t.hovered = false
-}
-func (t *tab) OnMouseMove(rx, ry int) {}
 
 type Palette struct {
 	input *proxyInput
@@ -994,18 +983,18 @@ func (p *Palette) Layout(r ui.Rect) *ui.Node {
 	}
 }
 
-func (p *Palette) Render(ui.Screen, ui.Rect) {
+func (p *Palette) Render(*ui.Screen, ui.Rect) {
 	// no-op
 }
 
-func (p *Palette) HandleKey(ev *tcell.EventKey) bool {
+func (p *Palette) HandleKey(ev *ui.EventKey) bool {
 	consumed := true
 	switch ev.Key() {
-	case tcell.KeyDown, tcell.KeyCtrlN:
+	case ui.KeyDown, ui.KeyCtrlN:
 		p.list.Next()
-	case tcell.KeyUp, tcell.KeyCtrlP:
+	case ui.KeyUp, ui.KeyCtrlP:
 		p.list.Prev()
-	case tcell.KeyEnter:
+	case ui.KeyEnter:
 		p.list.Activate()
 	default:
 		p.input.HandleKey(ev)
@@ -1245,18 +1234,18 @@ func (sb *SearchBar) MinSize() (int, int) {
 	return 10, 1
 }
 
-func (sb *SearchBar) Render(s ui.Screen, r ui.Rect) {}
+func (sb *SearchBar) Render(s *ui.Screen, r ui.Rect) {}
 
-func (sb *SearchBar) HandleKey(ev *tcell.EventKey) bool {
+func (sb *SearchBar) HandleKey(ev *ui.EventKey) bool {
 	consumed := true
 	switch ev.Key() {
-	case tcell.KeyEnter:
+	case ui.KeyEnter:
 		sb.navigate(true)
-	case tcell.KeyUp, tcell.KeyCtrlP:
+	case ui.KeyUp, ui.KeyCtrlP:
 		sb.navigate(false)
-	case tcell.KeyDown, tcell.KeyCtrlN:
+	case ui.KeyDown, ui.KeyCtrlN:
 		sb.navigate(true)
-	case tcell.KeyESC:
+	case ui.KeyESC:
 		sb.a.showSearch = false
 		sb.a.requestFocus()
 	default:
@@ -1336,7 +1325,7 @@ func (e *Editor) Layout(r ui.Rect) *ui.Node {
 
 // HandleKey handles editor-specific keybindings.
 // If the key is not handled here, it will bubble up to the app level.
-func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
+func (e *Editor) HandleKey(ev *ui.EventKey) bool {
 	switch strings.ToLower(ev.Name()) {
 	case "ctrl+z":
 		e.Editor.Undo()

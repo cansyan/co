@@ -9,7 +9,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -215,7 +214,7 @@ func visualColToLine(line []rune, col int) int {
 	return len(line)
 }
 
-func (e *Editor) drawRune(s tcell.Screen, x, y int, maxWidth int, r rune, visualCol int, style Style) int {
+func (e *Editor) drawRune(s *Screen, x, y int, maxWidth int, r rune, visualCol int, style Style) int {
 	if maxWidth <= 0 {
 		return 0
 	}
@@ -249,7 +248,7 @@ func (e *Editor) drawRune(s tcell.Screen, x, y int, maxWidth int, r rune, visual
 	return w
 }
 
-func (e *Editor) Render(s Screen, rect Rect) {
+func (e *Editor) Render(s *Screen, rect Rect) {
 	e.viewH = rect.H
 
 	// Calculate line number column width
@@ -308,7 +307,7 @@ func (e *Editor) Render(s Screen, rect Rect) {
 	}
 }
 
-func (e *Editor) renderLine(s Screen, x, y, maxWidth, row int, line []rune) {
+func (e *Editor) renderLine(s *Screen, x, y, maxWidth, row int, line []rune) {
 	var styles []Style
 	if e.Highlighter != nil {
 		spans := e.Highlighter(line)
@@ -345,7 +344,7 @@ func (e *Editor) renderLine(s Screen, x, y, maxWidth, row int, line []rune) {
 	}
 }
 
-func (e *Editor) drawSuggestion(s Screen, x, y, maxWidth, visualCol int) int {
+func (e *Editor) drawSuggestion(s *Screen, x, y, maxWidth, visualCol int) int {
 	if !e.InlineSuggest || e.currentSuggest == "" || !e.focused {
 		return visualCol
 	}
@@ -367,7 +366,7 @@ func (e *Editor) drawSuggestion(s Screen, x, y, maxWidth, visualCol int) int {
 func (e *Editor) OnFocus() { e.focused = true }
 func (e *Editor) OnBlur()  { e.focused = false }
 
-func (e *Editor) HandleKey(ev *tcell.EventKey) (consumed bool) {
+func (e *Editor) HandleKey(ev *EventKey) (consumed bool) {
 	keepVisualCol := false
 	defer func() {
 		if !keepVisualCol {
@@ -383,17 +382,17 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 
 	consumed = true
 	switch ev.Key() {
-	case tcell.KeyESC:
+	case KeyESC:
 		if !e.selecting && e.currentSuggest == "" {
 			// nothing to do, bubble event to parent
 			return false
 		}
 		e.ClearSelection()
 		e.currentSuggest = ""
-	case tcell.KeyUp:
+	case KeyUp:
 		e.ClearSelection()
 		e.currentSuggest = ""
-		if ev.Modifiers()&tcell.ModMeta != 0 {
+		if ev.Modifiers()&ModMeta != 0 {
 			e.Pos.Row, e.Pos.Col = 0, 0
 			e.EnsureVisible(e.Pos.Row)
 			return
@@ -409,10 +408,10 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 			e.adjustCol()
 			e.EnsureVisible(e.Pos.Row)
 		}
-	case tcell.KeyDown:
+	case KeyDown:
 		e.ClearSelection()
 		e.currentSuggest = ""
-		if ev.Modifiers()&tcell.ModMeta != 0 {
+		if ev.Modifiers()&ModMeta != 0 {
 			e.Pos.Row, e.Pos.Col = len(e.buf)-1, 0
 			e.EnsureVisible(e.Pos.Row)
 			return
@@ -428,9 +427,9 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 			e.adjustCol()
 			e.EnsureVisible(e.Pos.Row)
 		}
-	case tcell.KeyLeft:
+	case KeyLeft:
 		e.currentSuggest = ""
-		if ev.Modifiers()&tcell.ModMeta != 0 {
+		if ev.Modifiers()&ModMeta != 0 {
 			e.ClearSelection()
 			firstNonSpace := 0
 			for i, ch := range e.buf[e.Pos.Row] {
@@ -455,9 +454,9 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 			e.Pos.Col = len(e.buf[e.Pos.Row]) // End of previous line
 			e.EnsureVisible(e.Pos.Row)
 		}
-	case tcell.KeyRight:
+	case KeyRight:
 		e.currentSuggest = ""
-		if ev.Modifiers()&tcell.ModMeta != 0 {
+		if ev.Modifiers()&ModMeta != 0 {
 			e.ClearSelection()
 			e.Pos.Col = len(e.buf[e.Pos.Row])
 			return
@@ -474,7 +473,7 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 			e.Pos.Col = 0 // Start of next line
 			e.EnsureVisible(e.Pos.Row)
 		}
-	case tcell.KeyEnter:
+	case KeyEnter:
 		e.currentSuggest = ""
 		e.SaveEdit()
 		e.MergeNext = false
@@ -506,7 +505,7 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 		e.Pos.Row++
 		e.Pos.Col = lead
 		e.EnsureVisible(e.Pos.Row)
-	case tcell.KeyBackspace, tcell.KeyBackspace2:
+	case KeyBackspace, KeyBackspace2:
 		if !e.MergeNext {
 			e.SaveEdit()
 		}
@@ -533,7 +532,7 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 			e.EnsureVisible(e.Pos.Row)
 			e.currentSuggest = ""
 		}
-	case tcell.KeyRune:
+	case KeyRune:
 		if !e.MergeNext {
 			e.SaveEdit()
 		}
@@ -549,7 +548,7 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 		e.buf[e.Pos.Row] = slices.Insert(e.buf[e.Pos.Row], e.Pos.Col, r)
 		e.Pos.Col++
 		e.updateInlineSuggest()
-	case tcell.KeyTAB:
+	case KeyTAB:
 		// Try to accept inline suggestion first
 		if e.InlineSuggest && e.currentSuggest != "" {
 			e.SaveEdit()
@@ -575,7 +574,7 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 		}
 		e.buf[e.Pos.Row] = slices.Insert(e.buf[e.Pos.Row], e.Pos.Col, '\t')
 		e.Pos.Col++
-	case tcell.KeyHome:
+	case KeyHome:
 		// goto the first non-space character
 		for i, char := range e.buf[e.Pos.Row] {
 			if !unicode.IsSpace(char) {
@@ -583,7 +582,7 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) (consumed bool) {
 				break
 			}
 		}
-	case tcell.KeyEnd:
+	case KeyEnd:
 		e.Pos.Col = len(e.buf[e.Pos.Row])
 	default:
 		consumed = false
@@ -628,9 +627,7 @@ func (e *Editor) OnMouseDown(x, y int) {
 	}
 }
 
-func (e *Editor) OnMouseEnter() {}
-func (e *Editor) OnMouseLeave() {}
-func (e *Editor) OnMouseMove(lx, ly int) {
+func (e *Editor) OnDrag(lx, ly int) {
 	if e.pressed {
 		// Drag to select
 		targetRow := ly + e.offsetY

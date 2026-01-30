@@ -1,4 +1,4 @@
-// Package ui provides a lightweight text-based user interface toolkit built on top of tcell.
+// Package ui provides a lightweight text-based user interface toolkit.
 // It offers a clean event–state–render pipeline with basic UI components and layouts.
 package ui
 
@@ -9,11 +9,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
 )
-
-type Screen = tcell.Screen
 
 // Logger is intended for debugging,
 // discards all logs by default, until configured otherwise.
@@ -28,15 +25,7 @@ type Element interface {
 	Layout(Rect) *Node
 
 	// Render draws the element's visual representation onto the screen.
-	Render(s Screen, rect Rect)
-}
-
-// Hoverable represents an element that can respond to mouse hover.
-// localX and localY indicate the mouse position relative to the element's top-left corner.
-type Hoverable interface {
-	OnMouseEnter()
-	OnMouseLeave()
-	OnMouseMove(localX, localY int)
+	Render(s *Screen, rect Rect)
 }
 
 // Clickable represents an element that can respond to mouse click actions.
@@ -46,6 +35,13 @@ type Clickable interface {
 	OnMouseDown(localX, localY int)
 	// OnMouseUp is called when the mouse button is released.
 	OnMouseUp(localX, localY int)
+}
+
+// Draggable represents an element that can respond to mouse drag (motion with button held).
+// Note: Pure hover detection (motion without buttons) is not supported to avoid event flood
+// from terminal ?1003h mode. Only button-held motion (?1002h mode) is tracked.
+type Draggable interface {
+	OnDrag(localX, localY int)
 }
 
 // Scrollable represents an element that can respond to vertical scroll events.
@@ -68,7 +64,7 @@ type FocusDelegator interface {
 
 // KeyHandler represents an element that can handle keyboard events.
 type KeyHandler interface {
-	HandleKey(ev *tcell.EventKey) bool
+	HandleKey(ev *EventKey) bool
 }
 
 // Node represents a node in the layout/render tree.
@@ -78,7 +74,7 @@ type Node struct {
 	Children []*Node
 }
 
-func (n *Node) Draw(s Screen) {
+func (n *Node) Draw(s *Screen) {
 	if n.Element != nil {
 		n.Element.Render(s, n.Rect)
 	}
@@ -169,18 +165,18 @@ type Style struct {
 	FontUnderline bool
 }
 
-// Apply convert Style to tcell type, uses current color theme by default.
-func (s Style) Apply() tcell.Style {
-	st := tcell.StyleDefault
+// Apply convert Style to TermStyle type, uses current color theme by default.
+func (s Style) Apply() TermStyle {
+	st := StyleDefault
 	if s.FG != "" {
-		st = st.Foreground(tcell.GetColor(s.FG))
+		st = st.Foreground(GetColor(s.FG))
 	} else {
-		st = st.Foreground(tcell.GetColor(Theme.Foreground))
+		st = st.Foreground(GetColor(Theme.Foreground))
 	}
 	if s.BG != "" {
-		st = st.Background(tcell.GetColor(s.BG))
+		st = st.Background(GetColor(s.BG))
 	} else {
-		st = st.Background(tcell.GetColor(Theme.Background))
+		st = st.Background(GetColor(Theme.Background))
 	}
 	if s.FontBold {
 		st = st.Bold(true)
@@ -209,7 +205,7 @@ func (s Style) Merge(parent Style) Style {
 	return ns
 }
 
-func DrawString(s Screen, x, y, w int, str string, style tcell.Style) {
+func DrawString(s *Screen, x, y, w int, str string, style TermStyle) {
 	offset := 0
 	for _, r := range str {
 		if offset >= w {
@@ -240,7 +236,7 @@ func (t *Text) Layout(r Rect) *Node {
 		Rect:    r,
 	}
 }
-func (t *Text) Render(s Screen, rect Rect) {
+func (t *Text) Render(s *Screen, rect Rect) {
 	DrawString(s, rect.X, rect.Y, rect.W, t.Content, t.Style.Apply())
 }
 
@@ -249,9 +245,8 @@ type Button struct {
 	Text    string
 	OnClick func()
 
-	hovered    bool
 	pressed    bool
-	NoFeedback bool // disables visual feedback for hover/press states
+	NoFeedback bool // disables visual feedback for press state
 }
 
 // NewButton creates a new Button with the given label and click handler.
@@ -266,11 +261,8 @@ func (b *Button) Layout(r Rect) *Node {
 		Rect:    r,
 	}
 }
-func (b *Button) Render(s Screen, rect Rect) {
+func (b *Button) Render(s *Screen, rect Rect) {
 	st := b.Style
-	if !b.NoFeedback && b.hovered {
-		st.BG = Theme.Hover
-	}
 	if !b.NoFeedback && b.pressed {
 		st.BG = Theme.Selection
 	}
@@ -278,25 +270,13 @@ func (b *Button) Render(s Screen, rect Rect) {
 	DrawString(s, rect.X, rect.Y, rect.W, label, st.Apply())
 }
 
-func (b *Button) OnMouseEnter() { b.hovered = true }
-
-func (b *Button) OnMouseLeave() {
-	b.hovered = false
-	b.pressed = false // cancel
-}
-
-func (b *Button) OnMouseMove(rx, ry int) {}
-
 func (b *Button) OnMouseDown(x, y int) {
 	b.pressed = true
 }
 
 func (b *Button) OnMouseUp(x, y int) {
-	if b.pressed && b.hovered {
-		// real click
-		if b.OnClick != nil {
-			b.OnClick()
-		}
+	if b.pressed && b.OnClick != nil {
+		b.OnClick()
 	}
 	b.pressed = false
 }
@@ -341,7 +321,7 @@ func (t *Input) Layout(r Rect) *Node {
 	}
 }
 
-func (t *Input) Render(s Screen, rect Rect) {
+func (t *Input) Render(s *Screen, rect Rect) {
 	if t.focused && t.cursor < rect.W {
 		s.ShowCursor(rect.X+t.cursor, rect.Y)
 	}
@@ -378,19 +358,19 @@ func (t *Input) Render(s Screen, rect Rect) {
 
 func (t *Input) OnFocus() { t.focused = true }
 func (t *Input) OnBlur()  { t.focused = false }
-func (t *Input) HandleKey(ev *tcell.EventKey) bool {
+func (t *Input) HandleKey(ev *EventKey) bool {
 	resetSelection := true
 	consumed := true
 	switch ev.Key() {
-	case tcell.KeyLeft:
+	case KeyLeft:
 		if t.cursor > 0 {
 			t.cursor--
 		}
-	case tcell.KeyRight:
+	case KeyRight:
 		if t.cursor < len(t.text) {
 			t.cursor++
 		}
-	case tcell.KeyBackspace, tcell.KeyBackspace2:
+	case KeyBackspace, KeyBackspace2:
 		start, end, ok := t.selection()
 		if ok {
 			t.text = slices.Delete(t.text, start, end)
@@ -402,7 +382,7 @@ func (t *Input) HandleKey(ev *tcell.EventKey) bool {
 		if t.OnChange != nil {
 			t.OnChange()
 		}
-	case tcell.KeyRune:
+	case KeyRune:
 		start, end, ok := t.selection()
 		if ok {
 			t.text = slices.Delete(t.text, start, end)
@@ -414,7 +394,7 @@ func (t *Input) HandleKey(ev *tcell.EventKey) bool {
 		if t.OnChange != nil {
 			t.OnChange()
 		}
-	case tcell.KeyEnter:
+	case KeyEnter:
 		if t.OnCommit != nil {
 			t.OnCommit(string(t.text))
 		}
@@ -442,7 +422,7 @@ func (t *Input) OnMouseDown(x, y int) {
 	}
 }
 
-func (t *Input) OnMouseMove(x, y int) {
+func (t *Input) OnDrag(x, y int) {
 	if t.pressed {
 		t.cursor = t.clampCursor(x)
 		if t.OnChange != nil {
@@ -516,7 +496,7 @@ func (tv *TextViewer) Layout(r Rect) *LayoutNode {
 	}
 }
 
-func (tv *TextViewer) Render(s Screen, rect Rect) {
+func (tv *TextViewer) Render(s *Screen, rect Rect) {
 	tv.height = rect.H
 	start := tv.OffsetY
 	end := min(tv.OffsetY+rect.H, len(tv.Lines))
@@ -602,7 +582,7 @@ func (l *List) Layout(r Rect) *Node {
 	}
 }
 
-func (l *List) Render(s Screen, rect Rect) {
+func (l *List) Render(s *Screen, rect Rect) {
 	for i, item := range l.Items {
 		if i >= rect.H {
 			break
@@ -651,13 +631,13 @@ func (l *List) Len() int {
 	return len(l.Items)
 }
 
-func (l *List) HandleKey(ev *tcell.EventKey) bool {
+func (l *List) HandleKey(ev *EventKey) bool {
 	switch ev.Key() {
-	case tcell.KeyUp, tcell.KeyCtrlP:
+	case KeyUp, KeyCtrlP:
 		l.Prev()
-	case tcell.KeyDown, tcell.KeyCtrlN:
+	case KeyDown, KeyCtrlN:
 		l.Next()
-	case tcell.KeyEnter:
+	case KeyEnter:
 		l.Activate()
 	default:
 		return false
@@ -700,7 +680,7 @@ func (d *Divider) Layout(r Rect) *Node {
 		Rect:    r,
 	}
 }
-func (d *Divider) Render(s Screen, rect Rect) {
+func (d *Divider) Render(s *Screen, rect Rect) {
 	style := Style{FG: Theme.Border}
 	if !d.vertical {
 		for i := range rect.W {
@@ -719,11 +699,11 @@ func (e empty) MinSize() (int, int) { return 0, 0 }
 func (e empty) Layout(r Rect) *Node {
 	return &Node{Element: e, Rect: r}
 }
-func (e empty) Render(Screen, Rect) {}
+func (e empty) Render(*Screen, Rect) {}
 
 // Manager manages the main event loop, rendering, and event dispatching.
 type Manager struct {
-	screen  Screen
+	screen  *Screen
 	root    *Node // root node of the layout tree
 	view    Element
 	overlay *overlay
@@ -731,7 +711,6 @@ type Manager struct {
 	// hit test
 	clickPoint Point
 	focused    Element
-	hover      Element
 
 	bindings map[string]func()
 	done     chan struct{}
@@ -744,10 +723,10 @@ func NewManager() *Manager {
 	}
 }
 
-// Screen returns the tcell Screen instance for direct access to terminal features.
+// Screen returns the Screen instance for direct access to terminal features.
 // This method should only be called after Start() has been invoked, as the screen
 // is initialized during the Start() process.
-func (m *Manager) Screen() Screen {
+func (m *Manager) Screen() *Screen {
 	return m.screen
 }
 
@@ -866,13 +845,13 @@ func (m *Manager) resolveFocus(e Element) Element {
 // Refresh requests a redraw of the UI
 func (m *Manager) Refresh() {
 	// sends an empty event, wakes screen.PollEvent()
-	m.screen.PostEvent(tcell.NewEventInterrupt(nil))
+	m.screen.PostEvent(NewEventInterrupt(nil))
 }
 
 // Start starts the main event loop
 func (m *Manager) Start(view Element) error {
 	m.view = view
-	screen, err := tcell.NewScreen()
+	screen, err := NewScreen()
 	if err != nil {
 		return err
 	}
@@ -885,10 +864,10 @@ func (m *Manager) Start(view Element) error {
 	screen.EnableMouse()
 
 	redraw := func() {
-		screen.SetCursorStyle(tcell.CursorStyleDefault, tcell.GetColor(Theme.Cursor))
+		screen.SetCursorStyle(CursorSteadyBlock, GetColor(Theme.Cursor))
 		screen.Fill(' ', Style{}.Apply())
 		m.Render()
-		screen.Show()
+		screen.Sync()
 	}
 
 	redraw()
@@ -905,16 +884,15 @@ func (m *Manager) Start(view Element) error {
 		}
 
 		switch ev := ev.(type) {
-		case *tcell.EventInterrupt:
+		case *EventInterrupt:
 			// waken by Refresh() or Stop()
 			dirty = true
-		case *tcell.EventResize:
+		case *EventResize:
 			dirty = true
-			screen.Sync()
-		case *tcell.EventKey:
+		case *EventKey:
 			m.handleKey(ev)
 			dirty = true
-		case *tcell.EventMouse:
+		case *EventMouse:
 			dirty = m.handleMouse(ev)
 		}
 
@@ -936,7 +914,7 @@ func (m *Manager) Stop() {
 		close(m.done)
 		// Wake up the event loop if it's blocked in PollEvent
 		if m.screen != nil {
-			m.screen.PostEvent(tcell.NewEventInterrupt(nil))
+			m.screen.PostEvent(NewEventInterrupt(nil))
 		}
 	}
 }
@@ -951,7 +929,7 @@ func (m *Manager) BindKey(key string, action func()) {
 	m.bindings[key] = action
 }
 
-func (m *Manager) handleKey(ev *tcell.EventKey) {
+func (m *Manager) handleKey(ev *EventKey) {
 	Logger.Printf("key %s", ev.Name())
 	// 1. Give the focused element first chance to handle the key event
 	if m.focused != nil {
@@ -963,7 +941,7 @@ func (m *Manager) handleKey(ev *tcell.EventKey) {
 	}
 
 	// 2. Framework-level automatic dismissal
-	if ev.Key() == tcell.KeyESC && m.overlay != nil {
+	if ev.Key() == KeyESC && m.overlay != nil {
 		m.CloseOverlay()
 		return
 	}
@@ -977,7 +955,7 @@ func (m *Manager) handleKey(ev *tcell.EventKey) {
 }
 
 // Returns true if the event caused state changes that require a redraw.
-func (m *Manager) handleMouse(ev *tcell.EventMouse) bool {
+func (m *Manager) handleMouse(ev *EventMouse) bool {
 	x, y := ev.Position()
 	hit, local := hitTest(m.root, Point{X: x, Y: y})
 	if hit == nil {
@@ -985,64 +963,51 @@ func (m *Manager) handleMouse(ev *tcell.EventMouse) bool {
 	}
 	lx, ly := local.X, local.Y
 
-	dirty := m.updateHover(hit, lx, ly)
+	dirty := false
 
 	switch ev.Buttons() {
-	case tcell.ButtonPrimary:
-		prevFocus := m.focused
-		m.SetFocus(hit)
-		if prevFocus != m.focused {
-			dirty = true
+	case ButtonPrimary:
+		// Check if this is initial press or drag motion
+		if m.clickPoint != (Point{}) {
+			// Button was already down - this is a drag motion event
+			if d, ok := m.focused.(Draggable); ok {
+				d.OnDrag(lx, ly)
+				dirty = true
+			}
+			m.clickPoint = Point{X: x, Y: y} // Update for next motion
+		} else {
+			// Initial mouse down
+			prevFocus := m.focused
+			m.SetFocus(hit)
+			if prevFocus != m.focused {
+				dirty = true
+			}
+			m.clickPoint = Point{X: x, Y: y}
+			if i, ok := hit.(Clickable); ok {
+				i.OnMouseDown(lx, ly)
+				dirty = true
+			}
 		}
-		m.clickPoint = Point{X: x, Y: y}
-		// mouse down
+	case ButtonNone:
+		// mouse up
+		m.clickPoint = Point{} // Reset click point
 		if i, ok := hit.(Clickable); ok {
-			i.OnMouseDown(lx, ly)
+			i.OnMouseUp(lx, ly)
 			dirty = true
 		}
-	case tcell.WheelUp:
+	case WheelUp:
 		if i, ok := hit.(Scrollable); ok {
 			i.OnScroll(-2)
 			dirty = true
 		}
-	case tcell.WheelDown:
+	case WheelDown:
 		if i, ok := hit.(Scrollable); ok {
 			i.OnScroll(2)
 			dirty = true
 		}
-	case tcell.ButtonNone:
-		// mouse up
-		if x == m.clickPoint.X && y == m.clickPoint.Y {
-			if i, ok := hit.(Clickable); ok {
-				i.OnMouseUp(lx, ly)
-				dirty = true
-			}
-		}
 	}
 
 	return dirty
-}
-
-// Returns true if hover state changed.
-func (m *Manager) updateHover(e Element, lx, ly int) bool {
-	changed := false
-	if m.hover != e {
-		if h, ok := m.hover.(Hoverable); ok {
-			changed = true
-			h.OnMouseLeave()
-		}
-		if h, ok := e.(Hoverable); ok {
-			changed = true
-			h.OnMouseEnter()
-		}
-		m.hover = e
-	}
-
-	if h, ok := e.(Hoverable); ok {
-		h.OnMouseMove(lx, ly)
-	}
-
-	return changed
 }
 
 // Overlay displays an overlay element over the main layout

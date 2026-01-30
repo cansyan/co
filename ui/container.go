@@ -61,7 +61,7 @@ func (d decorator) Layout(r Rect) *Node {
 	return node
 }
 
-func (d decorator) Render(screen Screen, rect Rect) {
+func (d decorator) Render(screen *Screen, rect Rect) {
 	if d.border {
 		drawBorder(screen, rect)
 	}
@@ -219,7 +219,7 @@ func (v *vstack) Layout(r Rect) *Node {
 	return n
 }
 
-func (v *vstack) Render(s Screen, rect Rect) {
+func (v *vstack) Render(s *Screen, rect Rect) {
 	// no-op
 }
 
@@ -312,7 +312,7 @@ func (hs *hstack) Layout(r Rect) *Node {
 	return n
 }
 
-func (hs *hstack) Render(s Screen, rect Rect) {
+func (hs *hstack) Render(s *Screen, rect Rect) {
 	// no-op
 }
 
@@ -333,7 +333,7 @@ const (
 	cornerBotRight = '┘'
 )
 
-func drawBorder(s Screen, rect Rect) {
+func drawBorder(s *Screen, rect Rect) {
 	// Too small to draw a border
 	if rect.W < 2 || rect.H < 2 {
 		return
@@ -358,7 +358,7 @@ func drawBorder(s Screen, rect Rect) {
 }
 
 // ResetRect resets the content of the given rectangle to the specified style.
-func ResetRect(s Screen, rect Rect, style Style) {
+func ResetRect(s *Screen, rect Rect, style Style) {
 	st := style.Apply()
 	for x := rect.X; x < rect.X+rect.W; x++ {
 		for y := rect.Y; y < rect.Y+rect.H; y++ {
@@ -397,25 +397,15 @@ func (o *overlay) Layout(r Rect) *Node {
 	return node
 }
 
-func (o *overlay) Render(s Screen, rect Rect) {
+func (o *overlay) Render(s *Screen, rect Rect) {
 	ResetRect(s, rect, Style{})
 }
 
 /*
 type TabItem struct {
-	t       *TabView
-	label   string
-	body    Element
-	hovered bool
-}
-
-func (ti *TabItem) OnMouseEnter() {
-	ti.hovered = true
-}
-func (ti *TabItem) OnMouseLeave() {
-	ti.hovered = false
-}
-func (ti *TabItem) OnMouseMove(rx, ry int) {
+	t     *TabView
+	label string
+	body  Element
 }
 
 func (ti *TabItem) OnMouseUp(rx, ry int) {}
@@ -439,12 +429,10 @@ func (ti *TabItem) Layout(r Rect) *LayoutNode {
 	}
 }
 
-func (ti *TabItem) Render(s Screen, rect Rect) {
+func (ti *TabItem) Render(s *Screen, rect Rect) {
 	var st Style
 	if ti == ti.t.items[ti.t.active] {
 		st.FontUnderline = true
-	} else if ti.hovered {
-		st.BG = Theme.Hover
 	}
 	DrawString(s, rect.X, rect.Y, rect.W, ti.label, st.Apply())
 }
@@ -517,7 +505,7 @@ func (t *TabView) Layout(r Rect) *LayoutNode {
 	return n
 }
 
-func (t *TabView) Render(s Screen, rect Rect) {
+func (t *TabView) Render(s *Screen, rect Rect) {
 	// do nothing, children render themselves
 }
 
