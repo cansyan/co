@@ -635,17 +635,6 @@ func (l *List) OnMouseDown(x, y int) {
 
 func (l *List) OnMouseUp(x, y int) {}
 
-// to avoid confusion with selection, no hover change on mouse move
-// func (l *List) OnMouseMove(x, y int) {
-// 	if y >= 0 && y < len(l.Items) {
-// 		l.Index = y
-// 	} else {
-// 		l.Index = -1
-// 	}
-// }
-// func (l *List) OnMouseEnter() {}
-// func (l *List) OnMouseLeave() { l.Index = -1 }
-
 func (l *List) OnFocus() {}
 func (l *List) OnBlur()  {}
 

@@ -390,14 +390,7 @@ func (a *App) getEditor() *Editor {
 }
 
 func (a *App) showPalette(prefix string) {
-	p := &Palette{
-		list: new(ui.List),
-	}
-	// Use proxyInput to delegate key handling to Palette
-	p.input = &proxyInput{
-		Input:  new(ui.Input),
-		parent: p,
-	}
+	p := NewPalette()
 	p.input.OnChange = func() {
 		text := p.input.String()
 		p.list.Clear()
@@ -960,6 +953,18 @@ func (t *tab) OnMouseMove(rx, ry int) {}
 type Palette struct {
 	input *proxyInput
 	list  *ui.List
+}
+
+func NewPalette() *Palette {
+	p := &Palette{
+		list: new(ui.List),
+	}
+	// Use proxyInput to delegate key handling to Palette
+	p.input = &proxyInput{
+		Input:  new(ui.Input),
+		parent: p,
+	}
+	return p
 }
 
 func (p *Palette) SetText(text string) {
