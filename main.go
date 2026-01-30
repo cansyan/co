@@ -126,7 +126,7 @@ func newApp(m *ui.Manager) *App {
 		historyPos: -1,
 	}
 	a.newBtn = &ui.Button{
-		Text: "＋",
+		Text: "New",
 		OnClick: func() {
 			a.newTab("untitled")
 			m.SetFocus(a)
