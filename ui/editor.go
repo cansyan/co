@@ -154,7 +154,7 @@ func (e *Editor) adjustCol() {
 	}
 }
 
-func (e *Editor) MinSize() (int, int) {
+func (e *Editor) Size() (int, int) {
 	// Fixed width: 5 columns for line numbers, 20 for content
 	return 25, 5
 }
@@ -249,7 +249,7 @@ func (e *Editor) drawRune(s tcell.Screen, x, y int, maxWidth int, r rune, visual
 	return w
 }
 
-func (e *Editor) Render(s Screen, rect Rect) {
+func (e *Editor) Draw(s Screen, rect Rect) {
 	e.viewH = rect.H
 
 	// Calculate line number column width
@@ -292,7 +292,7 @@ func (e *Editor) Render(s Screen, rect Rect) {
 			lnStyle.BG = Theme.Selection
 		}
 		numStr := fmt.Sprintf("%*d  ", lineNumWidth-1, row+1)
-		DrawString(s, rect.X, y, lineNumWidth, numStr, lnStyle.Apply())
+		DrawString(s, rect.X, y, lineNumWidth, numStr, lnStyle)
 
 		// Draw line content
 		e.renderLine(s, contentX, y, contentW, row, line)

@@ -223,10 +223,10 @@ func (a *App) deleteTab(i int) {
 	}
 }
 
-func (a *App) MinSize() (int, int) {
+func (a *App) Size() (int, int) {
 	var maxW, maxH int
 	for _, t := range a.tabs {
-		w, h := t.editor.MinSize()
+		w, h := t.editor.Size()
 		if w > maxW {
 			maxW = w
 		}
@@ -296,7 +296,7 @@ func (a *App) setStatus(msg string, delay time.Duration) {
 	})
 }
 
-func (a *App) Render(ui.Screen, ui.Rect) {
+func (a *App) Draw(ui.Screen, ui.Rect) {
 	// no-op
 }
 
@@ -897,9 +897,9 @@ func newTab(root *App, label string) *tab {
 
 const tabItemWidth = 18
 
-func (t *tab) MinSize() (int, int) { return tabItemWidth, 1 }
+func (t *tab) Size() (int, int) { return tabItemWidth, 1 }
 func (t *tab) Layout(r ui.Rect) *ui.Node {
-	bw, bh := t.closeBtn.MinSize()
+	bw, bh := t.closeBtn.Size()
 	return &ui.Node{
 		Element: t,
 		Rect:    r,
@@ -908,7 +908,7 @@ func (t *tab) Layout(r ui.Rect) *ui.Node {
 		},
 	}
 }
-func (t *tab) Render(screen ui.Screen, r ui.Rect) {
+func (t *tab) Draw(screen ui.Screen, r ui.Rect) {
 	style := ui.Theme.Syntax.Comment
 	if t == t.a.tabs[t.a.activeTab] {
 		style.FG = ui.Theme.Foreground
@@ -927,7 +927,7 @@ func (t *tab) Render(screen ui.Screen, r ui.Rect) {
 		label = runewidth.Truncate(label, labelWidth, "…")
 	}
 	label = fmt.Sprintf(" %s", label)
-	ui.DrawString(screen, r.X, r.Y, r.W, label, style.Apply())
+	ui.DrawString(screen, r.X, r.Y, r.W, label, style)
 }
 
 func (t *tab) OnMouseDown(lx, ly int) {
@@ -972,10 +972,10 @@ func (p *Palette) SetText(text string) {
 	p.input.OnFocus()
 }
 
-func (p *Palette) MinSize() (int, int) {
+func (p *Palette) Size() (int, int) {
 	w1, h1 := 60, 1 // input box size
 	// avoid full screen list items
-	_, h2 := p.list.MinSize()
+	_, h2 := p.list.Size()
 	if h2 > 15 {
 		h2 = 15
 	}
@@ -994,7 +994,7 @@ func (p *Palette) Layout(r ui.Rect) *ui.Node {
 	}
 }
 
-func (p *Palette) Render(ui.Screen, ui.Rect) {
+func (p *Palette) Draw(ui.Screen, ui.Rect) {
 	// no-op
 }
 
@@ -1241,11 +1241,11 @@ func (sb *SearchBar) Layout(r ui.Rect) *ui.Node {
 	}
 }
 
-func (sb *SearchBar) MinSize() (int, int) {
+func (sb *SearchBar) Size() (int, int) {
 	return 10, 1
 }
 
-func (sb *SearchBar) Render(s ui.Screen, r ui.Rect) {}
+func (sb *SearchBar) Draw(s ui.Screen, r ui.Rect) {}
 
 func (sb *SearchBar) HandleKey(ev *tcell.EventKey) bool {
 	consumed := true

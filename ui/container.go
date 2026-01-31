@@ -14,8 +14,8 @@ type decorator struct {
 	border                 bool
 }
 
-func (d decorator) MinSize() (w, h int) {
-	mw, mh := d.Element.MinSize()
+func (d decorator) Size() (w, h int) {
+	mw, mh := d.Element.Size()
 
 	mw += d.padL + d.padR
 	mh += d.padT + d.padB
@@ -61,7 +61,7 @@ func (d decorator) Layout(r Rect) *Node {
 	return node
 }
 
-func (d decorator) Render(screen Screen, rect Rect) {
+func (d decorator) Draw(screen Screen, rect Rect) {
 	if d.border {
 		drawBorder(screen, rect)
 	}
@@ -152,10 +152,10 @@ func VStack(children ...Element) *vstack {
 	return v
 }
 
-func (v *vstack) MinSize() (int, int) {
+func (v *vstack) Size() (int, int) {
 	maxW, totalH := 0, 0
 	for i, child := range v.children {
-		cw, ch := child.MinSize()
+		cw, ch := child.Size()
 		if cw > maxW {
 			maxW = cw
 		}
@@ -177,7 +177,7 @@ func (v *vstack) Layout(r Rect) *Node {
 		if d, ok := child.(decorator); ok && d.grow > 0 {
 			totalGrow += d.grow
 		} else {
-			_, ch := child.MinSize()
+			_, ch := child.Size()
 			totalH += ch
 		}
 	}
@@ -195,7 +195,7 @@ func (v *vstack) Layout(r Rect) *Node {
 		if d, ok := child.(*Divider); ok {
 			d.vertical = false
 		}
-		_, ch := child.MinSize()
+		_, ch := child.Size()
 		if d, ok := child.(decorator); ok && d.grow > 0 {
 			expand := int(math.Ceil(float64(d.grow) * share))
 			if expand > spare {
@@ -219,7 +219,7 @@ func (v *vstack) Layout(r Rect) *Node {
 	return n
 }
 
-func (v *vstack) Render(s Screen, rect Rect) {
+func (v *vstack) Draw(s Screen, rect Rect) {
 	// no-op
 }
 
@@ -248,10 +248,10 @@ func HStack(children ...Element) *hstack {
 	return h
 }
 
-func (hs *hstack) MinSize() (int, int) {
+func (hs *hstack) Size() (int, int) {
 	totalW, maxH := 0, 0
 	for i, child := range hs.children {
-		cw, ch := child.MinSize()
+		cw, ch := child.Size()
 		totalW += cw
 		if ch > maxH {
 			maxH = ch
@@ -273,7 +273,7 @@ func (hs *hstack) Layout(r Rect) *Node {
 		if d, ok := child.(decorator); ok && d.grow > 0 {
 			totalGrow += d.grow
 		} else {
-			cw, _ := child.MinSize()
+			cw, _ := child.Size()
 			totalWidth += cw
 		}
 	}
@@ -291,7 +291,7 @@ func (hs *hstack) Layout(r Rect) *Node {
 		if div, ok := child.(*Divider); ok {
 			div.vertical = true
 		}
-		cw, _ := child.MinSize()
+		cw, _ := child.Size()
 		if d, ok := child.(decorator); ok && d.grow > 0 {
 			expand := min(int(math.Ceil(float64(d.grow)*share)), remain)
 			cw = expand
@@ -312,7 +312,7 @@ func (hs *hstack) Layout(r Rect) *Node {
 	return n
 }
 
-func (hs *hstack) Render(s Screen, rect Rect) {
+func (hs *hstack) Draw(s Screen, rect Rect) {
 	// no-op
 }
 
@@ -376,12 +376,12 @@ type overlay struct {
 	prevFocus Element
 }
 
-func (o *overlay) MinSize() (int, int) {
-	return o.child.MinSize()
+func (o *overlay) Size() (int, int) {
+	return o.child.Size()
 }
 
 func (o *overlay) Layout(r Rect) *Node {
-	cw, ch := o.child.MinSize()
+	cw, ch := o.child.Size()
 	x, y := r.X, r.Y
 	switch o.align {
 	case "center":
@@ -397,7 +397,7 @@ func (o *overlay) Layout(r Rect) *Node {
 	return node
 }
 
-func (o *overlay) Render(s Screen, rect Rect) {
+func (o *overlay) Draw(s Screen, rect Rect) {
 	ResetRect(s, rect, Style{})
 }
 

@@ -21,14 +21,14 @@ var Logger = log.New(io.Discard, "", 0)
 
 // Element is the interface implemented by all UI elements.
 type Element interface {
-	// MinSize returns the minimum width and height required by the element.
-	MinSize() (w, h int)
+	// Size returns the minimum width and height required by the element.
+	Size() (w, h int)
 
 	// Layout builds the layout node for the element
 	Layout(Rect) *Node
 
-	// Render draws the element's visual representation onto the screen.
-	Render(s Screen, rect Rect)
+	// Draw draws the element's visual representation onto the screen.
+	Draw(s Screen, rect Rect)
 }
 
 // Hoverable represents an element that can respond to mouse hover.
@@ -80,7 +80,7 @@ type Node struct {
 
 func (n *Node) Draw(s Screen) {
 	if n.Element != nil {
-		n.Element.Render(s, n.Rect)
+		n.Element.Draw(s, n.Rect)
 	}
 	for _, child := range n.Children {
 		if child == nil {
@@ -209,14 +209,20 @@ func (s Style) Merge(parent Style) Style {
 	return ns
 }
 
-func DrawString(s Screen, x, y, w int, str string, style tcell.Style) {
+// DrawString draws the given string at (x, y) within width w using the specified style.
+func DrawString(s Screen, x, y, w int, str string, style Style) {
+	st := style.Apply()
 	offset := 0
 	for _, r := range str {
-		if offset >= w {
+		rw := runewidth.RuneWidth(r)
+		// Prevent wide characters from overflowing the boundary
+		if rw > 0 && offset+rw > w {
 			break
 		}
-		s.SetContent(x+offset, y, r, nil, style)
-		offset += runewidth.RuneWidth(r)
+		s.SetContent(x+offset, y, r, nil, st)
+		if rw > 0 {
+			offset += rw
+		}
 	}
 }
 
@@ -233,15 +239,15 @@ func NewText(text string) *Text {
 	return &Text{Content: text}
 }
 
-func (t *Text) MinSize() (int, int) { return runewidth.StringWidth(t.Content), 1 }
+func (t *Text) Size() (int, int) { return runewidth.StringWidth(t.Content), 1 }
 func (t *Text) Layout(r Rect) *Node {
 	return &Node{
 		Element: t,
 		Rect:    r,
 	}
 }
-func (t *Text) Render(s Screen, rect Rect) {
-	DrawString(s, rect.X, rect.Y, rect.W, t.Content, t.Style.Apply())
+func (t *Text) Draw(s Screen, rect Rect) {
+	DrawString(s, rect.X, rect.Y, rect.W, t.Content, t.Style)
 }
 
 type Button struct {
@@ -259,14 +265,14 @@ func NewButton(text string, onClick func()) *Button {
 	return &Button{Text: text, OnClick: onClick}
 }
 
-func (b *Button) MinSize() (int, int) { return runewidth.StringWidth(b.Text) + 2, 1 }
+func (b *Button) Size() (int, int) { return runewidth.StringWidth(b.Text) + 2, 1 }
 func (b *Button) Layout(r Rect) *Node {
 	return &Node{
 		Element: b,
 		Rect:    r,
 	}
 }
-func (b *Button) Render(s Screen, rect Rect) {
+func (b *Button) Draw(s Screen, rect Rect) {
 	st := b.Style
 	if !b.NoFeedback && b.hovered {
 		st.BG = Theme.Hover
@@ -275,7 +281,7 @@ func (b *Button) Render(s Screen, rect Rect) {
 		st.BG = Theme.Selection
 	}
 	label := " " + b.Text + " "
-	DrawString(s, rect.X, rect.Y, rect.W, label, st.Apply())
+	DrawString(s, rect.X, rect.Y, rect.W, label, st)
 }
 
 func (b *Button) OnMouseEnter() { b.hovered = true }
@@ -330,7 +336,7 @@ func (t *Input) SetText(s string) {
 	}
 }
 
-func (t *Input) MinSize() (int, int) {
+func (t *Input) Size() (int, int) {
 	return 10, 1
 }
 
@@ -341,13 +347,13 @@ func (t *Input) Layout(r Rect) *Node {
 	}
 }
 
-func (t *Input) Render(s Screen, rect Rect) {
+func (t *Input) Draw(s Screen, rect Rect) {
 	if t.focused && t.cursor < rect.W {
 		s.ShowCursor(rect.X+t.cursor, rect.Y)
 	}
 	// placeholder
 	if len(t.text) == 0 {
-		DrawString(s, rect.X, rect.Y, rect.W, t.Placeholder, Theme.Syntax.Comment.Apply())
+		DrawString(s, rect.X, rect.Y, rect.W, t.Placeholder, Theme.Syntax.Comment)
 		return
 	}
 
@@ -370,7 +376,7 @@ func (t *Input) Render(s Screen, rect Rect) {
 		xOffset += runewidth.RuneWidth(r)
 	}
 
-	// 如果文字不夠長，補足剩餘背景
+	// fill remaining space
 	for x := xOffset; x < rect.W; x++ {
 		s.SetContent(rect.X+x, rect.Y, ' ', nil, baseStyle)
 	}
@@ -585,7 +591,7 @@ type ListItem struct {
 	Value any
 }
 
-func (l *List) MinSize() (int, int) {
+func (l *List) Size() (int, int) {
 	maxW := 10
 	for _, it := range l.Items {
 		if w := runewidth.StringWidth(it.Name); w > maxW {
@@ -602,7 +608,7 @@ func (l *List) Layout(r Rect) *Node {
 	}
 }
 
-func (l *List) Render(s Screen, rect Rect) {
+func (l *List) Draw(s Screen, rect Rect) {
 	for i, item := range l.Items {
 		if i >= rect.H {
 			break
@@ -620,7 +626,7 @@ func (l *List) Render(s Screen, rect Rect) {
 		} else {
 			label = runewidth.FillRight(label, rect.W)
 		}
-		DrawString(s, rect.X, rect.Y+i, rect.W, label, st.Apply())
+		DrawString(s, rect.X, rect.Y+i, rect.W, label, st)
 	}
 }
 
@@ -693,14 +699,14 @@ type Divider struct {
 	vertical bool
 }
 
-func (d *Divider) MinSize() (w, h int) { return 1, 1 }
+func (d *Divider) Size() (w, h int) { return 1, 1 }
 func (d *Divider) Layout(r Rect) *Node {
 	return &Node{
 		Element: d,
 		Rect:    r,
 	}
 }
-func (d *Divider) Render(s Screen, rect Rect) {
+func (d *Divider) Draw(s Screen, rect Rect) {
 	style := Style{FG: Theme.Border}
 	if !d.vertical {
 		for i := range rect.W {
@@ -715,11 +721,11 @@ func (d *Divider) Render(s Screen, rect Rect) {
 
 type empty struct{}
 
-func (e empty) MinSize() (int, int) { return 0, 0 }
+func (e empty) Size() (int, int) { return 0, 0 }
 func (e empty) Layout(r Rect) *Node {
 	return &Node{Element: e, Rect: r}
 }
-func (e empty) Render(Screen, Rect) {}
+func (e empty) Draw(Screen, Rect) {}
 
 // Manager manages the main event loop, rendering, and event dispatching.
 type Manager struct {
