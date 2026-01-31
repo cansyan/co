@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"slices"
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
@@ -161,6 +160,11 @@ type Rect struct {
 	X, Y, W, H int
 }
 
+// Contains returns true if (x, y) is inside the rectangle.
+func (r Rect) Contains(x, y int) bool {
+	return r.X <= x && x < r.X+r.W && r.Y <= y && y < r.Y+r.H
+}
+
 type Style struct {
 	FG            string // foreground
 	BG            string // background
@@ -226,507 +230,6 @@ func DrawString(s Screen, x, y, w int, str string, style Style) {
 	}
 }
 
-// ---------------------------------------------------------------------
-// components
-// ---------------------------------------------------------------------
-
-type Text struct {
-	Style   Style
-	Content string
-}
-
-func NewText(text string) *Text {
-	return &Text{Content: text}
-}
-
-func (t *Text) Size() (int, int) { return runewidth.StringWidth(t.Content), 1 }
-func (t *Text) Layout(r Rect) *Node {
-	return &Node{
-		Element: t,
-		Rect:    r,
-	}
-}
-func (t *Text) Draw(s Screen, rect Rect) {
-	DrawString(s, rect.X, rect.Y, rect.W, t.Content, t.Style)
-}
-
-type Button struct {
-	Style   Style
-	Text    string
-	OnClick func()
-
-	hovered    bool
-	pressed    bool
-	NoFeedback bool // disables visual feedback for hover/press states
-}
-
-// NewButton creates a new Button with the given label and click handler.
-func NewButton(text string, onClick func()) *Button {
-	return &Button{Text: text, OnClick: onClick}
-}
-
-func (b *Button) Size() (int, int) { return runewidth.StringWidth(b.Text) + 2, 1 }
-func (b *Button) Layout(r Rect) *Node {
-	return &Node{
-		Element: b,
-		Rect:    r,
-	}
-}
-func (b *Button) Draw(s Screen, rect Rect) {
-	st := b.Style
-	if !b.NoFeedback && b.hovered {
-		st.BG = Theme.Hover
-	}
-	if !b.NoFeedback && b.pressed {
-		st.BG = Theme.Selection
-	}
-	label := " " + b.Text + " "
-	DrawString(s, rect.X, rect.Y, rect.W, label, st)
-}
-
-func (b *Button) OnMouseEnter() { b.hovered = true }
-
-func (b *Button) OnMouseLeave() {
-	b.hovered = false
-	b.pressed = false // cancel
-}
-
-func (b *Button) OnMouseMove(rx, ry int) {}
-
-func (b *Button) OnMouseDown(x, y int) {
-	b.pressed = true
-}
-
-func (b *Button) OnMouseUp(x, y int) {
-	if b.pressed && b.hovered {
-		// real click
-		if b.OnClick != nil {
-			b.OnClick()
-		}
-	}
-	b.pressed = false
-}
-
-// Input is a single-line text input field.
-// The zero value for Input is ready to use.
-type Input struct {
-	text    []rune
-	cursor  int // cursor position; also selection end
-	anchor  int // selection start (rune index)
-	pressed bool
-	focused bool
-
-	Placeholder string
-	OnChange    func()
-	OnCommit    func(string) // called when Enter is pressed, with current text
-	Style       Style
-}
-
-// String returns the current text content
-func (t *Input) String() string {
-	return string(t.text)
-}
-
-func (t *Input) SetText(s string) {
-	t.text = []rune(s)
-	t.cursor = len(t.text)
-	t.anchor = t.cursor
-	if t.OnChange != nil {
-		t.OnChange()
-	}
-}
-
-func (t *Input) Size() (int, int) {
-	return 10, 1
-}
-
-func (t *Input) Layout(r Rect) *Node {
-	return &Node{
-		Element: t,
-		Rect:    r,
-	}
-}
-
-func (t *Input) Draw(s Screen, rect Rect) {
-	if t.focused && t.cursor < rect.W {
-		s.ShowCursor(rect.X+t.cursor, rect.Y)
-	}
-	// placeholder
-	if len(t.text) == 0 {
-		DrawString(s, rect.X, rect.Y, rect.W, t.Placeholder, Theme.Syntax.Comment)
-		return
-	}
-
-	start, end, hasSel := t.selection()
-	baseStyle := t.Style.Apply()
-	selStyle := t.Style.Merge(Style{BG: Theme.Selection}).Apply()
-
-	xOffset := 0
-	for i, r := range t.text {
-		if xOffset >= rect.W {
-			break
-		}
-
-		st := baseStyle
-		if hasSel && i >= start && i < end {
-			st = selStyle
-		}
-
-		s.SetContent(rect.X+xOffset, rect.Y, r, nil, st)
-		xOffset += runewidth.RuneWidth(r)
-	}
-
-	// fill remaining space
-	for x := xOffset; x < rect.W; x++ {
-		s.SetContent(rect.X+x, rect.Y, ' ', nil, baseStyle)
-	}
-}
-
-func (t *Input) OnFocus() { t.focused = true }
-func (t *Input) OnBlur()  { t.focused = false }
-func (t *Input) HandleKey(ev *tcell.EventKey) bool {
-	resetSelection := true
-	consumed := true
-	switch ev.Key() {
-	case tcell.KeyLeft:
-		if t.cursor > 0 {
-			t.cursor--
-		}
-	case tcell.KeyRight:
-		if t.cursor < len(t.text) {
-			t.cursor++
-		}
-	case tcell.KeyBackspace, tcell.KeyBackspace2:
-		start, end, ok := t.selection()
-		if ok {
-			t.text = slices.Delete(t.text, start, end)
-			t.cursor = start
-		} else if t.cursor > 0 {
-			t.text = slices.Delete(t.text, t.cursor-1, t.cursor)
-			t.cursor--
-		}
-		if t.OnChange != nil {
-			t.OnChange()
-		}
-	case tcell.KeyRune:
-		start, end, ok := t.selection()
-		if ok {
-			t.text = slices.Delete(t.text, start, end)
-			t.cursor = start
-		}
-		r := ev.Rune()
-		t.text = slices.Insert(t.text, t.cursor, r)
-		t.cursor++
-		if t.OnChange != nil {
-			t.OnChange()
-		}
-	case tcell.KeyEnter:
-		if t.OnCommit != nil {
-			t.OnCommit(string(t.text))
-		}
-	default:
-		consumed = false
-	}
-
-	if resetSelection && !t.pressed {
-		t.anchor = t.cursor
-	}
-	return consumed
-}
-
-func (t *Input) OnMouseDown(x, y int) {
-	if x < 0 {
-		x = 0
-	}
-	if x > len(t.text) {
-		x = len(t.text)
-	}
-	t.cursor = x
-	if !t.pressed {
-		t.pressed = true
-		t.anchor = x
-	}
-}
-
-func (t *Input) OnMouseMove(x, y int) {
-	if t.pressed {
-		t.cursor = t.clampCursor(x)
-		if t.OnChange != nil {
-			t.OnChange()
-		}
-	}
-}
-
-func (t *Input) OnMouseUp(x, y int) {
-	t.pressed = false
-}
-
-func (t *Input) clampCursor(x int) int {
-	if x < 0 {
-		return 0
-	}
-	if x > len(t.text) {
-		return len(t.text)
-	}
-	return x
-}
-
-func (t *Input) Select(start, end int) {
-	t.anchor = start
-	t.cursor = end
-}
-
-// Returns the normalized selection range (start <= end)
-func (t *Input) selection() (int, int, bool) {
-	if t.anchor == t.cursor {
-		return 0, 0, false
-	}
-	start, end := t.anchor, t.cursor
-	if start > end {
-		start, end = end, start
-	}
-	return start, end, true
-}
-
-/*
-// TextViewer is a non-editable text viewer,
-// supports multiple lines, scrolling and following tail.
-type TextViewer struct {
-	Style
-	Lines    []string
-	OffsetY  int
-	AutoTail bool
-	height   int
-	onChange func()
-}
-
-func NewTextViewer(s string) *TextViewer {
-	tv := &TextViewer{AutoTail: true}
-	if s != "" {
-		if s[len(s)-1] == '\n' {
-			s = s[:len(s)-1]
-		}
-		tv.Lines = strings.Split(s, "\n")
-	}
-	return tv
-}
-
-func (tv *TextViewer) MinSize() (int, int) {
-	return 25, 1 // let layout decide the height
-}
-
-func (tv *TextViewer) Layout(r Rect) *LayoutNode {
-	return &LayoutNode{
-		Element: tv,
-		Rect:    r,
-	}
-}
-
-func (tv *TextViewer) Render(s Screen, rect Rect) {
-	tv.height = rect.H
-	start := tv.OffsetY
-	end := min(tv.OffsetY+rect.H, len(tv.Lines))
-	y := rect.Y
-	for i := start; i < end; i++ {
-		DrawString(s, rect.X, y, rect.W, tv.Lines[i], tv.Style.Apply())
-		y++
-	}
-}
-
-func (tv *TextViewer) OnScroll(dy int) {
-	old := tv.OffsetY
-	if len(tv.Lines) <= tv.height {
-		tv.OffsetY = 0
-	} else if dy < 0 {
-		// scroll down
-		tv.OffsetY = max(tv.OffsetY+dy, 0)
-	} else {
-		// scroll up
-		tv.OffsetY = min(tv.OffsetY+dy, len(tv.Lines)-tv.height)
-	}
-
-	// ones scroll and not at the end of file, stop following tail
-	if tv.OffsetY >= len(tv.Lines)-tv.height {
-		tv.AutoTail = true
-	} else if tv.OffsetY != old {
-		tv.AutoTail = false
-	}
-
-	if tv.onChange != nil {
-		tv.onChange()
-	}
-}
-
-func (tv *TextViewer) Write(p []byte) (int, error) {
-	if len(p) == 0 {
-		return 0, nil
-	}
-
-	if p[len(p)-1] == '\n' {
-		// do not append newline
-		p = p[:len(p)-1]
-	}
-	lines := strings.Split(string(p), "\n")
-	tv.Lines = append(tv.Lines, lines...)
-	if tv.AutoTail {
-		tv.OffsetY = max(0, len(tv.Lines)-tv.height)
-	}
-	if tv.onChange != nil {
-		tv.onChange()
-	}
-	return len(p), nil
-}
-*/
-
-// List displays a vertical list of items.
-// The zero value is ready to use.
-type List struct {
-	Items    []ListItem
-	Index    int // current selected index, -1 means none
-	OnSelect func(ListItem)
-}
-
-type ListItem struct {
-	Name  string
-	Value any
-}
-
-func (l *List) Size() (int, int) {
-	maxW := 10
-	for _, it := range l.Items {
-		if w := runewidth.StringWidth(it.Name); w > maxW {
-			maxW = w
-		}
-	}
-	return maxW + 2, len(l.Items)
-}
-
-func (l *List) Layout(r Rect) *Node {
-	return &Node{
-		Element: l,
-		Rect:    r,
-	}
-}
-
-func (l *List) Draw(s Screen, rect Rect) {
-	for i, item := range l.Items {
-		if i >= rect.H {
-			break
-		}
-
-		var st Style
-		if l.Index == i {
-			st.BG = Theme.Selection
-		}
-
-		label := fmt.Sprintf(" %s ", item.Name)
-		w := runewidth.StringWidth(label)
-		if w > rect.W {
-			label = runewidth.Truncate(label, rect.W, "…")
-		} else {
-			label = runewidth.FillRight(label, rect.W)
-		}
-		DrawString(s, rect.X, rect.Y+i, rect.W, label, st)
-	}
-}
-
-func (l *List) OnMouseDown(x, y int) {
-	if y >= 0 && y < len(l.Items) {
-		l.Index = y
-		if l.OnSelect != nil {
-			l.OnSelect(l.Items[y])
-		}
-	}
-}
-
-func (l *List) OnMouseUp(x, y int) {}
-
-func (l *List) OnFocus() {}
-func (l *List) OnBlur()  {}
-
-func (l *List) Append(item ListItem) {
-	l.Items = append(l.Items, item)
-}
-
-func (l *List) Clear() {
-	l.Items = nil
-	l.Index = -1
-}
-
-func (l *List) Len() int {
-	return len(l.Items)
-}
-
-func (l *List) HandleKey(ev *tcell.EventKey) bool {
-	switch ev.Key() {
-	case tcell.KeyUp, tcell.KeyCtrlP:
-		l.Prev()
-	case tcell.KeyDown, tcell.KeyCtrlN:
-		l.Next()
-	case tcell.KeyEnter:
-		l.Activate()
-	default:
-		return false
-	}
-	return true
-}
-
-func (l *List) Next() {
-	if len(l.Items) == 0 {
-		return
-	}
-	l.Index = (l.Index + 1) % len(l.Items)
-}
-
-func (l *List) Prev() {
-	if len(l.Items) == 0 {
-		return
-	}
-	l.Index = (l.Index - 1 + len(l.Items)) % len(l.Items)
-}
-
-func (l *List) Activate() {
-	if l.Index >= 0 && l.Index < len(l.Items) {
-		if l.OnSelect != nil {
-			l.OnSelect(l.Items[l.Index])
-		}
-	}
-}
-
-// Divider is a simple horizontal or vertical line separator.
-// It can be used within container layouts like HStack and VStack.
-type Divider struct {
-	vertical bool
-}
-
-func (d *Divider) Size() (w, h int) { return 1, 1 }
-func (d *Divider) Layout(r Rect) *Node {
-	return &Node{
-		Element: d,
-		Rect:    r,
-	}
-}
-func (d *Divider) Draw(s Screen, rect Rect) {
-	style := Style{FG: Theme.Border}
-	if !d.vertical {
-		for i := range rect.W {
-			s.SetContent(rect.X+i, rect.Y+rect.H-1, hLine, nil, style.Apply())
-		}
-	} else {
-		for i := range rect.H {
-			s.SetContent(rect.X+rect.W-1, rect.Y+i, vLine, nil, style.Apply())
-		}
-	}
-}
-
-type empty struct{}
-
-func (e empty) Size() (int, int) { return 0, 0 }
-func (e empty) Layout(r Rect) *Node {
-	return &Node{Element: e, Rect: r}
-}
-func (e empty) Draw(Screen, Rect) {}
-
 // Manager manages the main event loop, rendering, and event dispatching.
 type Manager struct {
 	screen  Screen
@@ -735,9 +238,9 @@ type Manager struct {
 	overlay *overlay
 
 	// hit test
-	clickPoint Point
-	focused    Element
-	hover      Element
+	clickX, clickY int
+	focused        Element
+	hover          Element
 
 	bindings map[string]func()
 	done     chan struct{}
@@ -770,39 +273,23 @@ func (m *Manager) Render() {
 	m.root.Draw(m.screen)
 }
 
-// Point represent a position in the screen coordinate.
-// TODO: Point or bare (x, y) ?
-type Point struct {
-	X, Y int
-}
-
-func (p Point) In(r Rect) bool {
-	return r.X <= p.X && p.X < r.X+r.W && r.Y <= p.Y && p.Y < r.Y+r.H
-}
-
 // hitTest walks the layout tree to find the deepest matching element
-// located at the given point in absolute coordinates, returns the element
-// and a point converted into the node's local coordinate space.
-func hitTest(n *Node, p Point) (Element, Point) {
-	if n == nil {
-		return nil, Point{}
-	}
-	if !p.In(n.Rect) {
-		return nil, Point{}
+// located at the given (x, y) in absolute coordinates, returns the element
+// and the local coordinates within the node's rect.
+func hitTest(n *Node, x, y int) (Element, int, int) {
+	if n == nil || !n.Rect.Contains(x, y) {
+		return nil, 0, 0
 	}
 
 	// Check children in reverse order (topmost first)
 	for i := len(n.Children) - 1; i >= 0; i-- {
 		child := n.Children[i]
-		if e, local := hitTest(child, p); e != nil {
-			return e, local
+		if e, lx, ly := hitTest(child, x, y); e != nil {
+			return e, lx, ly
 		}
 	}
 
-	return n.Element, Point{
-		X: p.X - n.Rect.X,
-		Y: p.Y - n.Rect.Y,
-	}
+	return n.Element, x - n.Rect.X, y - n.Rect.Y
 }
 
 func (m *Manager) SetFocus(e Element) {
@@ -985,11 +472,10 @@ func (m *Manager) handleKey(ev *tcell.EventKey) {
 // Returns true if the event caused state changes that require a redraw.
 func (m *Manager) handleMouse(ev *tcell.EventMouse) bool {
 	x, y := ev.Position()
-	hit, local := hitTest(m.root, Point{X: x, Y: y})
+	hit, lx, ly := hitTest(m.root, x, y)
 	if hit == nil {
 		return false
 	}
-	lx, ly := local.X, local.Y
 
 	dirty := m.updateHover(hit, lx, ly)
 
@@ -1000,7 +486,7 @@ func (m *Manager) handleMouse(ev *tcell.EventMouse) bool {
 		if prevFocus != m.focused {
 			dirty = true
 		}
-		m.clickPoint = Point{X: x, Y: y}
+		m.clickX, m.clickY = x, y
 		// mouse down
 		if i, ok := hit.(Clickable); ok {
 			i.OnMouseDown(lx, ly)
@@ -1018,7 +504,7 @@ func (m *Manager) handleMouse(ev *tcell.EventMouse) bool {
 		}
 	case tcell.ButtonNone:
 		// mouse up
-		if x == m.clickPoint.X && y == m.clickPoint.Y {
+		if x == m.clickX && y == m.clickY {
 			if i, ok := hit.(Clickable); ok {
 				i.OnMouseUp(lx, ly)
 				dirty = true
