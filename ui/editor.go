@@ -294,8 +294,7 @@ func (e *Editor) Draw(s Screen, rect Rect) {
 		numStr := fmt.Sprintf("%*d  ", lineNumWidth-1, row+1)
 		DrawString(s, rect.X, y, lineNumWidth, numStr, lnStyle)
 
-		// Draw line content
-		e.renderLine(s, contentX, y, contentW, row, line)
+		e.drawLine(s, contentX, y, contentW, row, line)
 	}
 
 	// Show cursor if focused
@@ -308,7 +307,7 @@ func (e *Editor) Draw(s Screen, rect Rect) {
 	}
 }
 
-func (e *Editor) renderLine(s Screen, x, y, maxWidth, row int, line []rune) {
+func (e *Editor) drawLine(s Screen, x, y, maxWidth, row int, line []rune) {
 	var styles []Style
 	if e.Highlighter != nil {
 		spans := e.Highlighter(line)

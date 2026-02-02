@@ -6,7 +6,7 @@ Features:
 - keyboard: focus management, event handling, keybinding
 - mouse: hover enter/move/leave, click, scroll
 
-Design decisions:
+Technical decisions:
 - tcell does the actual terminal rendering
 - redraw on state changes
 - child element does not inherit the parent's style
