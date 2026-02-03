@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
@@ -17,7 +18,21 @@ func NewText(text string) *Text {
 	return &Text{Content: text}
 }
 
-func (t *Text) Size() (int, int) { return runewidth.StringWidth(t.Content), 1 }
+func (t *Text) Size() (int, int) {
+	lines := t.lines()
+	maxW := 0
+	for _, line := range lines {
+		if w := runewidth.StringWidth(line); w > maxW {
+			maxW = w
+		}
+	}
+	return maxW, len(lines)
+}
+
+func (t *Text) lines() []string {
+	return strings.Split(t.Content, "\n")
+}
+
 func (t *Text) Layout(r Rect) *Node {
 	return &Node{
 		Element: t,
@@ -25,7 +40,13 @@ func (t *Text) Layout(r Rect) *Node {
 	}
 }
 func (t *Text) Draw(s Screen, rect Rect) {
-	DrawString(s, rect.X, rect.Y, rect.W, t.Content, t.Style)
+	lines := t.lines()
+	for i, line := range lines {
+		if i >= rect.H {
+			break
+		}
+		DrawString(s, rect.X, rect.Y+i, rect.W, line, t.Style)
+	}
 }
 
 type Button struct {
