@@ -463,7 +463,7 @@ func (s *Screen) Sync() {
 	lastStyle := StyleDefault
 	for y := 0; y < s.h; y++ {
 		// Position cursor at the start of each line explicitly
-		buf.WriteString(fmt.Sprintf("\033[%d;1H", y+1))
+		fmt.Fprintf(&buf, "\033[%d;1H", y+1)
 
 		for x := 0; x < s.w; x++ {
 			c := s.cells[y*s.w+x]
@@ -482,7 +482,7 @@ func (s *Screen) Sync() {
 
 	// Position cursor
 	if s.cursorVis {
-		buf.WriteString(fmt.Sprintf("\033[%d;%dH\033[?25h", s.cursorY+1, s.cursorX+1))
+		fmt.Fprintf(&buf, "\033[%d;%dH\033[?25h", s.cursorY+1, s.cursorX+1)
 	} else {
 		buf.WriteString("\033[?25l")
 	}
