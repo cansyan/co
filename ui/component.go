@@ -293,6 +293,8 @@ type List struct {
 	Items    []ListItem
 	Index    int // current selected index, -1 means none
 	OnSelect func(ListItem)
+	offset     int // index of first visible item
+	viewHeight int // last known height of the list viewport
 }
 
 type ListItem struct {
@@ -311,6 +313,7 @@ func (l *List) Size() (int, int) {
 }
 
 func (l *List) Layout(r Rect) *Node {
+	l.viewHeight = r.H
 	return &Node{
 		Element: l,
 		Rect:    r,
@@ -318,8 +321,12 @@ func (l *List) Layout(r Rect) *Node {
 }
 
 func (l *List) Draw(s Screen, rect Rect) {
-	for i, item := range l.Items {
-		if i >= rect.H {
+	l.viewHeight = rect.H
+	l.clampOffset()
+
+	for i := l.offset; i < len(l.Items); i++ {
+		row := i - l.offset
+		if row >= rect.H {
 			break
 		}
 
@@ -328,22 +335,24 @@ func (l *List) Draw(s Screen, rect Rect) {
 			st.BG = Theme.Selection
 		}
 
-		label := fmt.Sprintf(" %s ", item.Name)
+		label := fmt.Sprintf(" %s ", l.Items[i].Name)
 		w := runewidth.StringWidth(label)
 		if w > rect.W {
 			label = runewidth.Truncate(label, rect.W, "…")
 		} else {
 			label = runewidth.FillRight(label, rect.W)
 		}
-		DrawString(s, rect.X, rect.Y+i, rect.W, label, st)
+		DrawString(s, rect.X, rect.Y+row, rect.W, label, st)
 	}
 }
 
 func (l *List) OnMouseDown(x, y int) {
-	if y >= 0 && y < len(l.Items) {
-		l.Index = y
+	index := l.offset + y
+	if y >= 0 && index >= 0 && index < len(l.Items) {
+		l.Index = index
+		l.ensureVisible()
 		if l.OnSelect != nil {
-			l.OnSelect(l.Items[y])
+			l.OnSelect(l.Items[index])
 		}
 	}
 }
@@ -360,6 +369,7 @@ func (l *List) Append(item ListItem) {
 func (l *List) Clear() {
 	l.Items = nil
 	l.Index = -1
+	l.offset = 0
 }
 
 func (l *List) Len() int {
@@ -385,6 +395,7 @@ func (l *List) Next() {
 		return
 	}
 	l.Index = (l.Index + 1) % len(l.Items)
+	l.ensureVisible()
 }
 
 func (l *List) Prev() {
@@ -392,6 +403,7 @@ func (l *List) Prev() {
 		return
 	}
 	l.Index = (l.Index - 1 + len(l.Items)) % len(l.Items)
+	l.ensureVisible()
 }
 
 func (l *List) Activate() {
@@ -399,6 +411,46 @@ func (l *List) Activate() {
 		if l.OnSelect != nil {
 			l.OnSelect(l.Items[l.Index])
 		}
+	}
+}
+
+func (l *List) OnScroll(dy int) {
+	if l.viewHeight <= 0 || len(l.Items) == 0 {
+		l.offset = 0
+		return
+	}
+	l.offset += dy
+	l.clampOffset()
+}
+
+func (l *List) ensureVisible() {
+	if l.viewHeight <= 0 {
+		return
+	}
+	if l.Index < 0 || l.Index >= len(l.Items) {
+		l.offset = 0
+		return
+	}
+
+	if l.Index < l.offset {
+		l.offset = l.Index
+	} else if l.Index >= l.offset+l.viewHeight {
+		l.offset = l.Index - l.viewHeight + 1
+	}
+
+	l.clampOffset()
+}
+
+func (l *List) clampOffset() {
+	maxOffset := len(l.Items) - l.viewHeight
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if l.offset > maxOffset {
+		l.offset = maxOffset
+	}
+	if l.offset < 0 {
+		l.offset = 0
 	}
 }
 
