@@ -54,9 +54,8 @@ type Button struct {
 	Text    string
 	OnClick func()
 
-	hovered    bool
-	pressed    bool
-	NoFeedback bool // disables visual feedback for hover/press states
+	pressed bool
+	// NoFeedback bool // disables visual feedback for hover states
 }
 
 // NewButton creates a new Button with the given label and click handler.
@@ -73,35 +72,20 @@ func (b *Button) Layout(r Rect) *Node {
 }
 func (b *Button) Draw(s Screen, rect Rect) {
 	st := b.Style
-	if !b.NoFeedback && b.hovered {
-		st.BG = Theme.Hover
-	}
-	if !b.NoFeedback && b.pressed {
+	if b.pressed {
 		st.BG = Theme.Selection
 	}
 	label := " " + b.Text + " "
 	DrawString(s, rect.X, rect.Y, rect.W, label, st)
 }
 
-func (b *Button) OnMouseEnter() { b.hovered = true }
-
-func (b *Button) OnMouseLeave() {
-	b.hovered = false
-	b.pressed = false // cancel
-}
-
-func (b *Button) OnMouseMove(rx, ry int) {}
-
 func (b *Button) OnMouseDown(x, y int) {
 	b.pressed = true
 }
 
 func (b *Button) OnMouseUp(x, y int) {
-	if b.pressed && b.hovered {
-		// real click
-		if b.OnClick != nil {
-			b.OnClick()
-		}
+	if b.pressed && b.OnClick != nil {
+		b.OnClick()
 	}
 	b.pressed = false
 }
@@ -290,9 +274,9 @@ func (t *Input) selection() (int, int, bool) {
 // List displays a vertical list of items.
 // The zero value is ready to use.
 type List struct {
-	Items    []ListItem
-	Index    int // current selected index, -1 means none
-	OnSelect func(ListItem)
+	Items      []ListItem
+	Index      int // current selected index, -1 means none
+	OnSelect   func(ListItem)
 	offset     int // index of first visible item
 	viewHeight int // last known height of the list viewport
 }

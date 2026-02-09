@@ -461,8 +461,8 @@ func (a *App) fillCommandMode(p *Palette, query string) {
 		name   string
 		action func()
 	}{
-		{"Color Theme: Breaks", func() { ui.Theme = ui.NewBreakersTheme(); a.requestFocus() }},
-		{"Color Theme: Mariana", func() { ui.Theme = ui.NewMarianaTheme(); a.requestFocus() }},
+		{"Color Theme: Breaks", func() { a.manager.SetTheme(ui.Breakers); a.requestFocus() }},
+		{"Color Theme: Mariana", func() { a.manager.SetTheme(ui.Mariana); a.requestFocus() }},
 		{"Goto Definition", func() {
 			if e := a.getEditor(); e != nil {
 				e.gotoDefinition()
