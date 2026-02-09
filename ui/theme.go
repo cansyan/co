@@ -1,6 +1,6 @@
 package ui
 
-var Theme ColorTheme
+var Theme = Mariana
 
 type ColorTheme struct {
 	Foreground string

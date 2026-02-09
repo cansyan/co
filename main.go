@@ -42,6 +42,10 @@ func main() {
 		log.SetOutput(io.Discard)
 	}
 
+	if detectLightTerminal() {
+		ui.Theme = ui.Breakers
+	}
+
 	manager := ui.NewManager()
 	manager.BindKey("Ctrl+Q", manager.Stop)
 
@@ -461,8 +465,14 @@ func (a *App) fillCommandMode(p *Palette, query string) {
 		name   string
 		action func()
 	}{
-		{"Color Theme: Breaks", func() { a.manager.SetTheme(ui.Breakers); a.requestFocus() }},
-		{"Color Theme: Mariana", func() { a.manager.SetTheme(ui.Mariana); a.requestFocus() }},
+		{"Color Theme: Breaks", func() {
+			ui.Theme = ui.Breakers
+			a.requestFocus()
+		}},
+		{"Color Theme: Mariana", func() {
+			ui.Theme = ui.Mariana
+			a.requestFocus()
+		}},
 		{"Goto Definition", func() {
 			if e := a.getEditor(); e != nil {
 				e.gotoDefinition()
@@ -1292,4 +1302,20 @@ func (a *App) activateLeader() {
 		a.leaderKeyActive = false
 		a.manager.Refresh()
 	})
+}
+
+// detectLightTerminal detects if terminal has a light background via COLORFGBG.
+// iTerm2 sets this as "foreground;background".
+// Background 7 or 15 indicates light, 0-6 and 8 indicate dark.
+func detectLightTerminal() bool {
+	colorfgbg := os.Getenv("COLORFGBG")
+	if colorfgbg == "" {
+		return false
+	}
+	parts := strings.Split(colorfgbg, ";")
+	if len(parts) != 2 {
+		return false
+	}
+	bg := parts[1]
+	return bg == "7" || bg == "15"
 }
