@@ -90,6 +90,14 @@ func (b *Button) OnMouseUp(x, y int) {
 	b.pressed = false
 }
 
+func (b *Button) OnMouseEnter() {}
+func (b *Button) OnMouseLeave() {
+	if b.pressed {
+		b.pressed = false
+	}
+}
+func (b *Button) OnMouseMove(localX, localY int) {}
+
 // Input is a single-line text input field.
 // The zero value for Input is ready to use.
 type Input struct {

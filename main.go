@@ -1304,7 +1304,7 @@ func (a *App) activateLeader() {
 	})
 }
 
-// detectLightTerminal detects if terminal has a light background via COLORFGBG.
+// detects if terminal has a light background via COLORFGBG.
 // iTerm2 sets this as "foreground;background".
 // Background 7 or 15 indicates light, 0-6 and 8 indicate dark.
 func detectLightTerminal() bool {
