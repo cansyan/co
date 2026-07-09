@@ -100,8 +100,7 @@ type App struct {
 	openBtn   *ui.Button
 	saveBtn   *ui.Button
 	quitBtn   *ui.Button
-	backBtn   *ui.Button
-	fwdBtn    *ui.Button
+	cmdBtn    *ui.Button
 	status    string
 
 	searchBar  *SearchBar
@@ -134,8 +133,9 @@ func newApp(m *ui.Manager) *App {
 		},
 	}
 	a.openBtn = &ui.Button{Text: "Open", OnClick: a.promptOpen}
-	a.backBtn = &ui.Button{Text: "←", OnClick: a.goBack}
-	a.fwdBtn = &ui.Button{Text: "→", OnClick: a.goForward}
+	// a.backBtn = &ui.Button{Text: "←", OnClick: a.goBack}
+	// a.fwdBtn = &ui.Button{Text: "→", OnClick: a.goForward}
+	a.cmdBtn = &ui.Button{Text: "Cmd", OnClick: func() { a.showPalette(">") }}
 	a.saveBtn = &ui.Button{Text: "Save", OnClick: a.saveFile}
 	a.quitBtn = &ui.Button{Text: "Quit", OnClick: m.Stop}
 	a.searchBar = NewSearchBar(a)
@@ -251,7 +251,7 @@ func (a *App) Layout(r ui.Rect) *ui.Node {
 
 	mainStack := ui.VStack()
 	mainStack.Append(
-		ui.HStack(ui.Grow(tabLabels), a.backBtn, a.fwdBtn, a.newBtn, a.openBtn, a.saveBtn, a.quitBtn),
+		ui.HStack(ui.Grow(tabLabels), a.cmdBtn, a.newBtn, a.openBtn, a.saveBtn, a.quitBtn),
 	)
 	if len(a.tabs) > 0 {
 		mainStack.Append(ui.Grow(a.tabs[a.activeTab].editor))
@@ -481,6 +481,8 @@ func (a *App) fillCommandMode(p *Palette, query string) {
 		}},
 		{"Goto Symbol", func() { a.showPalette("@") }},
 		{"New File", func() { a.newTab("untitled"); a.requestFocus() }},
+		{"Jump Back", a.goBack},
+		{"Jump Forward", a.goForward},
 		{"Quit", a.manager.Stop},
 	}
 
