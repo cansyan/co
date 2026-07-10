@@ -132,7 +132,7 @@ func newApp(m *ui.Manager) *App {
 			m.SetFocus(a)
 		},
 	}
-	a.openBtn = &ui.Button{Text: "Open", OnClick: a.promptOpen}
+	a.openBtn = &ui.Button{Text: "Open", OnClick: func() { a.showPalette("") }}
 	// a.backBtn = &ui.Button{Text: "←", OnClick: a.goBack}
 	// a.fwdBtn = &ui.Button{Text: "→", OnClick: a.goForward}
 	a.cmdBtn = &ui.Button{Text: "Cmd", OnClick: func() { a.showPalette(">") }}
@@ -352,21 +352,22 @@ func (a *App) handleGlobalKey(ev *tcell.EventKey) bool {
 		a.activateLeader()
 		return true
 	case "ctrl+p":
-		if a.leaderKeyActive {
-			a.leaderKeyActive = false
-			if a.leaderTimer != nil {
-				a.leaderTimer.Stop()
+		/*
+			if a.leaderKeyActive {
+				a.leaderKeyActive = false
+				if a.leaderTimer != nil {
+					a.leaderTimer.Stop()
+				}
+				a.showPalette(">") // Ctrl+K Ctrl+P command mode
 			}
-			a.showPalette(">") // Ctrl+K Ctrl+P command mode
-		} else {
-			a.showPalette("") // default file search mode
-		}
+		*/
+		a.showPalette(">")
 		return true
 	case "ctrl+r":
 		a.showPalette("@")
 		return true
 	case "ctrl+o":
-		a.promptOpen()
+		a.showPalette("")
 		return true
 	case "ctrl+t":
 		a.newTab("untitled")
@@ -799,6 +800,7 @@ func (a *App) promptSaveAs(commit func(path string)) {
 	a.manager.SetFocus(input)
 }
 
+/*
 func (a *App) promptOpen() {
 	input := &ui.Input{
 		OnCommit: func(text string) {
@@ -843,6 +845,7 @@ func (a *App) promptOpen() {
 	a.manager.Overlay(dialog, "top")
 	a.manager.SetFocus(input)
 }
+*/
 
 func (a *App) writeFile(path string, e *Editor) error {
 	bs := []byte(e.String())
