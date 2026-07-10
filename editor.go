@@ -55,9 +55,6 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		e.Editor.Undo()
 	case "ctrl+y":
 		e.Editor.Redo()
-	case "ctrl+a":
-		lastLine := e.Line(e.Len() - 1)
-		e.SetSelection(ui.Pos{}, ui.Pos{Row: e.Len() - 1, Col: len(lastLine)})
 	case "ctrl+c":
 		s := e.SelectedText()
 		if s == "" {
@@ -109,7 +106,7 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 		e.gotoLine(0)
 	case "alt+down": // goto last line
 		e.gotoLine(e.Len() - 1)
-	case "alt+left": // goto the first non-space character of line
+	case "ctrl+a", "alt+left": // goto the first non-space character of line
 		e.ClearSelection()
 		for i, char := range e.Line(e.Pos.Row) {
 			if !unicode.IsSpace(char) {
@@ -117,7 +114,7 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 				break
 			}
 		}
-	case "alt+right": // goto the end of line
+	case "ctrl+e", "alt+right": // goto the end of line
 		e.ClearSelection()
 		e.Pos.Col = len(e.Line(e.Pos.Row))
 	default:
