@@ -145,10 +145,12 @@ func newApp(m *ui.Manager) *App {
 	return a
 }
 
-// TODO: return buffer
-func (a *App) newTab(label string) {
-	a.tabs = append(a.tabs, newTab(a, label))
+// newTab returns a new editable buffer
+func (a *App) newTab(label string) *Editor {
+	tab := newTab(a, label)
+	a.tabs = append(a.tabs, tab)
 	a.activeTab = len(a.tabs) - 1
+	return tab.editor
 }
 
 // closeTab closes the tab at index i, prompting to save if there are unsaved changes.
@@ -492,9 +494,8 @@ func (a *App) fillCommandMode(p *Palette, query string) {
 			a.requestFocus()
 			out, err := exec.Command("go", "build").CombinedOutput()
 			if err != nil {
-				a.newTab("go build...")
-				e := a.getEditor()
-				e.SetText(string(out))
+				buf := a.newTab("go build...")
+				buf.SetText(string(out))
 				return
 			}
 			a.setStatus("go build ok", 5*time.Second)
@@ -503,9 +504,8 @@ func (a *App) fillCommandMode(p *Palette, query string) {
 			a.requestFocus()
 			out, err := exec.Command("go", "test", "./...").CombinedOutput()
 			if err != nil {
-				a.newTab("go test...")
-				e := a.getEditor()
-				e.SetText(string(out))
+				buf := a.newTab("go test...")
+				buf.SetText(string(out))
 				return
 			}
 			a.setStatus("go test ok", 5*time.Second)
@@ -674,10 +674,9 @@ func (a *App) openFile(name string) error {
 		return err
 	}
 
-	a.newTab(abs)
-	editor := a.getEditor()
-	editor.SetText(string(bs))
-	editor.updateSymbols()
+	buf := a.newTab(abs)
+	buf.SetText(string(bs))
+	buf.updateSymbols()
 	a.recordJump()
 	return nil
 }
