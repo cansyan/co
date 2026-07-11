@@ -27,44 +27,43 @@ go build -o co main.go
 
 ```
 File Operations:
-    Ctrl+T: New tab
-    Ctrl+O: Open file
-    Ctrl+S: Save file
-    Ctrl+W: Close tab
-    Ctrl+Q: Quit editor
+    ctrl+t: new tab
+    ctrl+o: open file
+    ctrl+s: save file
+    ctrl+w: close tab
+    ctrl+q: quit
 
 Editing:
-    Ctrl+Z: Undo
-    Ctrl+Y: Redo
-    Ctrl+C: Copy selection (copies current line if no selection)
-    Ctrl+X: Cut selection (cuts current line if no selection)
-    Ctrl+V: Paste
-    Ctrl+A: Select all
-    Ctrl+L: Expand selection to line
-    Ctrl+B: Expand selection to brackets
-    Ctrl+D: Select word or find next occurrence
-    Tab: Accept inline suggestion, if exists
+    ctrl+z: undo
+    ctrl+y: redo
+    ctrl+c: copy selection (copies current line if no selection)
+    ctrl+x: cut selection (cuts current line if no selection)
+    ctrl+v: paste
+    ctrl+l: expand selection to line
+    ctrl+b: expand selection to brackets
+    ctrl+d: select word or find next occurrence
+    tab: accept inline suggestion, if exists
 
 Search & Navigation:
-    Ctrl+F: Open search bar
-    Enter / Ctrl+N: Next match
-    Ctrl+P / Up: Previous match
-    Esc: Close search / Clear selection
+    ctrl+f: open search bar
+    enter / ctrl+n: Next match
+    ctrl+p / up: Previous match
+    esc: close search / clear selection
 
 Code Navigation:
-    Ctrl+G: Go to definition
-    Alt+Up: Go to first line
-    Alt+Down: Go to last line
-    Alt+Left: Go to line start (first non-space character)
-    Alt+Right: Go to line end
+    ctrl+g: go to definition
+    alt+up: go to first line
+    alt+down: go to last line
+    ctrl+a / alt+left: go to line start (first non-space character)
+    ctrl+e / lt+right: go to line end
 
 Command Palette:
-    Ctrl+P: Go to file
-    Ctrl+R: Go to symbol
-    Ctrl+K Ctrl+P: Run command
+    ctrl+o: go to file
+    ctrl+r: go to symbol
+    ctrl+p: run command
 ```
 
 ## Command Palette Prefixes
-- `:` Go to line number
-- `@` Go to symbol
-- `>` Run command
+- `:` go to line number
+- `@` go to symbol
+- `>` run command
