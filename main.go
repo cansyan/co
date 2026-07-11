@@ -494,33 +494,23 @@ func (a *App) fillCommandMode(p *Palette, query string) {
 		{"New File", func() { a.newTab("untitled"); a.requestFocus() }},
 		{"GoBuild", func() {
 			a.requestFocus()
-			go func() {
-				out, err := exec.Command("go", "build").CombinedOutput()
-				if err != nil {
-					buf := a.newTab("go build...")
-					buf.SetText(string(out))
-					return
-				}
-				err = exec.Command("say", "ok").Run()
-				if err != nil {
-					log.Print(err)
-				}
-			}()
+			out, err := exec.Command("go", "build").CombinedOutput()
+			if err != nil {
+				buf := a.newTab("go build...")
+				buf.SetText(string(out))
+				return
+			}
+			a.setStatus("go build ok", 5*time.Second)
 		}},
 		{"GoTest", func() {
 			a.requestFocus()
-			go func() {
-				out, err := exec.Command("go", "test", "./...").CombinedOutput()
-				if err != nil {
-					buf := a.newTab("go test...")
-					buf.SetText(string(out))
-					return
-				}
-				err = exec.Command("say", "ok").Run()
-				if err != nil {
-					log.Print(err)
-				}
-			}()
+			out, err := exec.Command("go", "test", "./...").CombinedOutput()
+			if err != nil {
+				buf := a.newTab("go test...")
+				buf.SetText(string(out))
+				return
+			}
+			a.setStatus("go test ok", 5*time.Second)
 		}},
 		{"Quit", a.manager.Stop},
 	}

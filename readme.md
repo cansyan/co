@@ -55,7 +55,7 @@ Code Navigation:
     alt+up: go to first line
     alt+down: go to last line
     ctrl+a / alt+left: go to line start (first non-space character)
-    ctrl+e / lt+right: go to line end
+    ctrl+e / alt+right: go to line end
 
 Command Palette:
     ctrl+o: go to file
