@@ -1,14 +1,16 @@
-package ui
+package main
 
 import (
 	"reflect"
 	"testing"
+
+	"github.com/cansyan/co/ui"
 )
 
-func TestNewTextEditor(t *testing.T) {
-	e := NewTextEditor()
+func TestNewEditor(t *testing.T) {
+	e := newEditor()
 	if e == nil {
-		t.Fatal("NewTextEditor returned nil")
+		t.Fatal("newEditor returned nil")
 	}
 	if len(e.buf) != 1 {
 		t.Errorf("expected 1 line, got %d", len(e.buf))
@@ -33,7 +35,7 @@ func TestTextEditor_String(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := NewTextEditor()
+			e := newEditor()
 			e.SetText(tt.input)
 			got := e.String()
 			if got != tt.expected {
@@ -58,7 +60,7 @@ func TestTextEditor_SetText(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := NewTextEditor()
+			e := newEditor()
 			e.SetText(tt.input)
 			if len(e.buf) != tt.wantLines {
 				t.Errorf("SetText() lines = %d, want %d", len(e.buf), tt.wantLines)
@@ -71,7 +73,7 @@ func TestTextEditor_SetText(t *testing.T) {
 }
 
 func TestTextEditor_SetCursor(t *testing.T) {
-	e := NewTextEditor()
+	e := newEditor()
 	e.SetText("line1\nline2\nline3")
 
 	tests := []struct {
@@ -152,7 +154,7 @@ func TestTextEditor_InsertText(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := NewTextEditor()
+			e := newEditor()
 			e.SetText(tt.initial)
 			e.SetCursor(tt.pos.Row, tt.pos.Col)
 			e.InsertText(tt.insert)
@@ -213,7 +215,7 @@ func TestTextEditor_DeleteRange(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := NewTextEditor()
+			e := newEditor()
 			e.SetText(tt.initial)
 			e.DeleteRange(tt.start, tt.end)
 
@@ -229,7 +231,7 @@ func TestTextEditor_DeleteRange(t *testing.T) {
 }
 
 func TestTextEditor_Selection(t *testing.T) {
-	e := NewTextEditor()
+	e := newEditor()
 	e.SetText("line1\nline2\nline3")
 
 	// No selection initially
@@ -305,7 +307,7 @@ func TestTextEditor_SelectedText(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := NewTextEditor()
+			e := newEditor()
 			e.SetText(tt.text)
 			e.SetSelection(tt.start, tt.end)
 			got := e.SelectedText()
@@ -369,7 +371,7 @@ func TestTextEditor_WordRangeAtCursor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := NewTextEditor()
+			e := newEditor()
 			e.SetText(tt.text)
 			e.SetCursor(tt.pos.Row, tt.pos.Col)
 
@@ -434,7 +436,7 @@ func TestTextEditor_FindNext(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := NewTextEditor()
+			e := newEditor()
 			e.SetText(tt.text)
 			e.SetCursor(tt.startPos.Row, tt.startPos.Col)
 
@@ -452,7 +454,7 @@ func TestTextEditor_FindNext(t *testing.T) {
 }
 
 func TestTextEditor_UndoRedo(t *testing.T) {
-	e := NewTextEditor()
+	e := newEditor()
 	e.SetText("initial")
 
 	// Save initial state
@@ -489,7 +491,7 @@ func TestTextEditor_UndoRedo(t *testing.T) {
 }
 
 func TestTextEditor_EnsureVisible(t *testing.T) {
-	e := NewTextEditor()
+	e := newEditor()
 	e.SetText("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10")
 	e.viewH = 5
 
@@ -509,7 +511,7 @@ func TestTextEditor_EnsureVisible(t *testing.T) {
 }
 
 func TestTextEditor_CenterRow(t *testing.T) {
-	e := NewTextEditor()
+	e := newEditor()
 	e.SetText("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10")
 	e.viewH = 5
 
@@ -619,10 +621,10 @@ func TestSplitRunesByNewline(t *testing.T) {
 }
 
 func TestExpandStyles(t *testing.T) {
-	base := Style{FG: "white"}
+	base := ui.Style{FG: "white"}
 	spans := []StyleSpan{
-		{Start: 2, End: 5, Style: Style{BG: "red"}},
-		{Start: 7, End: 9, Style: Style{BG: "blue"}},
+		{Start: 2, End: 5, Style: ui.Style{BG: "red"}},
+		{Start: 7, End: 9, Style: ui.Style{BG: "blue"}},
 	}
 
 	styles := expandStyles(spans, base, 10)
@@ -654,7 +656,7 @@ func TestExpandStyles(t *testing.T) {
 }
 
 func TestTextEditor_Line(t *testing.T) {
-	e := NewTextEditor()
+	e := newEditor()
 	e.SetText("line1\nline2\nline3")
 
 	line := e.Line(1)
@@ -684,7 +686,7 @@ func TestTextEditor_Len(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := NewTextEditor()
+			e := newEditor()
 			e.SetText(tt.text)
 			got := e.Len()
 			if got != tt.expected {
@@ -695,7 +697,7 @@ func TestTextEditor_Len(t *testing.T) {
 }
 
 func TestTextEditor_OnChange(t *testing.T) {
-	e := NewTextEditor()
+	e := newEditor()
 	e.SetText("hello")
 
 	called := false
@@ -712,7 +714,7 @@ func TestTextEditor_OnChange(t *testing.T) {
 }
 
 func TestTextEditor_Dirty(t *testing.T) {
-	e := NewTextEditor()
+	e := newEditor()
 	e.SetText("hello")
 
 	if e.Dirty {
@@ -777,7 +779,7 @@ func TestTextEditor_FindClosingBracket(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := NewTextEditor()
+			e := newEditor()
 			e.SetText(tt.text)
 
 			gotRow, gotCol := e.findClosingBracket(tt.openRow, tt.openCol, tt.openChar)
@@ -830,7 +832,7 @@ func TestTextEditor_FindOpeningBracket(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := NewTextEditor()
+			e := newEditor()
 			e.SetText(tt.text)
 
 			gotRow, gotCol, gotChar := e.findOpeningBracket(tt.startRow, tt.startCol)

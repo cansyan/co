@@ -2,452 +2,1295 @@ package main
 
 import (
 	"context"
-	"go/token"
+	"fmt"
+	"slices"
+	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/cansyan/co/ui"
 	"github.com/gdamore/tcell/v2"
+	"github.com/mattn/go-runewidth"
 )
 
-type Editor struct {
-	*ui.Editor
-	app     *App
-	symbols []symbol
+// editRecord represents a single edit operation that can be undone/redone.
+type editRecord struct {
+	buf       [][]rune // snapshot of buffer state
+	pos       Pos      // cursor position after edit
+	anchor    Pos      // selection anchor
+	selecting bool     // selection state
 }
 
-func NewEditor(r *App) *Editor {
-	e := &Editor{
-		Editor: ui.NewTextEditor(),
-		app:    r,
-	}
+// editor is a multi-line editable text area, and implements the ui.Element interface.
+type editor struct {
+	buf     [][]rune // row-major text buffer
+	Pos     Pos      // cursor position; also selection end
+	goalCol int      // desired visual column when moving vertically
 
-	e.InlineSuggest = true
-	e.Suggester = func(ctx context.Context, prefix string) string {
-		if len(prefix) < 2 {
-			// avoid abusing suggestions for short prefixes
-			return ""
-		}
+	anchor    Pos // selection anchor (fixed head)
+	selecting bool
 
-		prefix = strings.ToLower(prefix)
-		for _, s := range e.symbols {
-			if len(s.Name) > len(prefix) && strings.HasPrefix(strings.ToLower(s.Name), prefix) {
-				return s.Name
-			}
-		}
-		return ""
+	offsetY  int // vertical scroll offset (top row)
+	viewH    int // last rendered height
+	contentX int
+
+	focused bool
+	pressed bool // mouse pressed
+
+	Style       ui.Style
+	Highlighter func(line []rune) []StyleSpan // function to get syntax highlighting spans
+
+	onChange func()
+	Dirty    bool
+
+	// Undo/redo history
+	undoStack []editRecord
+	redoStack []editRecord
+	MergeNext bool // whether to merge next edit with current one
+
+	// Inline suggestion
+	InlineSuggest bool
+	// function to get suggestion based on current prefix
+	Suggester func(ctx context.Context, prefix string) string
+	// timeout for suggester calls (default 100ms)
+	SuggesterTimeout time.Duration
+	currentSuggest   string
+
+	IndentGuide bool // whether to show indentation guides
+}
+
+func newEditor() *editor {
+	e := &editor{
+		buf:              [][]rune{{}}, // Start with one empty line of runes
+		SuggesterTimeout: 100 * time.Millisecond,
 	}
 	return e
 }
 
-func (e *Editor) Layout(r ui.Rect) *ui.Node {
+func (e *editor) Len() int {
+	return len(e.buf)
+}
+
+// String returns the entire text content as a string.
+func (e *editor) String() string {
+	var sb strings.Builder
+	for i, line := range e.buf {
+		sb.WriteString(string(line))
+		if i == len(e.buf)-1 && len(line) == 0 {
+			continue
+		}
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
+
+func (e *editor) SetText(s string) {
+	lines := strings.Split(s, "\n")
+	e.buf = make([][]rune, len(lines))
+	for i, line := range lines {
+		e.buf[i] = []rune(line)
+	}
+	e.Pos = Pos{Row: 0, Col: 0}
+	e.adjustCol()
+}
+
+// SetCursor moves the cursor and clears any active selection.
+func (e *editor) SetCursor(row, col int) {
+	if row < 0 || row >= len(e.buf) || col < 0 {
+		return
+	}
+	e.ClearSelection()
+	e.Pos = Pos{Row: row, Col: col}
+	e.adjustCol()
+}
+
+// CenterRow centers the given row vertically in the viewport.
+// Used for jump operations (goto line, search results) where you want
+// the target line in the middle of the screen for context.
+func (e *editor) CenterRow(row int) {
+	e.offsetY = row - (e.viewH / 2)
+	e.clampScroll()
+}
+
+// EnsureVisible ensures the current cursor row is visible with minimal scrolling.
+// Used for normal navigation (arrow keys, typing) where you want smooth,
+// minimal viewport movement - only scrolls if cursor goes out of bounds.
+func (e *editor) EnsureVisible(row int) {
+	if e.viewH <= 0 {
+		return
+	}
+
+	const scrolloff = 1
+
+	// Scroll down if row goes below viewport
+	if row >= e.offsetY+e.viewH-scrolloff {
+		e.offsetY = row - e.viewH + 1 + scrolloff
+	}
+
+	// Scroll up if row goes above viewport
+	if row < e.offsetY+scrolloff {
+		e.offsetY = row - scrolloff
+	}
+
+	e.clampScroll()
+}
+
+func (e *editor) clampScroll() {
+	maxOffset := max(0, len(e.buf)-e.viewH)
+	if e.offsetY > maxOffset {
+		e.offsetY = maxOffset
+	}
+	if e.offsetY < 0 {
+		e.offsetY = 0
+	}
+}
+
+func (e *editor) adjustCol() {
+	if e.Pos.Row < len(e.buf) {
+		lineLen := len(e.buf[e.Pos.Row])
+		if e.Pos.Col > lineLen {
+			e.Pos.Col = lineLen
+		}
+	}
+}
+
+func (e *editor) Size() (int, int) {
+	// Fixed width: 5 columns for line numbers, 20 for content
+	return 25, 5
+}
+
+func (e *editor) Layout(r ui.Rect) *ui.Node {
 	return &ui.Node{
 		Element: e,
 		Rect:    r,
 	}
 }
 
-// HandleKey handles editor-specific keybindings.
-// If the key is not handled here, it will bubble up to the app level.
-func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
-	switch strings.ToLower(ev.Name()) {
-	case "ctrl+z":
-		e.Editor.Undo()
-	case "ctrl+y":
-		e.Editor.Redo()
-	case "ctrl+c":
-		s := e.SelectedText()
-		if s == "" {
-			// copy current line by default
-			s = string(e.Line(e.Pos.Row))
+const tabSize = 4
+
+// visualColFromLine returns the visual column (in terminal cells)
+// corresponding to rune index i in the line.
+//
+// Tabs are expanded using tabSize, and rune widths are measured with
+// runewidth.RuneWidth. If i is beyond the end of the line, the total
+// visual width of the entire line is returned.
+func visualColFromLine(line []rune, i int) int {
+	var col int
+	for j, r := range line {
+		if j == i {
+			return col
 		}
-		e.app.clipboard = s
-		e.app.manager.Screen().SetClipboard([]byte(s))
-	case "ctrl+x":
-		e.Editor.SaveEdit()
+
+		if r == '\t' {
+			col += tabSize - col%tabSize
+		} else {
+			col += runewidth.RuneWidth(r)
+		}
+	}
+	return col
+}
+
+// visualColToLine converts a visual column position into rune index in the line.
+//
+// Tabs are expanded using tabSize. When col falls inside a tab expansion,
+// the function chooses the nearest rune boundary; if the column is closer to
+// the previous column than the next, it may return the preceding rune index.
+//
+// If col is past the end of the line, len(line) is returned.
+func visualColToLine(line []rune, col int) int {
+	var total int
+	for i, r := range line {
+		next := total
+		if r == '\t' {
+			next += tabSize - total%tabSize
+		} else {
+			next += runewidth.RuneWidth(r)
+		}
+
+		if col < next {
+			return i
+		}
+		total = next
+	}
+	return len(line)
+}
+
+const vLine = '│'
+
+func (e *editor) drawRune(s tcell.Screen, x, y int, maxWidth int, r rune, visualCol int, style ui.Style) int {
+	if maxWidth <= 0 {
+		return 0
+	}
+
+	// TAB
+	if r == '\t' {
+		spaces := tabSize - visualCol%tabSize
+		if spaces > maxWidth {
+			spaces = maxWidth
+		}
+		for i := range spaces {
+			if e.IndentGuide && (i+visualCol)%tabSize == 0 {
+				style = style.Merge(ui.Style{FG: ui.Theme.Border})
+				s.SetContent(x+i, y, vLine, nil, style.Apply())
+				continue
+			}
+			s.SetContent(x+i, y, ' ', nil, style.Apply())
+		}
+		return spaces
+	}
+
+	// other rune
+	w := runewidth.RuneWidth(r)
+	if w <= 0 {
+		w = 1
+	}
+	if w > maxWidth {
+		return 0
+	}
+	s.SetContent(x, y, r, nil, style.Apply())
+	return w
+}
+
+func (e *editor) Draw(s ui.Screen, rect ui.Rect) {
+	e.viewH = rect.H
+
+	// Calculate line number column width
+	numLines := len(e.buf)
+	if numLines == 0 {
+		numLines = 1
+	}
+	lineNumWidth := len(strconv.Itoa(numLines)) + 2
+	lineNumStyle := ui.Style{FG: "silver"}
+
+	contentX := rect.X + lineNumWidth + 1
+	e.contentX = contentX
+	contentW := rect.W - lineNumWidth
+	if contentW <= 0 {
+		return
+	}
+
+	var cursorX, cursorY int
+	cursorFound := false
+
+	for i := range rect.H {
+		row := i + e.offsetY
+		if row >= len(e.buf) {
+			break
+		}
+
+		line := e.buf[row]
+		y := rect.Y + i
+
+		// Track cursor position
+		if row == e.Pos.Row {
+			cursorFound = true
+			cursorX = contentX + visualColFromLine(line, e.Pos.Col)
+			cursorY = y
+		}
+
+		// Draw line number
+		lnStyle := lineNumStyle
+		if row == e.Pos.Row {
+			lnStyle.BG = ui.Theme.Selection
+		}
+		numStr := fmt.Sprintf("%*d  ", lineNumWidth-1, row+1)
+		ui.DrawString(s, rect.X, y, lineNumWidth, numStr, lnStyle)
+
+		e.drawLine(s, contentX, y, contentW, row, line)
+	}
+
+	// Show cursor if focused
+	if e.focused {
+		if cursorFound {
+			s.ShowCursor(cursorX, cursorY)
+		} else {
+			s.HideCursor()
+		}
+	}
+}
+
+func (e *editor) drawLine(s ui.Screen, x, y, maxWidth, row int, line []rune) {
+	var styles []ui.Style
+	if e.Highlighter != nil {
+		spans := e.Highlighter(line)
+		styles = expandStyles(spans, e.Style, len(line))
+	}
+
+	visualCol := 0
+	for col, r := range line {
+		// Draw inline suggestion at cursor position (before cursor character)
+		if row == e.Pos.Row && col == e.Pos.Col {
+			visualCol = e.drawSuggestion(s, x, y, maxWidth, visualCol)
+		}
+
+		// Draw character
+		style := e.Style
+		if styles != nil {
+			style = styles[col]
+		}
+		if e.isSelected(Pos{Row: row, Col: col}) {
+			style.BG = ui.Theme.Selection
+		}
+		visualCol += e.drawRune(s, x+visualCol, y, maxWidth-visualCol, r, visualCol, style)
+	}
+
+	// Draw inline suggestion at end of line
+	if row == e.Pos.Row && e.Pos.Col >= len(line) {
+		visualCol = e.drawSuggestion(s, x, y, maxWidth, visualCol)
+	}
+
+	// Draw line end selection indicator
+	if e.isSelected(Pos{Row: row, Col: len(line)}) {
+		style := e.Style.Merge(ui.Style{BG: ui.Theme.Selection})
+		e.drawRune(s, x+visualCol, y, maxWidth-visualCol, ' ', visualCol, style)
+	}
+}
+
+func (e *editor) drawSuggestion(s ui.Screen, x, y, maxWidth, visualCol int) int {
+	if !e.InlineSuggest || e.currentSuggest == "" || !e.focused {
+		return visualCol
+	}
+
+	start, end, ok := e.WordRangeAtCursor()
+	if !ok {
+		return visualCol
+	}
+
+	for _, r := range e.currentSuggest[end-start:] {
+		if visualCol >= maxWidth {
+			break
+		}
+		visualCol += e.drawRune(s, x+visualCol, y, maxWidth-visualCol, r, visualCol, ui.Theme.Syntax.Comment)
+	}
+	return visualCol
+}
+
+func (e *editor) OnFocus() { e.focused = true }
+func (e *editor) OnBlur()  { e.focused = false }
+
+func (e *editor) HandleKey(ev *tcell.EventKey) (consumed bool) {
+	keepVisualCol := false
+	defer func() {
+		if !keepVisualCol {
+			e.goalCol = 0
+		}
+	}()
+
+	onChange := func() {
+		if e.onChange != nil {
+			e.onChange()
+		}
+	}
+
+	consumed = true
+	switch ev.Key() {
+	case tcell.KeyESC:
+		if !e.selecting && e.currentSuggest == "" {
+			// nothing to do, bubble event to parent
+			return false
+		}
+		e.ClearSelection()
+		e.currentSuggest = ""
+	case tcell.KeyUp:
+		e.ClearSelection()
+		e.currentSuggest = ""
+		if ev.Modifiers()&tcell.ModMeta != 0 {
+			e.Pos.Row, e.Pos.Col = 0, 0
+			e.EnsureVisible(e.Pos.Row)
+			return
+		}
+
+		keepVisualCol = true
+		if e.goalCol == 0 {
+			e.goalCol = visualColFromLine(e.buf[e.Pos.Row], e.Pos.Col)
+		}
+		if e.Pos.Row > 0 {
+			e.Pos.Row--
+			e.Pos.Col = visualColToLine(e.buf[e.Pos.Row], e.goalCol)
+			e.adjustCol()
+			e.EnsureVisible(e.Pos.Row)
+		}
+	case tcell.KeyDown:
+		e.ClearSelection()
+		e.currentSuggest = ""
+		if ev.Modifiers()&tcell.ModMeta != 0 {
+			e.Pos.Row, e.Pos.Col = len(e.buf)-1, 0
+			e.EnsureVisible(e.Pos.Row)
+			return
+		}
+
+		keepVisualCol = true
+		if e.goalCol == 0 {
+			e.goalCol = visualColFromLine(e.buf[e.Pos.Row], e.Pos.Col)
+		}
+		if e.Pos.Row < len(e.buf)-1 {
+			e.Pos.Row++
+			e.Pos.Col = visualColToLine(e.buf[e.Pos.Row], e.goalCol)
+			e.adjustCol()
+			e.EnsureVisible(e.Pos.Row)
+		}
+	case tcell.KeyLeft:
+		e.currentSuggest = ""
+		if ev.Modifiers()&tcell.ModMeta != 0 {
+			e.ClearSelection()
+			firstNonSpace := 0
+			for i, ch := range e.buf[e.Pos.Row] {
+				if !unicode.IsSpace(ch) {
+					firstNonSpace = i
+					break
+				}
+			}
+			e.Pos.Col = firstNonSpace
+			return
+		}
+		if start, _, ok := e.Selection(); ok {
+			e.Pos = start
+			e.ClearSelection()
+			return
+		}
+
+		if e.Pos.Col > 0 {
+			e.Pos.Col--
+		} else if e.Pos.Row > 0 {
+			e.Pos.Row--
+			e.Pos.Col = len(e.buf[e.Pos.Row]) // End of previous line
+			e.EnsureVisible(e.Pos.Row)
+		}
+	case tcell.KeyRight:
+		e.currentSuggest = ""
+		if ev.Modifiers()&tcell.ModMeta != 0 {
+			e.ClearSelection()
+			e.Pos.Col = len(e.buf[e.Pos.Row])
+			return
+		}
+		if _, end, ok := e.Selection(); ok {
+			e.Pos = end
+			e.ClearSelection()
+			return
+		}
+		if e.Pos.Col < len(e.buf[e.Pos.Row]) {
+			e.Pos.Col++
+		} else if e.Pos.Row < len(e.buf)-1 {
+			e.Pos.Row++
+			e.Pos.Col = 0 // Start of next line
+			e.EnsureVisible(e.Pos.Row)
+		}
+	case tcell.KeyEnter:
+		e.currentSuggest = ""
+		e.SaveEdit()
 		e.MergeNext = false
-		start, end, ok := e.Selection()
-		if !ok {
-			// cut line by default
-			s := string(e.Line(e.Pos.Row)) + "\n"
-			e.app.clipboard = s
-			e.app.manager.Screen().SetClipboard([]byte(s))
-			e.DeleteRange(ui.Pos{Row: e.Pos.Row}, ui.Pos{Row: e.Pos.Row + 1})
+		defer onChange()
+		e.Dirty = true
+		if start, end, ok := e.Selection(); ok {
+			e.DeleteRange(start, end)
+			e.ClearSelection()
+		}
+		head := e.buf[e.Pos.Row][:e.Pos.Col]
+		tail := e.buf[e.Pos.Row][e.Pos.Col:]
+
+		// keep indentation
+		lead := 0
+		for _, r := range head {
+			if unicode.IsSpace(r) {
+				lead++
+			} else {
+				break
+			}
+		}
+		newLine := make([]rune, lead+len(tail))
+		copy(newLine, head[:lead])
+		copy(newLine[lead:], tail)
+
+		e.buf[e.Pos.Row] = head
+		e.buf = slices.Insert(e.buf, e.Pos.Row+1, newLine)
+
+		e.Pos.Row++
+		e.Pos.Col = lead
+		e.EnsureVisible(e.Pos.Row)
+	case tcell.KeyBackspace, tcell.KeyBackspace2:
+		if !e.MergeNext {
+			e.SaveEdit()
+		}
+		e.MergeNext = true
+		defer onChange()
+		e.Dirty = true
+		if start, end, ok := e.Selection(); ok {
+			e.DeleteRange(start, end)
+			e.ClearSelection()
+			e.updateInlineSuggest()
+			return
+		}
+		if e.Pos.Col > 0 {
+			e.buf[e.Pos.Row] = slices.Delete(e.buf[e.Pos.Row], e.Pos.Col-1, e.Pos.Col)
+			e.Pos.Col--
+			e.updateInlineSuggest()
+		} else if e.Pos.Row > 0 {
+			prevLine := e.buf[e.Pos.Row-1]
+			e.Pos.Col = len(prevLine)
+			e.buf[e.Pos.Row-1] = append(prevLine, e.buf[e.Pos.Row]...)
+
+			e.buf = slices.Delete(e.buf, e.Pos.Row, e.Pos.Row+1)
+			e.Pos.Row--
+			e.EnsureVisible(e.Pos.Row)
+			e.currentSuggest = ""
+		}
+	case tcell.KeyRune:
+		if !e.MergeNext {
+			e.SaveEdit()
+		}
+		e.MergeNext = true
+		defer onChange()
+		e.Dirty = true
+		// 如果有選取，先刪除選取範圍，再插入字元
+		if start, end, ok := e.Selection(); ok {
+			e.DeleteRange(start, end)
+			e.ClearSelection()
+		}
+		r := ev.Rune()
+		e.buf[e.Pos.Row] = slices.Insert(e.buf[e.Pos.Row], e.Pos.Col, r)
+		e.Pos.Col++
+		e.updateInlineSuggest()
+	case tcell.KeyTAB:
+		// Try to accept inline suggestion first
+		if e.InlineSuggest && e.currentSuggest != "" {
+			e.SaveEdit()
+			e.MergeNext = false
+			defer onChange()
+			e.Dirty = true
+			start, _, ok := e.WordRangeAtCursor()
+			if ok {
+				e.DeleteRange(Pos{Row: e.Pos.Row, Col: start}, e.Pos)
+			}
+			e.InsertText(e.currentSuggest)
+			e.currentSuggest = ""
 			return true
 		}
 
-		s := e.SelectedText()
-		e.app.clipboard = s
-		e.app.manager.Screen().SetClipboard([]byte(s))
-		e.DeleteRange(start, end)
-		e.ClearSelection()
-	case "ctrl+v":
-		e.Editor.SaveEdit()
+		e.SaveEdit()
 		e.MergeNext = false
-		e.InsertText(e.app.clipboard)
-	case "ctrl+d":
-		// if no selection, select the word at current cursor;
-		// if has selection, jump to the next same word, like * in Vim.
-		// To keep things simple, this is not multiple selection (multi-cursor)
-		start, end, ok := e.Selection()
-		if !ok {
-			e.SelectWord()
-		} else if start.Row == end.Row {
-			query := string(e.Line(start.Row)[start.Col:end.Col])
-			e.FindNext(query)
+		defer onChange()
+		e.Dirty = true
+		if start, end, ok := e.Selection(); ok {
+			e.DeleteRange(start, end)
+			e.ClearSelection()
 		}
-	case "ctrl+l":
-		e.ExpandSelectionToLine()
-	case "ctrl+b":
-		e.ExpandSelectionToBrackets()
-	case "ctrl+g":
-		e.gotoDefinition()
-	case "alt+up": // goto first line
-		e.gotoLine(0)
-	case "alt+down": // goto last line
-		e.gotoLine(e.Len() - 1)
-	case "ctrl+a", "alt+left": // goto the first non-space character of line
-		e.ClearSelection()
-		for i, char := range e.Line(e.Pos.Row) {
+		e.buf[e.Pos.Row] = slices.Insert(e.buf[e.Pos.Row], e.Pos.Col, '\t')
+		e.Pos.Col++
+	case tcell.KeyHome:
+		// goto the first non-space character
+		for i, char := range e.buf[e.Pos.Row] {
 			if !unicode.IsSpace(char) {
 				e.Pos.Col = i
 				break
 			}
 		}
-	case "ctrl+e", "alt+right": // goto the end of line
-		e.ClearSelection()
-		e.Pos.Col = len(e.Line(e.Pos.Row))
+	case tcell.KeyEnd:
+		e.Pos.Col = len(e.buf[e.Pos.Row])
 	default:
-		if !e.Editor.HandleKey(ev) {
-			// Bubble event to parent
-			return e.app.handleGlobalKey(ev)
+		consumed = false
+	}
+	return consumed
+}
+
+func (e *editor) OnMouseUp(x, y int) {
+	e.pressed = false
+	if e.Pos.Row == e.anchor.Row && e.Pos.Col == e.anchor.Col {
+		e.selecting = false
+	}
+}
+
+func (e *editor) OnMouseDown(x, y int) {
+	e.currentSuggest = ""
+	// Calculate the target row (relative to content)
+	targetRow := y + e.offsetY
+
+	// Clamp the target row
+	if targetRow < 0 {
+		e.Pos.Row = 0
+	} else if targetRow >= len(e.buf) {
+		e.Pos.Row = len(e.buf) - 1
+	} else {
+		e.Pos.Row = targetRow
+	}
+
+	if e.Pos.Row < 0 {
+		return
+	}
+
+	// Calculate the target column (rune index)
+	visualCol := max(x-e.contentX, 0)
+	e.Pos.Col = visualColToLine(e.buf[e.Pos.Row], visualCol)
+
+	if !e.pressed {
+		// 點擊瞬間，錨點與游標重合
+		e.anchor = e.Pos
+		e.selecting = true
+		e.pressed = true
+	}
+}
+
+func (e *editor) OnMouseEnter() {}
+func (e *editor) OnMouseLeave() {}
+func (e *editor) OnMouseMove(lx, ly int) {
+	if e.pressed {
+		// Drag to select
+		targetRow := ly + e.offsetY
+		if targetRow < 0 {
+			targetRow = 0
+		} else if targetRow >= len(e.buf) {
+			targetRow = len(e.buf) - 1
 		}
+		currentLine := e.buf[targetRow]
+		clickedX := max(lx-e.contentX, 0)
+		targetCol := visualColToLine(currentLine, clickedX)
+
+		e.Pos.Row = targetRow
+		e.Pos.Col = targetCol
 	}
-	return true
 }
 
-// gotoLine moves the cursor to the specified 0-based line number
-// and centers the view on that line.
-func (e *Editor) gotoLine(line int) {
-	if line < 0 {
-		line = 0
+// SetSelection sets the selection anchor to startRow and startCol,
+// sets content cursor to endRow and endCol.
+func (e *editor) SetSelection(start, end Pos) {
+	length := e.Len()
+	if start.Row < 0 || start.Row > length-1 || end.Row < 0 || end.Row > length-1 {
+		return
 	}
-	if line >= e.Len() {
-		line = e.Len() - 1
-	}
-	e.SetCursor(line, 0)
-	e.CenterRow(line)
-	e.app.recordJump()
+	e.anchor = start
+	e.Pos = end
+	e.selecting = true
+	e.adjustCol()
 }
 
-func (e *Editor) gotoDefinition() {
+func (e *editor) Selection() (start, end Pos, ok bool) {
+	if !e.selecting || (e.Pos.Row == e.anchor.Row && e.Pos.Col == e.anchor.Col) {
+		return
+	}
+
+	start = e.anchor
+	end = e.Pos
+
+	// ensure start is before end
+	if start.Row > end.Row || (start.Row == end.Row && start.Col > end.Col) {
+		start, end = end, start
+	}
+	return start, end, true
+}
+
+func (e *editor) ClearSelection() {
+	e.selecting = false
+}
+
+func (e *editor) isSelected(pos Pos) bool {
+	start, end, ok := e.Selection()
+	if !ok {
+		return false
+	}
+
+	if pos.Row < start.Row || pos.Row > end.Row {
+		return false
+	}
+	if pos.Row > start.Row && pos.Row < end.Row {
+		return true
+	}
+	if start.Row == end.Row {
+		return pos.Col >= start.Col && pos.Col < end.Col
+	}
+	if pos.Row == start.Row {
+		return pos.Col >= start.Col
+	}
+	if pos.Row == end.Row {
+		return pos.Col < end.Col
+	}
+	return false
+}
+
+// WordRangeAtCursor returns the word boundaries at current cursor.
+func (e *editor) WordRangeAtCursor() (start, end int, ok bool) {
+	if e.Pos.Row < 0 || e.Pos.Row >= len(e.buf) {
+		return
+	}
+	line := e.buf[e.Pos.Row]
+	if e.Pos.Col < 0 || e.Pos.Col > len(line) {
+		return
+	}
+
+	isWordChar := func(r rune) bool {
+		return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+	}
+
+	start = e.Pos.Col
+	for start > 0 && isWordChar(line[start-1]) {
+		start--
+	}
+
+	end = e.Pos.Col
+	for end < len(line) && isWordChar(line[end]) {
+		end++
+	}
+
+	// no word
+	if start == end {
+		return
+	}
+
+	return start, end, true
+}
+
+// SelectWord selects word at current cursor
+func (e *editor) SelectWord() {
+	if len(e.buf) == 0 || e.Pos.Row >= len(e.buf) {
+		return
+	}
+
 	start, end, ok := e.WordRangeAtCursor()
 	if !ok {
 		return
 	}
-	word := string(e.Line(e.Pos.Row)[start:end])
+	// 讓游標停在單詞末尾，方便下次搜尋從末尾開始
+	e.SetSelection(Pos{Row: e.Pos.Row, Col: start}, Pos{Row: e.Pos.Row, Col: end})
+}
 
-	for _, s := range e.symbols {
-		if s.Name == word {
-			e.gotoLine(s.Line)
+// ExpandSelectionToLine expands selection to line.
+// Repeated calls may expand further lines.
+func (e *editor) ExpandSelectionToLine() {
+	if len(e.buf) == 0 || e.Pos.Row >= len(e.buf) {
+		return
+	}
+
+	start, end, ok := e.Selection()
+	if !ok {
+		if e.Pos.Row < len(e.buf)-1 {
+			// 選中整行，並將游標移至下一行開頭（模仿主流編輯器行為）
+			e.SetSelection(Pos{Row: e.Pos.Row}, Pos{Row: e.Pos.Row + 1})
+		} else {
+			e.SetSelection(Pos{Row: e.Pos.Row}, Pos{Row: e.Pos.Row, Col: len(e.buf[e.Pos.Row])})
+		}
+		return
+	}
+
+	// expand selection
+	if end.Row < e.Len()-1 {
+		e.SetSelection(Pos{Row: start.Row, Col: 0}, Pos{Row: end.Row + 1, Col: 0})
+	} else {
+		line := e.Line(end.Row)
+		e.SetSelection(Pos{Row: start.Row, Col: 0}, Pos{Row: end.Row, Col: len(line)})
+	}
+}
+
+// ExpandSelectionToBrackets expands selection to the nearest enclosing brackets.
+// Repeated calls may expand further depending on context;
+func (e *editor) ExpandSelectionToBrackets() {
+	openRow, openCol, openCh := e.findOpeningBracket(e.Pos.Row, e.Pos.Col)
+	if openCol == -1 {
+		return
+	}
+
+	closeRow, closeCol := e.findClosingBracket(openRow, openCol, openCh)
+	if closeCol == -1 {
+		return
+	}
+
+	// include the brackets
+	e.SetSelection(Pos{Row: openRow, Col: openCol}, Pos{Row: closeRow, Col: closeCol + 1})
+}
+
+var bracketOpen = map[rune]rune{
+	'(': ')',
+	'[': ']',
+	'{': '}',
+}
+
+var bracketClose = map[rune]rune{
+	')': '(',
+	']': '[',
+	'}': '{',
+}
+
+func (e *editor) findOpeningBracket(startRow, startCol int) (openRow, openCol int, openCh rune) {
+	var stack []rune
+	for r := startRow; r >= 0; r-- {
+		cStart := len(e.buf[r]) - 1
+		if r == startRow {
+			cStart = startCol - 1
+		}
+
+		for c := cStart; c >= 0; c-- {
+			char := e.buf[r][c]
+			if open, ok := bracketClose[char]; ok {
+				stack = append(stack, open)
+			} else if _, ok := bracketOpen[char]; ok {
+				if len(stack) == 0 {
+					return r, c, char
+				}
+				// pop
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+	return -1, -1, 0
+}
+
+func (e *editor) findClosingBracket(openRow, openCol int, openCh rune) (closeRow, closeCol int) {
+	closeCh := bracketOpen[openCh]
+	depth := 0
+	for r := openRow; r < len(e.buf); r++ {
+		cStart := 0
+		if r == openRow {
+			cStart = openCol + 1
+		}
+
+		for c := cStart; c < len(e.buf[r]); c++ {
+			char := e.buf[r][c]
+			switch char {
+			case openCh:
+				depth++
+			case closeCh:
+				if depth == 0 {
+					return r, c
+				}
+				depth--
+			}
+		}
+	}
+	return -1, -1
+}
+
+// FindNext 尋找下一個匹配項並更新選區
+func (e *editor) FindNext(query string) {
+	if query == "" {
+		return
+	}
+	qRunes := []rune(query)
+	qLen := len(qRunes)
+	lineCount := len(e.buf)
+
+	// 從當前位置之後開始搜尋
+	startRow := e.Pos.Row
+	startCol := e.Pos.Col
+
+	for i := range lineCount {
+		// 使用取模實現 Wrap Around (循環搜尋)
+		currentRow := (startRow + i) % lineCount
+		line := e.buf[currentRow]
+
+		// 如果是起始行，從當前列開始找；否則從行首開始找
+		searchFromCol := 0
+		if i == 0 {
+			searchFromCol = startCol
+		}
+
+		if searchFromCol >= len(line) && i == 0 {
+			continue
+		}
+
+		// 在當前行中尋找匹配
+		foundIdx := -1
+		remaining := line[searchFromCol:]
+		for j := 0; j <= len(remaining)-qLen; j++ {
+			match := true
+			for k := range qLen {
+				if remaining[j+k] != qRunes[k] {
+					match = false
+					break
+				}
+			}
+			if match {
+				foundIdx = j
+				break
+			}
+		}
+
+		if foundIdx != -1 {
+			// 找到匹配項後的座標計算
+			actualCol := searchFromCol + foundIdx
+
+			// 1. 更新選區：從匹配項開始到結束
+			e.anchor = Pos{Row: currentRow, Col: actualCol}
+			e.Pos.Row = currentRow
+			e.Pos.Col = actualCol + qLen
+			e.selecting = true
+
+			// 3. 確保視覺調整
+			e.CenterRow(currentRow)
 			return
 		}
 	}
 }
 
-func (e *Editor) updateSymbols() {
-	e.symbols = extractSymbols(e.String())
+// SelectedText 回傳當前選區的字串內容
+func (e *editor) SelectedText() string {
+	start, end, ok := e.Selection()
+	if !ok {
+		return ""
+	}
+
+	if start.Row == end.Row {
+		return string(e.buf[start.Row][start.Col:end.Col])
+	}
+
+	var sb strings.Builder
+	sb.WriteString(string(e.buf[start.Row][start.Col:]))
+	sb.WriteByte('\n')
+	for i := start.Row + 1; i < end.Row; i++ {
+		sb.WriteString(string(e.buf[i]))
+		sb.WriteByte('\n')
+	}
+	sb.WriteString(string(e.buf[end.Row][:end.Col]))
+	return sb.String()
 }
 
-func (e *Editor) OnMouseDown(lx, ly int) {
-	e.Editor.OnMouseDown(lx, ly)
-	e.app.recordJump()
+func (e *editor) OnScroll(dy int) {
+	if len(e.buf) <= e.viewH {
+		e.offsetY = 0
+	} else if dy < 0 {
+		// scroll down
+		e.offsetY = max(e.offsetY+dy, 0)
+	} else {
+		// scroll up
+		e.offsetY = min(e.offsetY+dy, len(e.buf)-e.viewH)
+	}
 }
 
-const (
-	stateDefault = iota
-	stateInString
-	stateInRawString
-	stateInComment
-)
+// OnChange sets a callback function that is called whenever the text content changes.
+func (e *editor) OnChange(fn func()) {
+	e.onChange = fn
+}
 
-func highlightGo(line []rune) []ui.StyleSpan {
-	var spans []ui.StyleSpan
-	state := stateDefault
+// Line return a line of text on the given row index.
+func (e *editor) Line(i int) []rune {
+	return slices.Clone(e.buf[i])
+}
+
+type Pos struct {
+	Row int
+	Col int
+}
+
+func (p Pos) Advance(rs []rune) Pos {
+	for _, r := range rs {
+		if r == '\n' {
+			p.Row++
+			p.Col = 0
+		} else {
+			p.Col++
+		}
+	}
+	return p
+}
+
+func (e *editor) insertRunes(pos Pos, rs []rune) {
+	if len(rs) == 0 {
+		return
+	}
+
+	lines := splitRunesByNewline(rs)
+	line := e.buf[pos.Row]
+
+	if len(lines) == 1 {
+		e.buf[pos.Row] = spliceRunes(line, pos.Col, 0, lines[0])
+		return
+	}
+
+	// multi-line insert
+	head := append(append([]rune{}, line[:pos.Col]...), lines[0]...)
+	tail := append([]rune{}, line[pos.Col:]...)
+
+	lines[len(lines)-1] = append(lines[len(lines)-1], tail...)
+
+	newLines := make([][]rune, 0, len(lines))
+	newLines = append(newLines, head)
+	newLines = append(newLines, lines[1:]...)
+
+	e.buf = spliceLines(e.buf, pos.Row, 1, newLines)
+}
+
+// InsertText simulates a paste operation: it inserts a string 's' at the current
+// cursor position (t.row, t.col), correctly handling any embedded newlines ('\n').
+func (e *editor) InsertText(s string) {
+	if s == "" {
+		return
+	}
+
+	// selection
+	if start, end, ok := e.Selection(); ok {
+		e.DeleteRange(start, end)
+		e.ClearSelection()
+	}
+
+	// insert
+	rs := []rune(s)
+	e.insertRunes(e.Pos, rs)
+
+	// move cursor
+	e.Pos = e.Pos.Advance(rs)
+
+	// UI side effects
+	e.EnsureVisible(e.Pos.Row)
+	e.Dirty = true
+	if e.onChange != nil {
+		e.onChange()
+	}
+}
+
+func splitRunesByNewline(rs []rune) [][]rune {
+	var lines [][]rune
 	start := 0
-
-	for i := 0; i < len(line); {
-		r := line[i]
-		switch state {
-		case stateDefault:
-			switch r {
-			case '"':
-				state = stateInString
-				start = i
-			case '`':
-				state = stateInRawString
-				start = i
-			case '/':
-				if i+1 < len(line) && line[i+1] == '/' {
-					state = stateInComment
-					start = i
-				} else {
-					spans = append(spans, ui.StyleSpan{
-						Start: i,
-						End:   i + 1,
-						Style: ui.Theme.Syntax.Operator,
-					})
-					i++
-					continue
-				}
-			case '+', '-', '*', '%', '&', '|', '^', '<', '>', '=', '!', ':':
-				// Parse multi-character operators
-				j := i + 1
-				for j < len(line) && isOperatorRune(line[j]) {
-					j++
-				}
-				spans = append(spans, ui.StyleSpan{
-					Start: i,
-					End:   j,
-					Style: ui.Theme.Syntax.Operator,
-				})
-				i = j
-				continue
-			default:
-				if isAlphaNumeric(r) {
-					j := i + 1
-					for j < len(line) && isAlphaNumeric(line[j]) {
-						j++
-					}
-					word := string(line[i:j])
-
-					if token.IsKeyword(word) {
-						spans = append(spans, ui.StyleSpan{
-							Start: i,
-							End:   j,
-							Style: ui.Theme.Syntax.Keyword,
-						})
-						i = j
-						continue
-					}
-
-					if j < len(line) && line[j] == '(' {
-						style := ui.Theme.Syntax.FunctionCall
-						if i-5 >= 0 && string(line[i-5:i]) == "func " {
-							style = ui.Theme.Syntax.FunctionName
-						}
-						spans = append(spans, ui.StyleSpan{
-							Start: i,
-							End:   j,
-							Style: style,
-						})
-						i = j
-						continue
-					}
-
-					isNumber := true
-					for _, c := range word {
-						if !unicode.IsDigit(c) {
-							isNumber = false
-							break
-						}
-					}
-					if isNumber {
-						spans = append(spans, ui.StyleSpan{
-							Start: i,
-							End:   j,
-							Style: ui.Theme.Syntax.Number,
-						})
-						i = j
-						continue
-					}
-					i = j
-					continue
-				}
-			}
-		case stateInString:
-			if r == '"' {
-				spans = append(spans, ui.StyleSpan{Start: start, End: i + 1, Style: ui.Theme.Syntax.String})
-				state = stateDefault
-			}
-		case stateInRawString:
-			if r == '`' {
-				spans = append(spans, ui.StyleSpan{Start: start, End: i + 1, Style: ui.Theme.Syntax.String})
-				state = stateDefault
-			}
-		case stateInComment:
-			spans = append(spans, ui.StyleSpan{Start: start, End: len(line), Style: ui.Theme.Syntax.Comment})
-			return spans
+	for i, r := range rs {
+		if r == '\n' {
+			lines = append(lines, append([]rune{}, rs[start:i]...))
+			start = i + 1
 		}
-		i++
 	}
-	return spans
+	lines = append(lines, append([]rune{}, rs[start:]...))
+	return lines
 }
 
-func isAlphaNumeric(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+func spliceRunes(rs []rune, start, remove int, insert []rune) []rune {
+	out := make([]rune, 0, len(rs)-remove+len(insert))
+	out = append(out, rs[:start]...)
+	if insert != nil {
+		out = append(out, insert...)
+	}
+	out = append(out, rs[start+remove:]...)
+	return out
 }
 
-func isOperatorRune(r rune) bool {
-	return strings.ContainsRune("+-*/%&|^<>=!:", r)
+func spliceLines(lines [][]rune, start, remove int, insert [][]rune) [][]rune {
+	out := make([][]rune, 0, len(lines)-remove+len(insert))
+	out = append(out, lines[:start]...)
+	if insert != nil {
+		out = append(out, insert...)
+	}
+	out = append(out, lines[start+remove:]...)
+	return out
 }
 
-func highlightMarkdown(line []rune) []ui.StyleSpan {
-	var spans []ui.StyleSpan
-	if len(line) == 0 {
-		return spans
+// DeleteRange deletes a range of text defined by two cursor positions (start, end).
+// the positions are inclusive of start and exclusive of end.
+func (e *editor) DeleteRange(start, end Pos) {
+	// 1. Normalize and clamp the selection range
+	if start.Row > end.Row || (start.Row == end.Row && start.Col > end.Col) {
+		start.Row, end.Row = end.Row, start.Row
+		start.Col, end.Col = end.Col, start.Col
 	}
 
-	// Headers: # ## ### etc.
-	if line[0] == '#' {
-		i := 0
-		for i < len(line) && line[i] == '#' {
-			i++
-		}
-		spans = []ui.StyleSpan{
-			{
-				Start: 0,
-				End:   i,
-				Style: ui.Style{FontBold: true, FG: ui.Theme.Syntax.Operator.FG},
-			},
-			{
-				Start: i,
-				End:   len(line),
-				Style: ui.Style{FontBold: true},
-			},
-		}
-		return spans
+	if start.Row < 0 {
+		start.Row = 0
+	}
+	if end.Row >= len(e.buf) {
+		end.Row = len(e.buf) - 1
+	}
+	if start.Row > end.Row {
+		return
 	}
 
-	if strings.HasPrefix(string(line), "```") {
-		spans = []ui.StyleSpan{
-			{
-				Start: 0,
-				End:   3,
-				Style: ui.Style{BG: ui.Theme.Selection},
-			},
-		}
-		return spans
+	startLine := e.buf[start.Row]
+	endLine := e.buf[end.Row]
+
+	start.Col = min(start.Col, len(startLine))
+	end.Col = min(end.Col, len(endLine))
+
+	// 2. Extract Head and Tail
+	head := startLine[:start.Col]
+	tail := endLine[end.Col:]
+
+	// 3. Perform Merging and Deletion
+	mergedLine := append(head, tail...)
+
+	// a) Replace the starting line with the merged content
+	e.buf[start.Row] = mergedLine
+
+	// b) Delete intermediate lines
+	if start.Row < end.Row {
+		e.buf = slices.Delete(e.buf, start.Row+1, end.Row+1)
 	}
 
-	// List items: -, *, or digits followed by .
-	trimmed := 0
-	for trimmed < len(line) && unicode.IsSpace(line[trimmed]) {
-		trimmed++
-	}
-	if trimmed < len(line) {
-		if line[trimmed] == '-' || line[trimmed] == '*' {
-			if trimmed+1 >= len(line) || unicode.IsSpace(line[trimmed+1]) {
-				spans = append(spans, ui.StyleSpan{
-					Start: trimmed,
-					End:   trimmed + 1,
-					Style: ui.Theme.Syntax.Number,
-				})
-			}
-		} else if unicode.IsDigit(line[trimmed]) {
-			j := trimmed + 1
-			for j < len(line) && unicode.IsDigit(line[j]) {
-				j++
-			}
-			if j < len(line) && line[j] == '.' {
-				spans = append(spans, ui.StyleSpan{
-					Start: trimmed,
-					End:   j + 1,
-					Style: ui.Theme.Syntax.Keyword,
-				})
-			}
-		}
+	if len(e.buf) == 0 {
+		e.buf = [][]rune{{}}
 	}
 
-	// Inline code: `code`
-	for i := 0; i < len(line); i++ {
-		if line[i] == '`' {
-			start := i
-			i++
-			for i < len(line) && line[i] != '`' {
-				i++
-			}
-			if i < len(line) {
-				spans = append(spans, ui.StyleSpan{
-					Start: start,
-					End:   i + 1,
-					Style: ui.Style{BG: ui.Theme.Selection},
-				})
-			}
-		}
+	// 4. Update Cursor State
+	e.Pos.Row = start.Row
+	e.Pos.Col = len(head)
+
+	e.EnsureVisible(e.Pos.Row)
+	e.Dirty = true
+	if e.onChange != nil {
+		e.onChange()
+	}
+}
+
+// SaveEdit saves the current buffer state to the undo stack.
+func (e *editor) SaveEdit() {
+	// Create a deep copy of the buffer
+	bufCopy := make([][]rune, len(e.buf))
+	for i := range e.buf {
+		bufCopy[i] = slices.Clone(e.buf[i])
 	}
 
-	// Bold: **text**
-	for i := 0; i < len(line)-1; i++ {
-		if line[i] == '*' && line[i+1] == '*' {
-			start := i
-			i += 2
-			for i < len(line)-1 {
-				if line[i] == '*' && line[i+1] == '*' {
-					spans = append(spans, ui.StyleSpan{
-						Start: start,
-						End:   i + 2,
-						Style: ui.Style{FontBold: true},
-					})
-					i++
-					break
-				}
-				i++
-			}
-		}
+	record := editRecord{
+		buf:       bufCopy,
+		pos:       e.Pos,
+		anchor:    e.anchor,
+		selecting: e.selecting,
 	}
 
-	// Italic: *text* (but not **)
-	for i := 0; i < len(line); i++ {
-		if line[i] == '*' {
-			if i > 0 && line[i-1] == '*' {
-				continue
-			}
-			if i+1 < len(line) && line[i+1] == '*' {
-				continue
-			}
-			start := i
-			i++
-			for i < len(line) {
-				if line[i] == '*' {
-					if i+1 < len(line) && line[i+1] == '*' {
-						break
-					}
-					spans = append(spans, ui.StyleSpan{
-						Start: start,
-						End:   i + 1,
-						Style: ui.Style{FontItalic: true},
-					})
-					break
-				}
-				i++
-			}
-		}
+	e.undoStack = append(e.undoStack, record)
+
+	// Clear redo stack when new edit is made
+	e.redoStack = nil
+}
+
+// Undo reverts the last edit operation.
+func (e *editor) Undo() {
+	if len(e.undoStack) == 0 {
+		return
 	}
 
-	// Links: [text](url)
-	for i := 0; i < len(line); i++ {
-		if line[i] == '[' {
-			start := i
-			i++
-			for i < len(line) && line[i] != ']' {
-				i++
-			}
-			if i < len(line) && i+1 < len(line) && line[i+1] == '(' {
-				i += 2
-				for i < len(line) && line[i] != ')' {
-					i++
-				}
-				if i < len(line) {
-					spans = append(spans, ui.StyleSpan{
-						Start: start,
-						End:   i + 1,
-						Style: ui.Theme.Syntax.FunctionCall,
-					})
-				}
-			}
-		}
+	// Save current state to redo stack
+	bufCopy := make([][]rune, len(e.buf))
+	for i := range e.buf {
+		bufCopy[i] = slices.Clone(e.buf[i])
+	}
+	e.redoStack = append(e.redoStack, editRecord{
+		buf:       bufCopy,
+		pos:       e.Pos,
+		anchor:    e.anchor,
+		selecting: e.selecting,
+	})
+
+	// Restore previous state
+	record := e.undoStack[len(e.undoStack)-1]
+	e.undoStack = e.undoStack[:len(e.undoStack)-1]
+
+	e.buf = record.buf
+	e.Pos = record.pos
+	e.anchor = record.anchor
+	e.selecting = record.selecting
+
+	e.adjustCol()
+	e.EnsureVisible(e.Pos.Row)
+	e.MergeNext = false
+	if e.onChange != nil {
+		e.onChange()
+	}
+}
+
+// Redo reapplies an undone edit operation.
+func (e *editor) Redo() {
+	if len(e.redoStack) == 0 {
+		return
 	}
 
-	return spans
+	// Save current state to undo stack
+	bufCopy := make([][]rune, len(e.buf))
+	for i := range e.buf {
+		bufCopy[i] = slices.Clone(e.buf[i])
+	}
+	e.undoStack = append(e.undoStack, editRecord{
+		buf:       bufCopy,
+		pos:       e.Pos,
+		anchor:    e.anchor,
+		selecting: e.selecting,
+	})
+
+	// Restore redo state
+	record := e.redoStack[len(e.redoStack)-1]
+	e.redoStack = e.redoStack[:len(e.redoStack)-1]
+
+	e.buf = record.buf
+	e.Pos = record.pos
+	e.anchor = record.anchor
+	e.selecting = record.selecting
+
+	e.adjustCol()
+	e.EnsureVisible(e.Pos.Row)
+	e.MergeNext = false
+	if e.onChange != nil {
+		e.onChange()
+	}
+}
+
+// updateInlineSuggest finds and sets the current inline suggestion.
+func (e *editor) updateInlineSuggest() {
+	if !e.InlineSuggest || e.Suggester == nil {
+		return
+	}
+
+	e.currentSuggest = ""
+
+	if e.Pos.Row >= len(e.buf) || e.Pos.Col == 0 {
+		return
+	}
+
+	line := e.buf[e.Pos.Row]
+	if e.Pos.Col > len(line) {
+		return
+	}
+
+	isWordChar := func(r rune) bool {
+		return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+	}
+
+	// Don't suggest if cursor is in the middle of a word
+	if e.Pos.Col < len(line) && isWordChar(line[e.Pos.Col]) {
+		return
+	}
+
+	// Find word start
+	wordStart := e.Pos.Col
+	for wordStart > 0 && isWordChar(line[wordStart-1]) {
+		wordStart--
+	}
+
+	if wordStart == e.Pos.Col {
+		return
+	}
+
+	prefix := string(line[wordStart:e.Pos.Col])
+	if len(prefix) == 0 {
+		return
+	}
+
+	// Call suggester with timeout to prevent blocking
+	timeout := e.SuggesterTimeout
+	if timeout == 0 {
+		timeout = 100 * time.Millisecond
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	resultCh := make(chan string, 1)
+	go func() {
+		resultCh <- e.Suggester(ctx, prefix)
+	}()
+
+	select {
+	case result := <-resultCh:
+		e.currentSuggest = result
+	case <-ctx.Done():
+		// Timeout - don't set suggestion
+	}
+}
+
+type StyleSpan struct {
+	Start int
+	End   int // exclusive
+	Style ui.Style
+}
+
+func expandStyles(spans []StyleSpan, base ui.Style, n int) []ui.Style {
+	styles := make([]ui.Style, n)
+	for i := range styles {
+		styles[i] = base
+	}
+	for _, sp := range spans {
+		for i := sp.Start; i < sp.End && i < n; i++ {
+			styles[i] = styles[i].Merge(sp.Style)
+		}
+	}
+	return styles
 }

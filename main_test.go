@@ -6,28 +6,6 @@ import (
 	"github.com/cansyan/co/ui"
 )
 
-func TestNewEditor(t *testing.T) {
-	manager := ui.NewManager()
-	app := newApp(manager)
-	editor := NewEditor(app)
-
-	if editor == nil {
-		t.Fatal("NewEditor returned nil")
-	}
-
-	if editor.Editor == nil {
-		t.Fatal("Editor TextEditor is nil")
-	}
-
-	if editor.app != app {
-		t.Error("Editor app not set correctly")
-	}
-
-	if !editor.InlineSuggest {
-		t.Error("InlineSuggest should be enabled by default")
-	}
-}
-
 func TestExtractSymbols(t *testing.T) {
 	goCode := `package main
 
@@ -189,7 +167,7 @@ func TestAppHistory(t *testing.T) {
 	app := newApp(manager)
 
 	// Test history recording
-	app.pushHistory("/path/to/file", ui.Pos{Row: 5, Col: 10})
+	app.pushHistory("/path/to/file", Pos{Row: 5, Col: 10})
 	if len(app.history) != 1 {
 		t.Errorf("pushHistory failed. Expected 1 entry, Got: %d", len(app.history))
 	}
@@ -199,7 +177,7 @@ func TestAppHistory(t *testing.T) {
 	}
 
 	// Test navigation
-	app.pushHistory("/path/to/another", ui.Pos{Row: 2, Col: 5})
+	app.pushHistory("/path/to/another", Pos{Row: 2, Col: 5})
 	app.goBack()
 	if app.historyPos != 0 {
 		t.Errorf("goBack failed. Expected historyPos 0, Got: %d", app.historyPos)
