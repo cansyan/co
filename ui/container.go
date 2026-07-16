@@ -223,7 +223,7 @@ func (v *vstack) Draw(s Screen, rect Rect) {
 	// no-op
 }
 
-func (v *vstack) Append(e ...Element) *vstack {
+func (v *vstack) Add(e ...Element) *vstack {
 	v.children = append(v.children, e...)
 	return v
 }
@@ -316,7 +316,7 @@ func (hs *hstack) Draw(s Screen, rect Rect) {
 	// no-op
 }
 
-func (hs *hstack) Append(e ...Element) *hstack {
+func (hs *hstack) Add(e ...Element) *hstack {
 	hs.children = append(hs.children, e...)
 	return hs
 }

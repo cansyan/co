@@ -76,7 +76,7 @@ func main() {
 	} else {
 		app.newTab("untitled")
 	}
-	app.requestFocus()
+	app.wantFocus()
 
 	if err := manager.Start(app); err != nil {
 		log.Print(err)
@@ -106,7 +106,7 @@ type App struct {
 	saveBtn   *ui.Button
 	quitBtn   *ui.Button
 	cmdBtn    *ui.Button
-	status    string
+	msg       string
 
 	searchBar  *SearchBar
 	showSearch bool
@@ -164,7 +164,7 @@ func (a *App) closeTab(i int) {
 	editor := tab.editor
 	if !editor.Dirty {
 		a.deleteTab(i)
-		a.requestFocus()
+		a.wantFocus()
 		return
 	}
 
@@ -174,12 +174,12 @@ func (a *App) closeTab(i int) {
 			if path := tab.path; path != "untitled" {
 				if err := a.writeFile(path, editor); err != nil {
 					log.Print(err)
-					a.setStatus(err.Error(), 5*time.Second)
+					a.setMsg(err.Error(), 5*time.Second)
 					return
 				}
 				a.deleteTab(i)
 				a.manager.CloseOverlay()
-				a.requestFocus()
+				a.wantFocus()
 				return
 			}
 
@@ -189,11 +189,11 @@ func (a *App) closeTab(i int) {
 				}
 				if err := a.writeFile(path, editor); err != nil {
 					log.Print(err)
-					a.setStatus(err.Error(), 5*time.Second)
+					a.setMsg(err.Error(), 5*time.Second)
 					return
 				}
 				a.deleteTab(i)
-				a.requestFocus()
+				a.wantFocus()
 			})
 		},
 		Style: ui.Style{BG: ui.Theme.Selection},
@@ -206,7 +206,7 @@ func (a *App) closeTab(i int) {
 			ui.NewButton("Don't Save", func() {
 				a.deleteTab(i)
 				a.manager.CloseOverlay()
-				a.requestFocus()
+				a.wantFocus()
 			}),
 			ui.PadH(ui.NewButton("Cancel", a.manager.CloseOverlay), 2),
 			saveBtn,
@@ -251,36 +251,33 @@ func (a *App) Layout(r ui.Rect) *ui.Node {
 	// but for now it is acceptable given the simplicity of the app.
 	tabLabels := ui.HStack()
 	for i, tab := range a.tabs {
-		tabLabels.Append(tab)
+		tabLabels.Add(tab)
 		if i != len(a.tabs)-1 {
-			tabLabels.Append(&ui.Divider{})
+			tabLabels.Add(&ui.Divider{})
 		}
 	}
 
 	mainStack := ui.VStack()
-	mainStack.Append(
+	mainStack.Add(
 		ui.HStack(ui.Grow(tabLabels), a.backBtn, a.fwdBtn, a.cmdBtn, a.newBtn, a.openBtn, a.saveBtn, a.quitBtn),
 	)
 	if len(a.tabs) > 0 {
-		mainStack.Append(ui.Grow(a.tabs[a.activeTab].editor))
+		mainStack.Add(ui.Grow(a.tabs[a.activeTab].editor))
 	}
 	if a.showSearch {
-		mainStack.Append(&ui.Divider{}, a.searchBar)
+		mainStack.Add(&ui.Divider{}, a.searchBar)
 	}
 
 	statusBar := ui.HStack()
 	if e := a.getEditor(); e != nil {
 		posInfo := fmt.Sprintf("Line %d, Column %d", e.Pos.Row+1, e.Pos.Col+1)
-		statusBar.Append(ui.NewText(posInfo))
+		statusBar.Add(ui.NewText(posInfo))
 	}
-	if a.status != "" {
-		statusBar.Append(ui.Spacer, ui.NewText(a.status))
-	}
-	if a.leaderKeyActive {
-		statusBar.Append(ui.Spacer, ui.NewText("Wait for key..."))
+	if a.msg != "" {
+		statusBar.Add(ui.Spacer, ui.NewText(a.msg))
 	}
 
-	mainStack.Append(
+	mainStack.Add(
 		&ui.Divider{},
 		ui.PadH(statusBar, 1),
 	)
@@ -292,14 +289,14 @@ func (a *App) Layout(r ui.Rect) *ui.Node {
 	}
 }
 
-// setStatus sets the status text and clears it after a delay.
-func (a *App) setStatus(msg string, delay time.Duration) {
-	a.status = msg
-	time.AfterFunc(delay, func() {
+// setMsg leaves a short message on status bar and clears after the duration.
+func (a *App) setMsg(msg string, d time.Duration) {
+	a.msg = msg
+	time.AfterFunc(d, func() {
 		// Only clear if the current message is still the one we set.
 		// (Avoid clearing a newer, different message).
-		if a.status == msg {
-			a.status = ""
+		if a.msg == msg {
+			a.msg = ""
 			a.manager.Refresh()
 		}
 	})
@@ -310,7 +307,7 @@ func (a *App) Draw(ui.Screen, ui.Rect) {
 }
 
 // a convenient method to request focus back to the app.
-func (a *App) requestFocus() {
+func (a *App) wantFocus() {
 	a.manager.SetFocus(a)
 }
 
@@ -379,12 +376,12 @@ func (a *App) handleGlobalKey(ev *tcell.EventKey) bool {
 		return true
 	case "ctrl+t":
 		a.newTab("untitled")
-		a.requestFocus()
+		a.wantFocus()
 		return true
 	case "esc":
 		if a.showSearch {
 			a.showSearch = false
-			a.requestFocus()
+			a.wantFocus()
 			return true
 		}
 		return true
@@ -421,7 +418,7 @@ func (a *App) showPalette(prefix string) {
 				if e := a.getEditor(); e != nil {
 					e.gotoLine(lineNum)
 				}
-				a.requestFocus()
+				a.wantFocus()
 			}
 
 		case strings.HasPrefix(text, "@"):
@@ -438,7 +435,7 @@ func (a *App) showPalette(prefix string) {
 			p.list.OnSelect = func(item ui.ListItem) {
 				symbolLine := item.Value.(int)
 				editor.gotoLine(symbolLine)
-				a.requestFocus()
+				a.wantFocus()
 			}
 
 			for _, sym := range editor.symbols {
@@ -476,46 +473,48 @@ func (a *App) fillCommandMode(p *Palette, query string) {
 	}{
 		{"Color Theme: Breaks", func() {
 			ui.Theme = ui.Breakers
-			a.requestFocus()
+			a.wantFocus()
 		}},
 		{"Color Theme: Mariana", func() {
 			ui.Theme = ui.Mariana
-			a.requestFocus()
+			a.wantFocus()
 		}},
 		{"Goto Definition", func() {
 			if e := a.getEditor(); e != nil {
 				e.gotoDefinition()
 			}
-			a.requestFocus()
+			a.wantFocus()
 		}},
 		{"Goto Symbol", func() { a.showPalette("@") }},
 		{"Jump Back", a.goBack},
 		{"Jump Forward", a.goForward},
-		{"New File", func() { a.newTab("untitled"); a.requestFocus() }},
+		{"New File", func() { a.newTab("untitled"); a.wantFocus() }},
 		{"GoBuild", func() {
+			a.wantFocus()
 			go func() {
 				defer a.manager.Refresh()
-				defer a.requestFocus()
 				out, err := exec.Command("go", "build").CombinedOutput()
 				if err != nil {
 					buf := a.newTab("go build...")
 					buf.SetText(string(out))
+					a.manager.SetFocus(buf)
 					return
 				}
-				a.setStatus("go build ok", 5*time.Second)
+				a.setMsg("go build ok", 5*time.Second)
 			}()
 		}},
 		{"GoTest", func() {
+			a.wantFocus()
 			go func() {
 				defer a.manager.Refresh()
-				defer a.requestFocus()
 				out, err := exec.Command("go", "test", "./...").CombinedOutput()
 				if err != nil {
 					buf := a.newTab("go test...")
 					buf.SetText(string(out))
+					a.manager.SetFocus(buf)
 					return
 				}
-				a.setStatus("go test ok", 5*time.Second)
+				a.setMsg("go test ok", 5*time.Second)
 			}()
 		}},
 		{"Quit", a.manager.Stop},
@@ -546,7 +545,7 @@ func (a *App) fillCommandMode(p *Palette, query string) {
 func (a *App) fillFileSearchMode(p *Palette, query string) {
 	p.list.OnSelect = func(item ui.ListItem) {
 		a.openFile(item.Value.(string))
-		a.requestFocus()
+		a.wantFocus()
 	}
 
 	query = strings.ToLower(query)
@@ -719,7 +718,7 @@ func (a *App) recordJump() {
 }
 
 func (a *App) goBack() {
-	defer a.requestFocus()
+	defer a.wantFocus()
 	if a.historyPos <= 0 {
 		return
 	}
@@ -728,7 +727,7 @@ func (a *App) goBack() {
 }
 
 func (a *App) goForward() {
-	defer a.requestFocus()
+	defer a.wantFocus()
 	if a.historyPos >= len(a.history)-1 {
 		return
 	}
@@ -745,7 +744,7 @@ func (a *App) navigateToHistory() {
 
 	entry := a.history[a.historyPos]
 	if err := a.openFile(entry.path); err != nil {
-		a.setStatus(err.Error(), 3*time.Second)
+		a.setMsg(err.Error(), 3*time.Second)
 		return
 	}
 	if e := a.getEditor(); e != nil {
@@ -761,18 +760,18 @@ func (a *App) saveFile() {
 	tab := a.tabs[a.activeTab]
 	editor := tab.editor
 	if !editor.Dirty {
-		a.requestFocus()
+		a.wantFocus()
 		return
 	}
 
 	if path := tab.path; path != "untitled" {
 		if err := a.writeFile(path, editor); err != nil {
 			log.Print(err)
-			a.setStatus(err.Error(), 5*time.Second)
+			a.setMsg(err.Error(), 5*time.Second)
 			return
 		}
-		a.setStatus("Saved "+path, 2*time.Second)
-		a.requestFocus()
+		a.setMsg("Saved "+path, 2*time.Second)
+		a.wantFocus()
 		return
 	}
 
@@ -783,16 +782,16 @@ func (a *App) saveFile() {
 		abs, err := filepath.Abs(path)
 		if err != nil {
 			log.Print(err)
-			a.setStatus(err.Error(), 5*time.Second)
+			a.setMsg(err.Error(), 5*time.Second)
 			return
 		}
 		if err := a.writeFile(abs, editor); err != nil {
 			log.Print(err)
-			a.setStatus(err.Error(), 5*time.Second)
+			a.setMsg(err.Error(), 5*time.Second)
 			return
 		}
 		tab.path = abs
-		a.requestFocus()
+		a.wantFocus()
 	})
 }
 
@@ -893,7 +892,7 @@ func (a *App) writeFile(path string, e *Editor) error {
 		} else {
 			// If formatting fails (e.g., syntax error), we still save
 			// but notify the user via status bar.
-			a.setStatus(fmt.Sprintf("Format error: %v", err), 5*time.Second)
+			a.setMsg(fmt.Sprintf("Format error: %v", err), 5*time.Second)
 		}
 	}
 
@@ -980,7 +979,7 @@ func (t *tab) OnMouseDown(lx, ly int) {
 	for i, tab := range t.a.tabs {
 		if tab == t {
 			t.a.activeTab = i
-			t.a.requestFocus()
+			t.a.wantFocus()
 			return
 		}
 	}
@@ -1141,7 +1140,7 @@ func NewSearchBar(r *App) *SearchBar {
 	sb.btnNext = ui.NewButton("↓", func() { sb.navigate(true) })
 	sb.closeBtn = ui.NewButton("✕", func() {
 		sb.a.showSearch = false
-		sb.a.requestFocus()
+		sb.a.wantFocus()
 	})
 	return sb
 }
@@ -1303,7 +1302,7 @@ func (sb *SearchBar) HandleKey(ev *tcell.EventKey) bool {
 		sb.navigate(true)
 	case tcell.KeyESC:
 		sb.a.showSearch = false
-		sb.a.requestFocus()
+		sb.a.wantFocus()
 	default:
 		sb.input.HandleKey(ev)
 		consumed = false
@@ -1338,7 +1337,6 @@ func (a *App) activateLeader() {
 	}
 	a.leaderTimer = time.AfterFunc(2*time.Second, func() {
 		a.leaderKeyActive = false
-		a.manager.Refresh()
 	})
 }
 
