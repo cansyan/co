@@ -178,7 +178,7 @@ func (a *App) closeTab(i int) {
 					return
 				}
 				a.deleteTab(i)
-				a.manager.CloseOverlay()
+				a.manager.PopOverlay()
 				a.wantFocus()
 				return
 			}
@@ -205,14 +205,14 @@ func (a *App) closeTab(i int) {
 		ui.PadH(ui.HStack(
 			ui.NewButton("Don't Save", func() {
 				a.deleteTab(i)
-				a.manager.CloseOverlay()
+				a.manager.PopOverlay()
 				a.wantFocus()
 			}),
-			ui.PadH(ui.NewButton("Cancel", a.manager.CloseOverlay), 2),
+			ui.PadH(ui.NewButton("Cancel", a.manager.PopOverlay), 2),
 			saveBtn,
 		), 2),
 	).Spacing(1))
-	a.manager.Overlay(view, "top")
+	a.manager.PushOverlay(view)
 }
 
 func (a *App) deleteTab(i int) {
@@ -462,7 +462,7 @@ func (a *App) showPalette(prefix string) {
 	}
 
 	p.input.SetText(prefix)
-	a.manager.Overlay(p, "top")
+	a.manager.PushOverlay(ui.Center(p))
 }
 
 func (a *App) fillCommandMode(p *Palette, query string) {
@@ -801,7 +801,7 @@ func (a *App) promptSaveAs(commit func(path string)) {
 			if commit != nil {
 				commit(text)
 			}
-			a.manager.CloseOverlay()
+			a.manager.PopOverlay()
 		},
 	}
 
@@ -811,7 +811,7 @@ func (a *App) promptSaveAs(commit func(path string)) {
 			if commit != nil {
 				commit(input.String())
 			}
-			a.manager.CloseOverlay()
+			a.manager.PopOverlay()
 		},
 		Style: ui.Style{BG: ui.Theme.Selection},
 	}
@@ -823,12 +823,12 @@ func (a *App) promptSaveAs(commit func(path string)) {
 		), 1),
 
 		ui.PadH(ui.HStack(
-			ui.NewButton("Cancel", a.manager.CloseOverlay),
+			ui.NewButton("Cancel", a.manager.PopOverlay),
 			ui.Spacer,
 			okBtn,
 		), 4),
 	).Spacing(1)), 40, 0)
-	a.manager.Overlay(dialog, "top")
+	a.manager.PushOverlay(dialog)
 	a.manager.SetFocus(input)
 }
 
@@ -842,7 +842,7 @@ func (a *App) promptOpen() {
 					a.setStatus(err.Error(), 5*time.Second)
 				}
 			}
-			a.manager.CloseOverlay()
+			a.manager.HideOverlay()
 			a.requestFocus()
 		},
 	}
@@ -856,7 +856,7 @@ func (a *App) promptOpen() {
 					a.setStatus(err.Error(), 5*time.Second)
 				}
 			}
-			a.manager.CloseOverlay()
+			a.manager.HideOverlay()
 			a.requestFocus()
 		},
 		Style: ui.Style{BG: ui.Theme.Selection},
@@ -869,7 +869,7 @@ func (a *App) promptOpen() {
 		), 1),
 
 		ui.PadH(ui.HStack(
-			ui.NewButton("Cancel", a.manager.CloseOverlay),
+			ui.NewButton("Cancel", a.manager.HideOverlay),
 			ui.Spacer,
 			okBtn,
 		), 4),

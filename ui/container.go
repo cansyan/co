@@ -8,10 +8,11 @@ import (
 // It can act as a marker (e.g., grow) or wrapper (e.g., padding, border, frame).
 type decorator struct {
 	Element
-	grow                   int
+	grow                   int // the weight for sharing spare space
 	padT, padB, padL, padR int
 	width, height          int
 	border                 bool
+	center                 bool
 }
 
 func (d decorator) Size() (w, h int) {
@@ -47,6 +48,12 @@ func (d decorator) Layout(r Rect) *Node {
 	iy += d.padT
 	iw -= (d.padL + d.padR)
 	ih -= (d.padT + d.padB)
+
+	// if d.center {
+	// 	dw, dh := d.Size()
+	// 	ix = r.X + (r.W-dw)/2
+	// 	iy = r.Y + (r.H-dh)/2
+	// }
 
 	// respect Frame constraints
 	if d.width > 0 && iw > d.width {
@@ -92,6 +99,12 @@ func getDecorator(e Element) decorator {
 	return decorator{Element: e}
 }
 
+func Center(e Element) Element {
+	d := getDecorator(e)
+	d.center = true
+	return d
+}
+
 // Pad adds spaces around the element
 func Pad(e Element, amount int) Element {
 	// Current implementation merges decorator,
@@ -118,9 +131,14 @@ func PadV(e Element, amount int) Element {
 var Spacer = Grow(empty{})
 
 // Grow makes the element expand to fill available space in layout container.
-func Grow(e Element) Element {
+// Default weight is 1.
+func Grow(e Element, weight ...int) Element {
 	d := getDecorator(e)
-	d.grow = 1
+	if len(weight) == 0 {
+		d.grow = 1
+	} else {
+		d.grow = weight[0]
+	}
 	return d
 }
 
@@ -370,33 +388,33 @@ func ResetRect(s Screen, rect Rect, style Style) {
 
 // overlay is a transient container that displays a child element
 // over the existing content, typically used for modals or pop-ups.
-type overlay struct {
-	child     Element
-	align     string
-	prevFocus Element
-}
+// type overlay struct {
+// 	child     Element
+// 	align     string
+// 	prevFocus Element
+// }
 
-func (o *overlay) Size() (int, int) {
-	return o.child.Size()
-}
+// func (o *overlay) Size() (int, int) {
+// 	return o.child.Size()
+// }
 
-func (o *overlay) Layout(r Rect) *Node {
-	cw, ch := o.child.Size()
-	x, y := r.X, r.Y
-	switch o.align {
-	case "center":
-		x = x + (r.W-cw)/2
-		y = y + (r.H-ch)/2
-	case "top":
-		x = x + (r.W-cw)/2
-		y = 1 // Small offset from top
-	}
+// func (o *overlay) Layout(r Rect) *Node {
+// 	cw, ch := o.child.Size()
+// 	x, y := r.X, r.Y
+// 	switch o.align {
+// 	case "center":
+// 		x = x + (r.W-cw)/2
+// 		y = y + (r.H-ch)/2
+// 	case "top":
+// 		x = x + (r.W-cw)/2
+// 		y = 1 // Small offset from top
+// 	}
 
-	node := &Node{Element: o, Rect: Rect{X: x, Y: y, W: cw, H: ch}}
-	node.Children = []*Node{o.child.Layout(Rect{X: x, Y: y, W: cw, H: ch})}
-	return node
-}
+// 	node := &Node{Element: o, Rect: Rect{X: x, Y: y, W: cw, H: ch}}
+// 	node.Children = []*Node{o.child.Layout(Rect{X: x, Y: y, W: cw, H: ch})}
+// 	return node
+// }
 
-func (o *overlay) Draw(s Screen, rect Rect) {
-	ResetRect(s, rect, Style{})
-}
+// func (o *overlay) Draw(s Screen, rect Rect) {
+// 	ResetRect(s, rect, Style{})
+// }

@@ -232,10 +232,10 @@ func DrawString(s Screen, x, y, w int, str string, style Style) {
 
 // Manager manages the main event loop, rendering, and event dispatching.
 type Manager struct {
-	screen  Screen
-	root    *Node // root node of the layout tree
-	view    Element
-	overlay *overlay
+	screen   Screen
+	root     *Node // root node of the layout tree
+	view     Element
+	overlays []Element
 
 	// hit test
 	clickX, clickY int
@@ -266,8 +266,8 @@ func (m *Manager) Render() {
 	rect := Rect{X: 0, Y: 0, W: w, H: h}
 
 	m.root = m.view.Layout(rect)
-	if m.overlay != nil {
-		m.root.Children = append(m.root.Children, m.overlay.Layout(rect))
+	for _, o := range m.overlays {
+		m.root.Children = append(m.root.Children, o.Layout(rect))
 	}
 
 	m.root.Draw(m.screen)
@@ -314,12 +314,12 @@ func (m *Manager) SetFocus(e Element) {
 		fe.OnFocus()
 		m.focused = e
 		// clear overlay if it lost focus
-		if m.overlay != nil {
-			overlayNode := m.root.Find(m.overlay)
-			if overlayNode != nil && overlayNode.Find(e) == nil {
-				m.overlay = nil
-			}
-		}
+		// if m.overlays != nil {
+		// 	overlayNode := m.root.Find(m.overlays)
+		// 	if overlayNode != nil && overlayNode.Find(e) == nil {
+		// 		m.overlays = nil
+		// 	}
+		// }
 	} else {
 		m.focused = nil
 	}
@@ -461,8 +461,8 @@ func (m *Manager) handleKey(ev *tcell.EventKey) {
 	}
 
 	// 2. Framework-level automatic dismissal
-	if ev.Key() == tcell.KeyESC && m.overlay != nil {
-		m.CloseOverlay()
+	if ev.Key() == tcell.KeyESC && m.overlays != nil {
+		m.PopOverlay()
 		return
 	}
 
@@ -542,23 +542,19 @@ func (m *Manager) updateHover(e Element, lx, ly int) bool {
 	return changed
 }
 
-// Overlay displays an overlay element over the main layout
-// with the given alignment, and sets focus to it.
-func (m *Manager) Overlay(e Element, align string) {
-	m.overlay = &overlay{
-		child: e,
-		align: align,
-	}
-	if m.focused != nil {
-		m.overlay.prevFocus = m.focused
-	}
+// PushOverlay put an element over the main layout
+func (m *Manager) PushOverlay(e Element) {
+	m.overlays = append(m.overlays, e)
 	m.SetFocus(e)
 }
 
-// CloseOverlay dismiss the overlay, restore previous focus.
-func (m *Manager) CloseOverlay() {
-	if m.overlay != nil {
-		m.SetFocus(m.overlay.prevFocus)
+// PopOverlay remove the top overlay
+func (m *Manager) PopOverlay() {
+	// if m.overlays != nil {
+	// 	m.SetFocus(m.overlays.prevFocus)
+	// }
+	if len(m.overlays) == 0 {
+		return
 	}
-	m.overlay = nil
+	m.overlays = m.overlays[:len(m.overlays)-1]
 }
