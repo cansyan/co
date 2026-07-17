@@ -9,7 +9,7 @@ import (
 type decorator struct {
 	Element
 	grow                   int // the weight for sharing spare space
-	padT, padB, padL, padR int
+	padT, padB, padL, padR int // margin ?
 	width, height          int
 	border                 bool
 	align                  string
@@ -39,10 +39,13 @@ func (d decorator) Size() (w, h int) {
 
 func (d decorator) Layout(r Rect) *Node {
 	ix, iy, iw, ih := r.X, r.Y, r.W, r.H
-	if d.align == "center" {
-		dw, dh := d.Size()
+	dw, dh := d.Size()
+	switch d.align {
+	case "center":
 		ix += (iw - dw) / 2
 		iy += (ih - dh) / 2
+	case "top":
+		ix += (iw - dw) / 2
 	}
 	if d.border {
 		ix, iy, iw, ih = ix+1, iy+1, iw-2, ih-2
@@ -70,14 +73,16 @@ func (d decorator) Draw(screen Screen, rect Rect) {
 	if !d.border {
 		return
 	}
-	if d.align == "center" {
-		w, h := d.Size()
-		rect.X += (rect.W - w) / 2
-		rect.Y += (rect.H - h) / 2
-		rect.W = w
-		rect.H = h
+	w, h := d.Size()
+	r := Rect{W: w, H: h}
+	switch d.align {
+	case "center":
+		r.X = rect.X + (rect.W-w)/2
+		r.Y = rect.Y + (rect.H-h)/2
+	case "top":
+		r.X = rect.X + (rect.W-w)/2
 	}
-	drawBorder(screen, rect)
+	drawBorder(screen, r)
 }
 
 // Add FocusTarget to decorator to enable focus delegation through decorators
@@ -105,9 +110,11 @@ func getDecorator(e Element) decorator {
 	return decorator{Element: e}
 }
 
-func Center(e Element) Element {
+// Align center or top.
+// No bottom, left, right yet.
+func Align(e Element, a string) Element {
 	d := getDecorator(e)
-	d.align = "center"
+	d.align = a
 	return d
 }
 

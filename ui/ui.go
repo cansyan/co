@@ -62,7 +62,7 @@ type Focusable interface {
 
 // FocusDelegator allows an element to delegate focus to another element.
 type FocusDelegator interface {
-	FocusTarget() Element
+	FocusTarget() Focusable
 }
 
 // KeyHandler represents an element that can handle keyboard events.
@@ -230,47 +230,42 @@ func DrawString(s Screen, x, y, w int, str string, style Style) {
 	}
 }
 
-// Manager manages the main event loop, rendering, and event dispatching.
-type Manager struct {
+// UI manages the main event loop, rendering, and event dispatching.
+type UI struct {
 	screen   Screen
-	root     *Node // root node of the layout tree
-	view     Element
-	overlays []Element
+	rootNode *Node // root node of the layout tree
+	root     Element
 
 	// hit test
 	clickX, clickY int
-	focused        Element
-	hover          Element
 
-	bindings map[string]func()
-	done     chan struct{}
+	hover Element
+
+	done chan struct{}
+
+	Focus *FocusManager
 }
 
-func NewManager() *Manager {
-	return &Manager{
-		done:     make(chan struct{}),
-		bindings: make(map[string]func()),
+func NewUI() *UI {
+	return &UI{
+		done:  make(chan struct{}),
+		Focus: new(FocusManager),
 	}
 }
 
 // Screen returns the tcell Screen instance for direct access to terminal features.
 // This method should only be called after Start() has been invoked, as the screen
 // is initialized during the Start() process.
-func (m *Manager) Screen() Screen {
-	return m.screen
+func (ui *UI) Screen() Screen {
+	return ui.screen
 }
 
 // Render builds the layout tree then draw it to the screen.
-func (m *Manager) Render() {
-	w, h := m.screen.Size()
+func (ui *UI) Render() {
+	w, h := ui.screen.Size()
 	rect := Rect{X: 0, Y: 0, W: w, H: h}
-
-	m.root = m.view.Layout(rect)
-	for _, o := range m.overlays {
-		m.root.Children = append(m.root.Children, o.Layout(rect))
-	}
-
-	m.root.Draw(m.screen)
+	ui.rootNode = ui.root.Layout(rect)
+	ui.rootNode.Draw(ui.screen)
 }
 
 // hitTest walks the layout tree to find the deepest matching element
@@ -292,51 +287,11 @@ func hitTest(n *Node, x, y int) (Element, int, int) {
 	return n.Element, x - n.Rect.X, y - n.Rect.Y
 }
 
-func (m *Manager) SetFocus(e Element) {
-	if e == m.focused {
-		return
-	}
-
-	prev := m.focused
-	defer func() {
-		Logger.Printf("Focus changed: %T -> %T", prev, m.focused)
-	}()
-
-	m.blurCurrent()
-
+func resolveFocus(e Focusable) Focusable {
 	if e == nil {
-		m.focused = nil
-		return
+		return nil
 	}
-
-	e = m.resolveFocus(e)
-	if fe, ok := e.(Focusable); ok {
-		fe.OnFocus()
-		m.focused = e
-		// clear overlay if it lost focus
-		// if m.overlays != nil {
-		// 	overlayNode := m.root.Find(m.overlays)
-		// 	if overlayNode != nil && overlayNode.Find(e) == nil {
-		// 		m.overlays = nil
-		// 	}
-		// }
-	} else {
-		m.focused = nil
-	}
-}
-
-func (m *Manager) blurCurrent() {
-	if m.focused == nil {
-		return
-	}
-	if f, ok := m.focused.(Focusable); ok {
-		f.OnBlur()
-	}
-	m.screen.HideCursor()
-}
-
-func (m *Manager) resolveFocus(e Element) Element {
-	visited := make(map[Element]bool)
+	visited := make(map[Focusable]bool)
 	for {
 		if visited[e] {
 			Logger.Printf("Circular focus delegation detected for %T", e)
@@ -357,19 +312,19 @@ func (m *Manager) resolveFocus(e Element) Element {
 }
 
 // Refresh requests a redraw of the UI
-func (m *Manager) Refresh() {
+func (ui *UI) Refresh() {
 	// sends an empty event, wakes screen.PollEvent()
-	m.screen.PostEvent(tcell.NewEventInterrupt(nil))
+	ui.screen.PostEvent(tcell.NewEventInterrupt(nil))
 }
 
 // Start starts the main event loop
-func (m *Manager) Start(view Element) error {
-	m.view = view
+func (ui *UI) Start(view Element) error {
+	ui.root = view
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return err
 	}
-	m.screen = screen
+	ui.screen = screen
 
 	if err := screen.Init(); err != nil {
 		return err
@@ -385,7 +340,7 @@ func (m *Manager) Start(view Element) error {
 			cursorColor = Theme.Cursor
 		}
 		screen.Fill(' ', Style{}.Apply())
-		m.Render()
+		ui.Render()
 		screen.Show()
 	}
 
@@ -397,7 +352,7 @@ func (m *Manager) Start(view Element) error {
 
 		// Check if we should exit after receiving event
 		select {
-		case <-m.done:
+		case <-ui.done:
 			return nil
 		default:
 		}
@@ -410,10 +365,10 @@ func (m *Manager) Start(view Element) error {
 			dirty = true
 			screen.Sync()
 		case *tcell.EventKey:
-			m.handleKey(ev)
+			ui.handleKey(ev)
 			dirty = true
 		case *tcell.EventMouse:
-			dirty = m.handleMouse(ev)
+			dirty = ui.handleMouse(ev)
 		}
 
 		if dirty {
@@ -424,74 +379,67 @@ func (m *Manager) Start(view Element) error {
 
 // Stop stops the main event loop and cleans up resources.
 // Safe to call multiple times.
-func (m *Manager) Stop() {
+func (ui *UI) Stop() {
 	select {
-	case <-m.done:
+	case <-ui.done:
 		// Already closed, do nothing
 		return
 	default:
 		// Still open, close it
-		close(m.done)
+		close(ui.done)
 		// Wake up the event loop if it's blocked in PollEvent
-		if m.screen != nil {
-			m.screen.PostEvent(tcell.NewEventInterrupt(nil))
+		if ui.screen != nil {
+			ui.screen.PostEvent(tcell.NewEventInterrupt(nil))
 		}
 	}
 }
 
-// BindKey bind the key to the action globally,
-// key should be form of "ctrl+c".
-func (m *Manager) BindKey(key string, action func()) {
-	if key == "" || action == nil {
-		return
-	}
-	key = strings.ToLower(key)
-	m.bindings[key] = action
-}
+/*
+event flow:
 
-func (m *Manager) handleKey(ev *tcell.EventKey) {
-	Logger.Printf("key %s", ev.Name())
-	// 1. Give the focused element first chance to handle the key event
-	if m.focused != nil {
-		if h, ok := m.focused.(KeyHandler); ok {
-			if h.HandleKey(ev) {
-				return
-			}
-		}
-	}
+Terminal
 
-	// 2. Framework-level automatic dismissal
-	if ev.Key() == tcell.KeyESC && m.overlays != nil {
-		m.PopOverlay()
-		return
-	}
-
-	// 3. Fallback to global bindings
-	key := strings.ToLower(ev.Name())
-	if action, ok := m.bindings[key]; ok {
-		action()
-		return
+	   |
+	   v
+	App.HandleEvent()
+	   |
+	   +-- overlay stack?
+	   |       |
+	   |       yes
+	   |       |
+	   |       v
+	   |   top overlay
+	   |
+	   no
+	   |
+	   v
+	UI.FocusManager
+	   |
+	   v
+	focused element
+*/
+func (ui *UI) handleKey(ev *tcell.EventKey) {
+	if h, ok := ui.root.(KeyHandler); ok {
+		h.HandleKey(ev)
 	}
 }
 
 // Returns true if the event caused state changes that require a redraw.
-func (m *Manager) handleMouse(ev *tcell.EventMouse) bool {
+func (ui *UI) handleMouse(ev *tcell.EventMouse) bool {
 	x, y := ev.Position()
-	hit, lx, ly := hitTest(m.root, x, y)
+	hit, lx, ly := hitTest(ui.rootNode, x, y)
 	if hit == nil {
 		return false
 	}
 
-	dirty := m.updateHover(hit, lx, ly)
+	dirty := ui.updateHover(hit, lx, ly)
 
 	switch ev.Buttons() {
 	case tcell.ButtonPrimary:
-		prevFocus := m.focused
-		m.SetFocus(hit)
-		if prevFocus != m.focused {
-			dirty = true
+		if f, ok := hit.(Focusable); ok {
+			ui.Focus.Set(f)
 		}
-		m.clickX, m.clickY = x, y
+		ui.clickX, ui.clickY = x, y
 		// mouse down
 		if i, ok := hit.(Clickable); ok {
 			i.OnMouseDown(lx, ly)
@@ -509,7 +457,7 @@ func (m *Manager) handleMouse(ev *tcell.EventMouse) bool {
 		}
 	case tcell.ButtonNone:
 		// mouse up
-		if x == m.clickX && y == m.clickY {
+		if x == ui.clickX && y == ui.clickY {
 			if i, ok := hit.(Clickable); ok {
 				i.OnMouseUp(lx, ly)
 				dirty = true
@@ -521,10 +469,10 @@ func (m *Manager) handleMouse(ev *tcell.EventMouse) bool {
 }
 
 // Returns true if hover state changed.
-func (m *Manager) updateHover(e Element, lx, ly int) bool {
+func (ui *UI) updateHover(e Element, lx, ly int) bool {
 	changed := false
-	if m.hover != e {
-		if h, ok := m.hover.(Hoverable); ok {
+	if ui.hover != e {
+		if h, ok := ui.hover.(Hoverable); ok {
 			changed = true
 			h.OnMouseLeave()
 		}
@@ -532,7 +480,7 @@ func (m *Manager) updateHover(e Element, lx, ly int) bool {
 			changed = true
 			h.OnMouseEnter()
 		}
-		m.hover = e
+		ui.hover = e
 	}
 
 	if h, ok := e.(Hoverable); ok {
@@ -542,16 +490,45 @@ func (m *Manager) updateHover(e Element, lx, ly int) bool {
 	return changed
 }
 
-// PushOverlay push an element into the overlay stack, and set it as the focused element.
-func (m *Manager) PushOverlay(e Element) {
-	m.overlays = append(m.overlays, e)
-	m.SetFocus(e)
+type FocusManager struct {
+	focused Focusable
+	stack   []Focusable
 }
 
-// PopOverlay remove the top overlay
-func (m *Manager) PopOverlay() {
-	if len(m.overlays) == 0 {
+// Get returns current focus.
+func (fm *FocusManager) Get() Focusable {
+	return fm.focused
+}
+
+func (fm *FocusManager) Set(target Focusable) {
+	target = resolveFocus(target)
+	if fm.focused == target {
 		return
 	}
-	m.overlays = m.overlays[:len(m.overlays)-1]
+	Logger.Printf("focus: %T -> %T", fm.focused, target)
+	if fm.focused != nil {
+		fm.focused.OnBlur()
+	}
+
+	fm.focused = target
+
+	if fm.focused != nil {
+		fm.focused.OnFocus()
+	}
+}
+
+func (fm *FocusManager) Push(e Focusable) {
+	fm.stack = append(fm.stack, fm.focused)
+	fm.Set(e)
+}
+
+func (fm *FocusManager) Pop() {
+	if len(fm.stack) == 0 {
+		return
+	}
+
+	old := fm.stack[len(fm.stack)-1]
+	fm.stack = fm.stack[:len(fm.stack)-1]
+
+	fm.Set(old)
 }

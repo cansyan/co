@@ -61,7 +61,7 @@ func (m *MyStruct) Method() {
 }
 
 func TestEditorGotoDefinition(t *testing.T) {
-	manager := ui.NewManager()
+	manager := ui.NewUI()
 	app := newApp(manager)
 	editor := NewEditor(app)
 
@@ -89,7 +89,7 @@ func helper() {
 }
 
 func TestSearchBarUpdateMatches(t *testing.T) {
-	manager := ui.NewManager()
+	manager := ui.NewUI()
 	app := newApp(manager)
 	app.tabs = []*tab{newTab(app, "test")}
 	app.activeTab = 0
@@ -114,7 +114,7 @@ func TestSearchBarUpdateMatches(t *testing.T) {
 }
 
 func TestSearchBarNavigation(t *testing.T) {
-	manager := ui.NewManager()
+	manager := ui.NewUI()
 	app := newApp(manager)
 	app.tabs = []*tab{newTab(app, "test")}
 	app.activeTab = 0
@@ -141,7 +141,7 @@ func TestSearchBarNavigation(t *testing.T) {
 }
 
 func TestAppTabManagement(t *testing.T) {
-	manager := ui.NewManager()
+	manager := ui.NewUI()
 	app := newApp(manager)
 
 	// Test new tab creation
@@ -163,7 +163,7 @@ func TestAppTabManagement(t *testing.T) {
 }
 
 func TestAppHistory(t *testing.T) {
-	manager := ui.NewManager()
+	manager := ui.NewUI()
 	app := newApp(manager)
 
 	// Test history recording

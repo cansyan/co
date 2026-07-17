@@ -49,18 +49,16 @@ func main() {
 		ui.Theme = ui.Breakers
 	}
 
-	manager := ui.NewManager()
-	manager.BindKey("Ctrl+Q", manager.Stop)
-
+	UI := ui.NewUI()
 	// Handle signals for graceful shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		manager.Stop()
+		UI.Stop()
 	}()
 
-	app := newApp(manager)
+	app := newApp(UI)
 	if arg := flag.Arg(0); arg != "" {
 		path, line := parseFileArg(arg)
 		err := app.openFile(path)
@@ -76,9 +74,9 @@ func main() {
 	} else {
 		app.newTab("untitled")
 	}
-	app.wantFocus()
+	UI.Focus.Set(app.getEditor())
 
-	if err := manager.Start(app); err != nil {
+	if err := UI.Start(app); err != nil {
 		log.Print(err)
 		return
 	}
@@ -95,8 +93,11 @@ func parseFileArg(arg string) (path string, line int) {
 
 var _ ui.Focusable = (*App)(nil)
 
+// App holds state and elements
 type App struct {
-	manager   *ui.Manager
+	UI       *ui.UI
+	overlays []ui.Element
+
 	tabs      []*tab
 	activeTab int
 	fwdBtn    *ui.Button
@@ -125,16 +126,16 @@ type historyEntry struct {
 	pos  Pos
 }
 
-func newApp(m *ui.Manager) *App {
+func newApp(UI *ui.UI) *App {
 	a := &App{
-		manager:    m,
+		UI:         UI,
 		historyPos: -1,
 	}
 	a.newBtn = &ui.Button{
 		Text: "New",
 		OnClick: func() {
 			a.newTab("untitled")
-			m.SetFocus(a)
+			a.UI.Focus.Set(a)
 		},
 	}
 	a.openBtn = &ui.Button{Text: "Open", OnClick: func() { a.showPalette("") }}
@@ -142,7 +143,7 @@ func newApp(m *ui.Manager) *App {
 	a.fwdBtn = &ui.Button{Text: "→", OnClick: a.goForward}
 	a.cmdBtn = &ui.Button{Text: "Cmd", OnClick: func() { a.showPalette(">") }}
 	a.saveBtn = &ui.Button{Text: "Save", OnClick: a.saveFile}
-	a.quitBtn = &ui.Button{Text: "Quit", OnClick: m.Stop}
+	a.quitBtn = &ui.Button{Text: "Quit", OnClick: UI.Stop}
 	a.searchBar = NewSearchBar(a)
 	return a
 }
@@ -164,7 +165,7 @@ func (a *App) closeTab(i int) {
 	editor := tab.editor
 	if !editor.Dirty {
 		a.deleteTab(i)
-		a.wantFocus()
+		a.UI.Focus.Set(a.getEditor())
 		return
 	}
 
@@ -178,8 +179,8 @@ func (a *App) closeTab(i int) {
 					return
 				}
 				a.deleteTab(i)
-				a.manager.PopOverlay()
-				a.wantFocus()
+				a.PopOverlay()
+				a.UI.Focus.Set(a.getEditor())
 				return
 			}
 
@@ -193,26 +194,32 @@ func (a *App) closeTab(i int) {
 					return
 				}
 				a.deleteTab(i)
-				a.wantFocus()
+				a.UI.Focus.Set(a.getEditor())
 			})
 		},
 		Style: ui.Style{BG: ui.Theme.Selection},
 	}
 
 	// Prompt to save changes.
-	view := ui.Border(ui.VStack(
+	dialog := ui.Border(ui.VStack(
 		ui.PadH(ui.NewText("Save the changes before closing?"), 1),
 		ui.PadH(ui.HStack(
 			ui.NewButton("Don't Save", func() {
 				a.deleteTab(i)
-				a.manager.PopOverlay()
-				a.wantFocus()
+				a.PopOverlay()
+				a.UI.Focus.Set(a.getEditor())
 			}),
-			ui.PadH(ui.NewButton("Cancel", a.manager.PopOverlay), 2),
+			ui.PadH(ui.NewButton("Cancel", func() {
+				a.PopOverlay()
+				a.UI.Focus.Pop()
+			}), 2),
 			saveBtn,
 		), 2),
 	).Spacing(1))
-	a.manager.PushOverlay(ui.Center(view))
+	a.PushOverlay(ui.Align(dialog, "center"))
+	if f, ok := dialog.(ui.Focusable); ok {
+		a.UI.Focus.Push(f)
+	}
 }
 
 func (a *App) deleteTab(i int) {
@@ -228,7 +235,7 @@ func (a *App) deleteTab(i int) {
 	}
 
 	if len(a.tabs) == 0 {
-		a.manager.Stop()
+		a.UI.Stop()
 	}
 }
 
@@ -282,11 +289,15 @@ func (a *App) Layout(r ui.Rect) *ui.Node {
 		ui.PadH(statusBar, 1),
 	)
 
-	return &ui.Node{
+	n := &ui.Node{
 		Element:  a,
 		Rect:     r,
 		Children: []*ui.Node{mainStack.Layout(r)},
 	}
+	for _, overlay := range a.overlays {
+		n.Children = append(n.Children, overlay.Layout(r))
+	}
+	return n
 }
 
 // setMsg leaves a short message on status bar and clears after the duration.
@@ -297,7 +308,7 @@ func (a *App) setMsg(msg string, d time.Duration) {
 		// (Avoid clearing a newer, different message).
 		if a.msg == msg {
 			a.msg = ""
-			a.manager.Refresh()
+			a.UI.Refresh()
 		}
 	})
 }
@@ -307,9 +318,10 @@ func (a *App) Draw(ui.Screen, ui.Rect) {
 }
 
 // a convenient method to request focus back to the app.
-func (a *App) wantFocus() {
-	a.manager.SetFocus(a)
-}
+// func (a *App) wantFocus() {
+// 	// TODO: delete this function, use UI.Focus.Pop() instead
+// 	a.UI.Focus.Set(a)
+// }
 
 // delegates focus to the active tab's editor.
 func (a *App) FocusTarget() ui.Element {
@@ -338,55 +350,7 @@ func (a *App) resetFind() {
 	}
 	sb.input.Select(0, len([]rune(query)))
 
-	a.manager.SetFocus(sb)
-}
-
-// handles app-level commands
-func (a *App) handleGlobalKey(ev *tcell.EventKey) bool {
-	switch strings.ToLower(ev.Name()) {
-	case "ctrl+s":
-		a.saveFile()
-		return true
-	case "ctrl+w":
-		a.closeTab(a.activeTab)
-		return true
-	case "ctrl+f":
-		a.resetFind()
-		return true
-	case "ctrl+k":
-		a.activateLeader()
-		return true
-	case "ctrl+p":
-		/*
-			if a.leaderKeyActive {
-				a.leaderKeyActive = false
-				if a.leaderTimer != nil {
-					a.leaderTimer.Stop()
-				}
-				a.showPalette(">") // Ctrl+K Ctrl+P command mode
-			}
-		*/
-		a.showPalette(">")
-		return true
-	case "ctrl+r":
-		a.showPalette("@")
-		return true
-	case "ctrl+o":
-		a.showPalette("")
-		return true
-	case "ctrl+t":
-		a.newTab("untitled")
-		a.wantFocus()
-		return true
-	case "esc":
-		if a.showSearch {
-			a.showSearch = false
-			a.wantFocus()
-			return true
-		}
-		return true
-	}
-	return false
+	a.UI.Focus.Set(sb)
 }
 
 func (a *App) getEditor() *Editor {
@@ -397,7 +361,7 @@ func (a *App) getEditor() *Editor {
 }
 
 func (a *App) showPalette(prefix string) {
-	p := NewPalette()
+	p := NewPalette(a)
 	p.input.OnChange = func() {
 		text := p.input.String()
 		p.list.Clear()
@@ -414,11 +378,13 @@ func (a *App) showPalette(prefix string) {
 
 			p.list.Append(ui.ListItem{Name: "Go to Line " + lineStr, Value: n - 1})
 			p.list.OnSelect = func(item ui.ListItem) {
+				a.PopOverlay()
+				a.UI.Focus.Pop()
 				lineNum := item.Value.(int)
-				if e := a.getEditor(); e != nil {
+				e := a.getEditor()
+				if e != nil {
 					e.gotoLine(lineNum)
 				}
-				a.wantFocus()
 			}
 
 		case strings.HasPrefix(text, "@"):
@@ -433,9 +399,10 @@ func (a *App) showPalette(prefix string) {
 				return
 			}
 			p.list.OnSelect = func(item ui.ListItem) {
+				a.PopOverlay()
+				a.UI.Focus.Pop()
 				symbolLine := item.Value.(int)
 				editor.gotoLine(symbolLine)
-				a.wantFocus()
 			}
 
 			for _, sym := range editor.symbols {
@@ -462,7 +429,8 @@ func (a *App) showPalette(prefix string) {
 	}
 
 	p.input.SetText(prefix)
-	a.manager.PushOverlay(ui.Center(p))
+	a.PushOverlay(p)
+	a.UI.Focus.Push(p)
 }
 
 func (a *App) fillCommandMode(p *Palette, query string) {
@@ -473,51 +441,62 @@ func (a *App) fillCommandMode(p *Palette, query string) {
 	}{
 		{"Color Theme: Breaks", func() {
 			ui.Theme = ui.Breakers
-			a.wantFocus()
+			a.PopOverlay()
+			a.UI.Focus.Pop()
 		}},
 		{"Color Theme: Mariana", func() {
 			ui.Theme = ui.Mariana
-			a.wantFocus()
+			a.PopOverlay()
+			a.UI.Focus.Pop()
 		}},
 		{"Goto Definition", func() {
-			if e := a.getEditor(); e != nil {
+			e := a.getEditor()
+			if e != nil {
 				e.gotoDefinition()
 			}
-			a.wantFocus()
+			a.PopOverlay()
+			a.UI.Focus.Pop()
 		}},
 		{"Goto Symbol", func() { a.showPalette("@") }},
 		{"Jump Back", a.goBack},
 		{"Jump Forward", a.goForward},
-		{"New File", func() { a.newTab("untitled"); a.wantFocus() }},
+		{"New File", func() {
+			e := a.newTab("untitled")
+			a.PopOverlay()
+			a.UI.Focus.Pop()
+			a.UI.Focus.Set(e)
+		}},
 		{"GoBuild", func() {
-			a.wantFocus()
+			a.PopOverlay()
+			a.UI.Focus.Pop()
 			go func() {
-				defer a.manager.Refresh()
+				defer a.UI.Refresh()
 				out, err := exec.Command("go", "build").CombinedOutput()
 				if err != nil {
 					buf := a.newTab("go build...")
 					buf.SetText(string(out))
-					a.manager.SetFocus(buf)
+					a.UI.Focus.Set(buf)
 					return
 				}
 				a.setMsg("go build ok", 5*time.Second)
 			}()
 		}},
 		{"GoTest", func() {
-			a.wantFocus()
+			a.PopOverlay()
+			a.UI.Focus.Pop()
 			go func() {
-				defer a.manager.Refresh()
+				defer a.UI.Refresh()
 				out, err := exec.Command("go", "test", "./...").CombinedOutput()
 				if err != nil {
 					buf := a.newTab("go test...")
 					buf.SetText(string(out))
-					a.manager.SetFocus(buf)
+					a.UI.Focus.Set(buf)
 					return
 				}
 				a.setMsg("go test ok", 5*time.Second)
 			}()
 		}},
-		{"Quit", a.manager.Stop},
+		{"Quit", a.UI.Stop},
 	}
 
 	for _, cmd := range commands {
@@ -545,7 +524,7 @@ func (a *App) fillCommandMode(p *Palette, query string) {
 func (a *App) fillFileSearchMode(p *Palette, query string) {
 	p.list.OnSelect = func(item ui.ListItem) {
 		a.openFile(item.Value.(string))
-		a.wantFocus()
+		a.UI.Focus.Pop()
 	}
 
 	query = strings.ToLower(query)
@@ -718,7 +697,7 @@ func (a *App) recordJump() {
 }
 
 func (a *App) goBack() {
-	defer a.wantFocus()
+	defer a.UI.Focus.Set(a)
 	if a.historyPos <= 0 {
 		return
 	}
@@ -727,7 +706,7 @@ func (a *App) goBack() {
 }
 
 func (a *App) goForward() {
-	defer a.wantFocus()
+	defer a.UI.Focus.Set(a)
 	if a.historyPos >= len(a.history)-1 {
 		return
 	}
@@ -760,7 +739,7 @@ func (a *App) saveFile() {
 	tab := a.tabs[a.activeTab]
 	editor := tab.editor
 	if !editor.Dirty {
-		a.wantFocus()
+		a.UI.Focus.Set(editor)
 		return
 	}
 
@@ -771,7 +750,7 @@ func (a *App) saveFile() {
 			return
 		}
 		a.setMsg("Saved "+path, 2*time.Second)
-		a.wantFocus()
+		a.UI.Focus.Set(editor)
 		return
 	}
 
@@ -791,7 +770,7 @@ func (a *App) saveFile() {
 			return
 		}
 		tab.path = abs
-		a.wantFocus()
+		a.UI.Focus.Set(editor)
 	})
 }
 
@@ -801,7 +780,7 @@ func (a *App) promptSaveAs(commit func(path string)) {
 			if commit != nil {
 				commit(text)
 			}
-			a.manager.PopOverlay()
+			a.PopOverlay()
 		},
 	}
 
@@ -811,7 +790,7 @@ func (a *App) promptSaveAs(commit func(path string)) {
 			if commit != nil {
 				commit(input.String())
 			}
-			a.manager.PopOverlay()
+			a.PopOverlay()
 		},
 		Style: ui.Style{BG: ui.Theme.Selection},
 	}
@@ -823,13 +802,13 @@ func (a *App) promptSaveAs(commit func(path string)) {
 		), 1),
 
 		ui.PadH(ui.HStack(
-			ui.NewButton("Cancel", a.manager.PopOverlay),
+			ui.NewButton("Cancel", a.PopOverlay),
 			ui.Spacer,
 			okBtn,
 		), 4),
 	).Spacing(1)), 40, 0)
-	a.manager.PushOverlay(ui.Center(dialog))
-	a.manager.SetFocus(input)
+	a.PushOverlay(ui.Align(dialog, "center"))
+	a.UI.Focus.Push(input)
 }
 
 /*
@@ -979,7 +958,7 @@ func (t *tab) OnMouseDown(lx, ly int) {
 	for i, tab := range t.a.tabs {
 		if tab == t {
 			t.a.activeTab = i
-			t.a.wantFocus()
+			t.a.UI.Focus.Set(t.editor)
 			return
 		}
 	}
@@ -995,46 +974,34 @@ func (t *tab) OnMouseLeave() {
 func (t *tab) OnMouseMove(rx, ry int) {}
 
 type Palette struct {
-	input *proxyInput
+	app   *App
+	input *ui.Input
 	list  *ui.List
+	whole ui.Element
 }
 
-func NewPalette() *Palette {
+func NewPalette(app *App) *Palette {
 	p := &Palette{
-		list: new(ui.List),
+		app:   app,
+		list:  new(ui.List),
+		input: new(ui.Input),
 	}
-	// Use proxyInput to delegate key handling to Palette
-	p.input = &proxyInput{
-		Input:  new(ui.Input),
-		parent: p,
-	}
+	p.whole = ui.Align(ui.Border(ui.VStack(
+		p.input,
+		p.list,
+	)), "top")
 	return p
 }
 
-func (p *Palette) SetText(text string) {
-	p.input.SetText(text)
-	p.input.OnFocus()
-}
-
 func (p *Palette) Size() (int, int) {
-	w1, h1 := 60, 1 // input box size
-	// avoid full screen list items
-	_, h2 := p.list.Size()
-	if h2 > 15 {
-		h2 = 15
-	}
-	return w1 + 2, h1 + h2 + 2 // +2 for the border
+	return p.whole.Size()
 }
 
 func (p *Palette) Layout(r ui.Rect) *ui.Node {
-	view := ui.Border(ui.VStack(
-		p.input,
-		p.list,
-	))
 	return &ui.Node{
 		Element:  p,
 		Rect:     r,
-		Children: []*ui.Node{view.Layout(r)},
+		Children: []*ui.Node{p.whole.Layout(r)},
 	}
 }
 
@@ -1043,8 +1010,10 @@ func (p *Palette) Draw(ui.Screen, ui.Rect) {
 }
 
 func (p *Palette) HandleKey(ev *tcell.EventKey) bool {
-	consumed := true
 	switch ev.Key() {
+	case tcell.KeyEsc:
+		p.app.PopOverlay()
+		p.app.UI.Focus.Set(p.app.getEditor())
 	case tcell.KeyDown, tcell.KeyCtrlN:
 		p.list.Next()
 	case tcell.KeyUp, tcell.KeyCtrlP:
@@ -1053,13 +1022,17 @@ func (p *Palette) HandleKey(ev *tcell.EventKey) bool {
 		p.list.Activate()
 	default:
 		p.input.HandleKey(ev)
-		consumed = false
 	}
-	return consumed
+	return true
 }
 
-func (p *Palette) OnFocus() { p.input.OnFocus() }
-func (p *Palette) OnBlur()  { p.input.OnBlur() }
+func (p *Palette) OnFocus() {
+	// make p.input show cursor
+	p.input.OnFocus()
+}
+func (p *Palette) OnBlur() {
+	p.input.OnBlur()
+}
 
 type symbol struct {
 	Name     string // identifier (e.g., "saveFile")
@@ -1140,7 +1113,7 @@ func NewSearchBar(r *App) *SearchBar {
 	sb.btnNext = ui.NewButton("↓", func() { sb.navigate(true) })
 	sb.closeBtn = ui.NewButton("✕", func() {
 		sb.a.showSearch = false
-		sb.a.wantFocus()
+		sb.a.UI.Focus.Set(sb.a.getEditor())
 	})
 	return sb
 }
@@ -1302,7 +1275,7 @@ func (sb *SearchBar) HandleKey(ev *tcell.EventKey) bool {
 		sb.navigate(true)
 	case tcell.KeyESC:
 		sb.a.showSearch = false
-		sb.a.wantFocus()
+		sb.a.UI.Focus.Set(sb.a.getEditor())
 	default:
 		sb.input.HandleKey(ev)
 		consumed = false
@@ -1394,7 +1367,6 @@ func (e *Editor) Layout(r ui.Rect) *ui.Node {
 }
 
 // HandleKey handles editor-specific keybindings.
-// If the key is not handled here, it will bubble up to the app level.
 func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 	switch strings.ToLower(ev.Name()) {
 	case "ctrl+z":
@@ -1408,7 +1380,7 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 			s = string(e.Line(e.Pos.Row))
 		}
 		e.app.clipboard = s
-		e.app.manager.Screen().SetClipboard([]byte(s))
+		e.app.UI.Screen().SetClipboard([]byte(s))
 	case "ctrl+x":
 		e.editor.SaveEdit()
 		e.MergeNext = false
@@ -1417,14 +1389,14 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 			// cut line by default
 			s := string(e.Line(e.Pos.Row)) + "\n"
 			e.app.clipboard = s
-			e.app.manager.Screen().SetClipboard([]byte(s))
+			e.app.UI.Screen().SetClipboard([]byte(s))
 			e.DeleteRange(Pos{Row: e.Pos.Row}, Pos{Row: e.Pos.Row + 1})
 			return true
 		}
 
 		s := e.SelectedText()
 		e.app.clipboard = s
-		e.app.manager.Screen().SetClipboard([]byte(s))
+		e.app.UI.Screen().SetClipboard([]byte(s))
 		e.DeleteRange(start, end)
 		e.ClearSelection()
 	case "ctrl+v":
@@ -1463,13 +1435,8 @@ func (e *Editor) HandleKey(ev *tcell.EventKey) bool {
 	case "ctrl+e", "alt+right": // goto the end of line
 		e.ClearSelection()
 		e.Pos.Col = len(e.Line(e.Pos.Row))
-	default:
-		if !e.editor.HandleKey(ev) {
-			// Bubble event to parent
-			return e.app.handleGlobalKey(ev)
-		}
 	}
-	return true
+	return e.editor.HandleKey(ev)
 }
 
 // gotoLine moves the cursor to the specified 0-based line number
@@ -1796,4 +1763,91 @@ func highlightMarkdown(line []rune) []StyleSpan {
 	}
 
 	return spans
+}
+
+// PushOverlay push an element on top of the overlay stack
+func (a *App) PushOverlay(e ui.Element) {
+	a.overlays = append(a.overlays, e)
+}
+
+// PopOverlay remove the top element from the overlay stack
+func (a *App) PopOverlay() {
+	if len(a.overlays) > 0 {
+		a.overlays = a.overlays[:len(a.overlays)-1]
+	}
+}
+
+// HandleKey controls the event flow:
+//  1. to overlay, if failed then next
+//  2. to global, if failed then next
+//  3. to ui.Focus
+func (a *App) HandleKey(ev *tcell.EventKey) bool {
+	log.Printf("receive key %s", ev.Name())
+	if len(a.overlays) > 0 {
+		top := a.overlays[len(a.overlays)-1]
+		if h, ok := top.(ui.KeyHandler); ok {
+			if h.HandleKey(ev) {
+				return true
+			}
+		}
+	}
+
+	// global key
+	switch strings.ToLower(ev.Name()) {
+	case "ctrl+q":
+		a.UI.Stop()
+	case "ctrl+s":
+		a.saveFile()
+		return true
+	case "ctrl+w":
+		a.closeTab(a.activeTab)
+		return true
+	case "ctrl+f":
+		a.resetFind()
+		return true
+	case "ctrl+k":
+		a.activateLeader()
+		return true
+	case "ctrl+p":
+		/*
+			if a.leaderKeyActive {
+				a.leaderKeyActive = false
+				if a.leaderTimer != nil {
+					a.leaderTimer.Stop()
+				}
+				a.showPalette(">") // Ctrl+K Ctrl+P command mode
+			}
+		*/
+		a.showPalette(">")
+		return true
+	case "ctrl+r":
+		a.showPalette("@")
+		return true
+	case "ctrl+o":
+		a.showPalette("")
+		return true
+	case "ctrl+t":
+		e := a.newTab("untitled")
+		a.UI.Focus.Set(e)
+		return true
+	case "esc":
+		if len(a.overlays) > 0 {
+			a.PopOverlay()
+			a.UI.Focus.Pop()
+			return true
+		}
+		if a.showSearch {
+			a.showSearch = false
+			a.UI.Focus.Set(a.getEditor())
+			return true
+		}
+		return true
+	}
+
+	if f := a.UI.Focus.Get(); f != nil {
+		if h, ok := f.(ui.KeyHandler); ok {
+			return h.HandleKey(ev)
+		}
+	}
+	return false
 }

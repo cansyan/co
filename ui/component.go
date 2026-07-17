@@ -142,6 +142,14 @@ func (t *Input) Draw(s Screen, rect Rect) {
 	if t.focused && t.cursor < rect.W {
 		s.ShowCursor(rect.X+t.cursor, rect.Y)
 	}
+
+	baseStyle := t.Style.Apply()
+
+	// reset
+	for x := range rect.W {
+		s.SetContent(rect.X+x, rect.Y, ' ', nil, baseStyle)
+	}
+
 	// placeholder
 	if len(t.text) == 0 {
 		DrawString(s, rect.X, rect.Y, rect.W, t.Placeholder, Theme.Syntax.Comment)
@@ -149,7 +157,6 @@ func (t *Input) Draw(s Screen, rect Rect) {
 	}
 
 	start, end, hasSel := t.selection()
-	baseStyle := t.Style.Apply()
 	selStyle := t.Style.Merge(Style{BG: Theme.Selection}).Apply()
 
 	xOffset := 0
@@ -165,11 +172,6 @@ func (t *Input) Draw(s Screen, rect Rect) {
 
 		s.SetContent(rect.X+xOffset, rect.Y, r, nil, st)
 		xOffset += runewidth.RuneWidth(r)
-	}
-
-	// fill remaining space
-	for x := xOffset; x < rect.W; x++ {
-		s.SetContent(rect.X+x, rect.Y, ' ', nil, baseStyle)
 	}
 }
 
