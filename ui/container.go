@@ -12,7 +12,7 @@ type decorator struct {
 	padT, padB, padL, padR int
 	width, height          int
 	border                 bool
-	center                 bool
+	align                  string
 }
 
 func (d decorator) Size() (w, h int) {
@@ -39,7 +39,11 @@ func (d decorator) Size() (w, h int) {
 
 func (d decorator) Layout(r Rect) *Node {
 	ix, iy, iw, ih := r.X, r.Y, r.W, r.H
-
+	if d.align == "center" {
+		dw, dh := d.Size()
+		ix += (iw - dw) / 2
+		iy += (ih - dh) / 2
+	}
 	if d.border {
 		ix, iy, iw, ih = ix+1, iy+1, iw-2, ih-2
 	}
@@ -48,12 +52,6 @@ func (d decorator) Layout(r Rect) *Node {
 	iy += d.padT
 	iw -= (d.padL + d.padR)
 	ih -= (d.padT + d.padB)
-
-	// if d.center {
-	// 	dw, dh := d.Size()
-	// 	ix = r.X + (r.W-dw)/2
-	// 	iy = r.Y + (r.H-dh)/2
-	// }
 
 	// respect Frame constraints
 	if d.width > 0 && iw > d.width {
@@ -69,9 +67,17 @@ func (d decorator) Layout(r Rect) *Node {
 }
 
 func (d decorator) Draw(screen Screen, rect Rect) {
-	if d.border {
-		drawBorder(screen, rect)
+	if !d.border {
+		return
 	}
+	if d.align == "center" {
+		w, h := d.Size()
+		rect.X += (rect.W - w) / 2
+		rect.Y += (rect.H - h) / 2
+		rect.W = w
+		rect.H = h
+	}
+	drawBorder(screen, rect)
 }
 
 // Add FocusTarget to decorator to enable focus delegation through decorators
@@ -101,7 +107,7 @@ func getDecorator(e Element) decorator {
 
 func Center(e Element) Element {
 	d := getDecorator(e)
-	d.center = true
+	d.align = "center"
 	return d
 }
 

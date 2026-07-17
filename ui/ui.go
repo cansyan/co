@@ -542,7 +542,7 @@ func (m *Manager) updateHover(e Element, lx, ly int) bool {
 	return changed
 }
 
-// PushOverlay put an element over the main layout
+// PushOverlay push an element into the overlay stack, and set it as the focused element.
 func (m *Manager) PushOverlay(e Element) {
 	m.overlays = append(m.overlays, e)
 	m.SetFocus(e)
@@ -550,9 +550,6 @@ func (m *Manager) PushOverlay(e Element) {
 
 // PopOverlay remove the top overlay
 func (m *Manager) PopOverlay() {
-	// if m.overlays != nil {
-	// 	m.SetFocus(m.overlays.prevFocus)
-	// }
 	if len(m.overlays) == 0 {
 		return
 	}

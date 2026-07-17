@@ -212,7 +212,7 @@ func (a *App) closeTab(i int) {
 			saveBtn,
 		), 2),
 	).Spacing(1))
-	a.manager.PushOverlay(view)
+	a.manager.PushOverlay(ui.Center(view))
 }
 
 func (a *App) deleteTab(i int) {
@@ -828,7 +828,7 @@ func (a *App) promptSaveAs(commit func(path string)) {
 			okBtn,
 		), 4),
 	).Spacing(1)), 40, 0)
-	a.manager.PushOverlay(dialog)
+	a.manager.PushOverlay(ui.Center(dialog))
 	a.manager.SetFocus(input)
 }
 
